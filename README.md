@@ -1,9 +1,10 @@
 # Tolkara
 
-Tolkara runs **unmodified** arm64 macOS applications on an iPad. It loads the
-original executable as data, executes its instructions natively on the iPad's
-Apple silicon, and translates the macOS API calls it makes (AppKit, Metal,
-CoreAudio, Carbon, Security, …) into their iPadOS equivalents.
+Tolkara runs **unmodified** arm64 macOS applications on an iPad, with
+experimental iPhone support. It loads the original executable as data,
+executes its instructions natively on the device's Apple silicon, and
+translates the macOS API calls it makes (AppKit, Metal, CoreAudio, Carbon,
+Security, …) into their iOS/iPadOS equivalents.
 
 It follows the model of [Wine](https://www.winehq.org) and Valve's
 [Proton](https://github.com/ValveSoftware/Proton): the program is not ported or
@@ -24,6 +25,17 @@ Store, and the repository and releases contain no third-party application code
 or assets.
 
 ## Status
+
+Experimental iPhone support is available. On an iPhone 16 Pro Max with iOS
+27.0, Forever 1.60.1 (70170) logs in and plays using Developer service. The
+user reported about two hours without problems at 60 FPS, 50% render scale
+and graphics quality 2. That initial setup used a Bluetooth keyboard and
+AssistiveTouch. Launch after reboot without a Mac connection
+is confirmed. Classic Era 1.15.9 reached its cinematic and login screen on
+the same device. See the [iPhone guide](docs/IPHONE.md) for setup, input
+workarounds and the experimental [iOS keyboard and touchscreen trackpad](docs/TOUCH_INPUT.md).
+The new touch controls have simulator coverage and were subsequently confirmed
+working by the user in Forever on the same physical iPhone.
 
 Tested on an iPad Pro (M5) with iPadOS 27. The first application validated end
 to end, with Developer service, is World of Warcraft Classic (Classic Era macOS
@@ -81,7 +93,8 @@ in [docs/LOCAL_AUTHORIZATION.md](docs/LOCAL_AUTHORIZATION.md).
 ## Getting started
 
 You need a Mac with Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen),
-Python 3, an Apple developer account, and an iPad with Developer Mode enabled.
+Python 3, an Apple developer account, and an iPad or an
+[experimentally supported iPhone](docs/IPHONE.md) with Developer Mode enabled.
 The full walkthrough, including signing and Developer Mode, is in
 **[docs/BUILDING.md](docs/BUILDING.md)**. In short:
 

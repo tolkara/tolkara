@@ -3,6 +3,16 @@
 The macOS arm64 Classic beta client (1.60.1) from `_classic_beta_`. See
 [COMPATIBILITY.md](../../COMPATIBILITY.md) for what works.
 
+On an iPhone 16 Pro Max / iOS 27.0, build 70170 was tested with Developer
+service on 2026-10-02: the user reported successful login and about two hours
+of gameplay without problems at 60 FPS, 50% render scale and graphics quality
+2. That session used a Bluetooth keyboard and AssistiveTouch. See the
+[iPhone guide](../../docs/IPHONE.md) for the beta portal,
+public certificate resource and mouse/controller setup. Experimental
+[iOS keyboard and trackpad controls](../../docs/TOUCH_INPUT.md) are now
+implemented in this branch; the user subsequently confirmed them working
+correctly in Forever on the same iPhone (2026-10-02).
+
 You need your own installation made by the Battle.net app on a Mac, and your own
 account. Nothing from the game is included here.
 
@@ -33,8 +43,9 @@ game as usual.
 [README](../../README.md#three-ways-to-run-code); choose one. With Local signing,
 the client logs in and plays on an iPad Pro M5 (2026-09-27), with no debugger,
 helper or tunnel: the unpacked code matched the signed page container byte for
-byte and all 13,280 initializers ran into the original `main`. It has not yet
-been validated with Developer service.
+byte and all 13,280 initializers ran into the original `main`. Developer
+service login and gameplay are also confirmed on the iPhone described above;
+Developer service has not been validated on this iPad.
 Like the Era client, this client unpacks its own code at launch, so its Local
 signing page container must be built from a capture of its final code pages —
 producing such a capture in the app is not wired yet (see
