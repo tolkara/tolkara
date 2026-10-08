@@ -538,6 +538,9 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined
 python3 tests/test_nib_archive.py build/emulation/test_nib_archive
 python3 tests/test_generic_build.py
 python3 tests/test_classify.py
+python3 tests/test_shim_stubs.py
+python3 tests/test_embed_vulkan_runtime.py
+python3 tests/test_shim_dependencies.py
 python3 tests/test_metallib.py
 python3 - <<'PYFIXTURE'
 import sys

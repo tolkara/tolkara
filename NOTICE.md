@@ -1,8 +1,14 @@
 # Notices
 
-Tolkara is original work released under the MIT License. It bundles and links
-no third-party source code or libraries; it uses only Apple's public SDK
-frameworks and the Python standard library.
+Tolkara is original work released under the MIT License. Its default build uses
+Apple's public SDK frameworks and the Python standard library, without bundled
+third-party source code or libraries.
+
+An optional, builder-supplied native [MoltenVK](https://github.com/KhronosGroup/MoltenVK)
+runtime can be bundled with `TOLKARA_VULKAN_RUNTIME`. MoltenVK is under the
+[Apache License 2.0](https://github.com/KhronosGroup/MoltenVK/blob/main/LICENSE).
+It translates Vulkan to Metal; no MoltenVK source or binary is stored in this
+repository. Keep its supplied licence with any runtime you distribute.
 
 The following public material was consulted as **reference documentation** for
 protocols and formats. No code was copied or translated from these projects.

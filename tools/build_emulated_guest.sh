@@ -87,5 +87,9 @@ if [ "${NATIVE_GUEST_SHIMS:-NO}" = YES ] || [ "${NATIVE_GUEST_SHIMS:-NO}" = GENE
             python3 "$ROOT/tools/inspect_nib.py" "$nib" --out "$MODULE/Nibs/$(basename "$nib").json"
         done
     done
+    if [ -n "${TOLKARA_VULKAN_RUNTIME:-}" ]; then
+        python3 "$ROOT/tools/embed_vulkan_runtime.py" "$TOLKARA_VULKAN_RUNTIME" "$P" \
+            "$OUT/Frameworks" "$OUT/Guest/libraries.json"
+    fi
     for f in "$OUT/Frameworks"/*.dylib; do codesign -f -s "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$f" 2>/dev/null; done
 fi

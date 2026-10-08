@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 from classify import adapter_leaves, translation_leaves
+from shim_stubs import function_stub
 platform, surface, outdir = sys.argv[1:4]
 absent_list = sys.argv[4] if len(sys.argv) > 4 else None
 generic = surface == "generic"
@@ -44,6 +45,7 @@ gen = os.path.join(ROOT, "build/gen", platform); os.makedirs(gen, exist_ok=True)
 # Compatibility libraries change less often than the runtime. Cache unsigned
 # link outputs; the packaging step still signs each copied output for the app.
 identity = hashlib.sha256(Path(__file__).read_bytes())
+identity.update((Path(ROOT) / "tools/shim_stubs.py").read_bytes())
 identity.update(json.dumps([platform, plan, CC, sorted(ADAPTERS)], sort_keys=True).encode())
 identity.update(subprocess.check_output(["xcrun", "--sdk", SDKNAME, "--show-sdk-build-version"]))
 identity.update(subprocess.check_output(["xcrun", "clang", "--version"]))
@@ -65,14 +67,37 @@ def sdk_tbd(path):   # classify ran against the device SDK; map into the SDK we 
     return p if os.path.exists(p) else None
 
 
+built, building = set(), set()
+
+
 def build(leaf, install_name, symbols, real_tbd=None, provider_tbds=(), extra=()):
+    if leaf in built:
+        return
+    if leaf in building:
+        sys.exit(f"adapter dependency cycle at {leaf}")
+    building.add(leaf)
+    d = re.sub(r"\.dylib$", "", leaf)
+    fl = os.path.join(ROOT, "translation", d, "ldflags")
+    flags = Path(fl).read_text().split() if os.path.exists(fl) else []
+    # Re-exported adapters must exist even when the classified executable
+    # imports only their consumer (AudioUnit re-exports AudioToolbox).
+    for dependency in re.findall(r"\{outdir\}/ak([^/\s,]+)\.dylib", " ".join(flags)):
+        if dependency not in ADAPTERS:
+            sys.exit(f"{leaf}: unavailable adapter dependency {dependency}")
+        planned = plan["translation"].get(dependency)
+        if planned:
+            build(dependency, planned["install_name"], planned["symbols"],
+                  planned["real_tbd"], planned["provider_tbds"])
+        else:
+            build(dependency, f"@rpath/ak{dependency}.dylib", [],
+                  None if dependency in translation_leaves("standalone") else sdk_library(dependency))
     out = os.path.join(outdir, os.path.basename(install_name))
     cached = cache / os.path.basename(install_name)
     if cached.is_file():
         shutil.copy2(cached, out)
+        building.remove(leaf); built.add(leaf)
         print(f"  {os.path.basename(out):32s} cached compatibility library")
         return
-    d = re.sub(r"\.dylib$", "", leaf)
     objs, defined = [], set()
     # An experimental adapter nobody opted into contributes no sources.
     for src in sorted(glob.glob(os.path.join(ROOT, "translation", d, "*.[cm]"))) if d in ADAPTERS else []:
@@ -88,7 +113,7 @@ def build(leaf, install_name, symbols, real_tbd=None, provider_tbds=(), extra=()
     for s, k in todo:
         c = s[1:]
         if k == "func":
-            lines.append(f'long {c}(void) {{ static char hit; if (!hit) {{ hit = 1; AKStubHit("{c}", __builtin_return_address(0)); }} return 0; }}')
+            lines.append(function_stub(s))
         elif k == "data":   # 64 bytes: a CFString pointer for constant-like names, zeros otherwise
             init = f'CFSTR("{c}")' if re.match(r"(k[A-Z]|NS|MTL|AV|CG|UI)", c) else "0"
             lines.append(f"struct {{ const void *p; char pad[56]; }} {c} = {{ {init} }};")
@@ -96,6 +121,10 @@ def build(leaf, install_name, symbols, real_tbd=None, provider_tbds=(), extra=()
     o = stub + ".o"; run(CC + ["-c", stub, "-o", o]); objs.append(o)
     out = os.path.join(outdir, os.path.basename(install_name))
     ld = ["-dynamiclib", "-install_name", install_name, "-o", out]
+    # Resolve through compatibility adapters before native providers. Their
+    # re-exports retain the native APIs while overriding desktop semantics.
+    adapter_reexports = [flag for flag in flags if flag.startswith("-Wl,-reexport_library,")]
+    ld += [flag.replace("{outdir}", outdir) for flag in adapter_reexports]
     for t in [real_tbd, *provider_tbds]:   # re-exports first: ld keeps the first mention of a dylib
         t = t and sdk_tbd(t)
         if t:
@@ -103,13 +132,12 @@ def build(leaf, install_name, symbols, real_tbd=None, provider_tbds=(), extra=()
     ld += ["-framework", "Foundation", "-framework", "CoreFoundation"]
     if leaf != "AKSupport":
         ld += ["-L", outdir, "-lAKSupport"]
-    fl = os.path.join(ROOT, "translation", d, "ldflags")
-    if os.path.exists(fl):
-        ld += [flag.replace("{outdir}", outdir) for flag in open(fl).read().split()]
+    ld += [flag.replace("{outdir}", outdir) for flag in flags if flag not in adapter_reexports]
     run(CC + objs + ld + list(extra))
     if real_tbd and "LC_REEXPORT_DYLIB" not in subprocess.run(["otool", "-l", out], capture_output=True, text=True).stdout:
         sys.exit(f"{out}: re-export of the real library was not recorded")
     shutil.copy2(out, cached)
+    building.remove(leaf); built.add(leaf)
     print(f"  {os.path.basename(out):32s} hand={len(defined):3d} stubs={len(todo):3d}" + (" reexports real" if real_tbd else ""))
 
 
