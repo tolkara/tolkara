@@ -575,11 +575,20 @@ static int guest_dladdr(const void *address, Dl_info *info) {
 // Experimental, opt-in (TOLKARA_VM_BUDGET_MB, off by default): the guest's
 // large anonymous reservations fit a virtual-memory budget; see GuestVMBudget.h.
 static GVBudget vm_budget;
+static bool trace_memory_operations(void) {
+    static dispatch_once_t once;
+    static bool enabled;
+    dispatch_once(&once, ^{
+        const char *value=getenv("TOLKARA_TRACE_MEMORY");
+        enabled=value && !strcmp(value,"1");
+    });
+    return enabled;
+}
 static int guest_madvise(void *address, size_t size, int advice) {
     return gsv_enabled()?gsv_advise(address,size,advice):gv_advise(&vm_budget,address,size,advice);
 }
 static int guest_mprotect(void *address, size_t size, int prot) {
-    LOG("[native] mprotect(%p,%#zx,%d)\n",address,size,prot);
+    if(trace_memory_operations()) LOG("[native] mprotect(%p,%#zx,%d)\n",address,size,prot);
     // Local signing: shadow pages are plain writable anonymous memory; signed
     // pages already have their final protection by construction.
     if (inside_exec(address,size)) {
@@ -594,7 +603,7 @@ static int guest_mprotect(void *address, size_t size, int prot) {
 }
 static int guest_munmap(void *address, size_t size) {
     gsv_forget_code_alias(address,size);
-    LOG("[native] munmap(%p,%#zx)\n",address,size);
+    if(trace_memory_operations()) LOG("[native] munmap(%p,%#zx)\n",address,size);
     // Local signing: keep validated pages; shadow pages stay mapped+writable.
     if (inside_exec(address,size)) {
         if (inside_shadow(address,size)) return mprotect(address,size,PROT_READ|PROT_WRITE);
@@ -606,7 +615,7 @@ static int guest_munmap(void *address, size_t size) {
     return gsv_enabled()?gsv_unmap(address,size):gv_unmap(&vm_budget,address,size);
 }
 static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd, off_t offset) {
-    LOG("[native] mmap(%p,%#zx,%d,%#x,%d,%lld)\n",address,size,prot,flags,fd,(long long)offset);
+    if(trace_memory_operations()) LOG("[native] mmap(%p,%#zx,%d,%#x,%d,%lld)\n",address,size,prot,flags,fd,(long long)offset);
     if (inside_exec(address,size) && (flags & MAP_ANON) && (flags & MAP_PRIVATE) &&
         fd == -1 && offset == 0 && !((uintptr_t)address % GM_PAGE_SIZE) && size && !(size % GM_PAGE_SIZE)) {
         if (inside_shadow(address,size)) {
@@ -636,7 +645,8 @@ static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd,
             log_once("[native] reservation of %zu MB downsized to %zu MB (TOLKARA_VM_BUDGET_MB)\n",size>>20,granted>>20);
         errno=code;
     } else result=gv_map(&vm_budget,address,size,prot,flags,fd,offset);
-    LOG("[native] mmap -> %p errno=%d\n",result,result==MAP_FAILED?errno:0); return result;
+    if(trace_memory_operations() || result==MAP_FAILED) LOG("[native] mmap -> %p errno=%d\n",result,result==MAP_FAILED?errno:0);
+    return result;
 }
 static void guest_jit_protect(int enabled) { LOG("[native] jit write protection=%d (separate RW/RX views)\n",enabled); }
 // compiler-rt's instruction cache flush, which iPadOS's libSystem does not
@@ -695,7 +705,11 @@ static int guest_system(const char *);
 static FILE *guest_popen(const char *, const char *);
 static int guest_posix_spawn(pid_t *, const char *, const posix_spawn_file_actions_t *, const posix_spawnattr_t *,
                              char *const *, char *const *);
+static NGExitObserver guest_exit_observer;
+static void *guest_exit_context;
+static atomic_bool guest_exit_notifying;
 static void guest_exit(int) __attribute__((noreturn));
+static void guest_quick_exit(int) __attribute__((noreturn));
 static void guest_abort(void) __attribute__((noreturn));
 // Opt-in tracing (--trace-guest): the guest's failed file access, the
 // directories it creates and the environment variables it reads. Off by
@@ -802,7 +816,7 @@ static void *hook(const char *name) {
     HOOK("dladdr",guest_dladdr); HOOK("dlsym",guest_dlsym);
     HOOK("dlopen",guest_dlopen); HOOK("dlclose",guest_dlclose); HOOK("dlerror",guest_dlerror);
     HOOK("system",guest_system); HOOK("popen",guest_popen); HOOK("posix_spawn",guest_posix_spawn);
-    HOOK("exit",guest_exit); HOOK("abort",guest_abort);
+    HOOK("exit",guest_exit); HOOK("_exit",guest_quick_exit); HOOK("_Exit",guest_quick_exit); HOOK("abort",guest_abort);
     if (trace_guest || case_insensitive_files || gsv_enabled()) {
         HOOK("open",guest_open); HOOK("openat",guest_openat); HOOK("stat",guest_stat); HOOK("lstat",guest_lstat);
         HOOK("fstatat",guest_fstatat);
@@ -937,9 +951,21 @@ static void describe_caller(const void *address, char *out, size_t size) {
     if (dladdr(address,&info) && info.dli_fname) snprintf(out,size,"%s+%#lx",info.dli_sname?:info.dli_fname,(unsigned long)(at-(uintptr_t)(info.dli_sname?info.dli_saddr:info.dli_fbase)));
     else snprintf(out,size,"%p",address);
 }
+void ng_set_exit_observer(NGExitObserver observer, void *context) {
+    guest_exit_observer=observer; guest_exit_context=context;
+}
+static void notify_guest_exit(int code) {
+    BOOL alreadyNotified=guest_exit_observer ? atomic_exchange(&guest_exit_notifying,true) : atomic_load(&guest_exit_notifying);
+    LOG("[native] exit observer registered=%d already_notified=%d\n",guest_exit_observer!=NULL,alreadyNotified);
+    if (guest_exit_observer && !alreadyNotified) guest_exit_observer(code,guest_exit_context);
+}
+static void guest_quick_exit(int code) {
+    LOG("[native] _exit(%d) called\n",code);
+    notify_guest_exit(code); _exit(code);
+}
 static void guest_exit(int code) {
     char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);
-    LOG("[native] exit(%d) called from %s\n",code,caller); exit(code);
+    LOG("[native] exit(%d) called from %s\n",code,caller); notify_guest_exit(code); exit(code);
 }
 static void guest_abort(void) {
     char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);

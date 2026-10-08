@@ -16,6 +16,10 @@ NGStartupStep ng_startup_step(void);
 // compatibility runtime started from a profile. Copied; at most 64 of 4096
 // bytes. Call before ng_initialize; default: none.
 void ng_set_arguments(const char *const *arguments, size_t count);
+// Host-only cleanup before a guest exits; never reads application memory.
+// Install before guest entry. A nonzero exit remains an error exit.
+typedef void (*NGExitObserver)(int code, void *context);
+void ng_set_exit_observer(NGExitObserver observer, void *context);
 // Libraries a compatibility runtime opens by path instead of linking, placed
 // with the executable as if it carried them (gl_carry): absolute paths inside
 // root, the runtime folder, which then counts as the application's folder.
