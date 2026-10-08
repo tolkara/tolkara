@@ -965,7 +965,11 @@ static void guest_quick_exit(int code) {
 }
 static void guest_exit(int code) {
     char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);
-    LOG("[native] exit(%d) called from %s\n",code,caller); notify_guest_exit(code); exit(code);
+    LOG("[native] exit(%d) called from %s\n",code,caller);
+    // exit() would flush these anyway; flushing first lets the observer see
+    // saves still buffered in stdio. atexit handlers still run afterwards.
+    if (guest_exit_observer) fflush(NULL);
+    notify_guest_exit(code); exit(code);
 }
 static void guest_abort(void) {
     char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);

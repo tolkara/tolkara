@@ -341,7 +341,9 @@ responsive while waiting. Embedded wineserver must not schedule SIGKILL against
 its shared native host when the logical Windows process exits; the fork now
 marks that process dead without killing the host. An original Mac exit fixture
 also survives three seconds of host finalization. Force-close or crash skips the
-final attempt; pending saves are checked on the next launch.
+final attempt; pending saves are checked on the next launch. The final attempt
+runs when the game calls `exit`, before its `atexit` handlers and destructors:
+a save written only there is uploaded at the next launch.
 The first synchronization pulls and backs up local files. Later syncs
 compare both sides against verified hashes, preserve conflicts, and defer
 remote replacement while the game is running. This is independent of the
