@@ -45,6 +45,9 @@ targetTemplates:
       - path: runtime
       # The shader-container rewrap, for the Diagnostics menu's captured-shader check.
       - path: translation/Metal/LibraryContainer.m
+    dependencies:
+      - sdk: Security.framework
+      - sdk: libz.tbd
     entitlements:
       path: launcher/App.entitlements
       properties:

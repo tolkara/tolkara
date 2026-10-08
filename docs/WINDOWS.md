@@ -262,6 +262,95 @@ Remaining noise: FreeType, GnuTLS and SDL2 are `dlopen`ed by bare soname and
 not found in the bundled runtime (configure should record `@rpath` sonames
 and the build script bundle them); no Vulkan (MoltenVK) yet.
 
+### Vulkan graphics (development, 2026-10-02)
+
+Wine can load a builder-supplied macOS MoltenVK library using the configure
+cache setting `ac_cv_lib_soname_MoltenVK=@rpath/libMoltenVK.dylib`. Bundle that
+library in `Wine/lib`, add `@loader_path/../..` to the rebuilt Unix bridge
+libraries, and sign the runtime libraries again. A Windows game may need a
+Direct3D translator such as DXVK's macOS fork: forcing Unity's Vulkan renderer
+does not help when the game's shipped build has only Direct3D shaders.
+
+For Tolkara, set `TOLKARA_VULKAN_RUNTIME` to the **native iOS** MoltenVK framework
+binary, or its **iOS simulator** binary when building for the simulator.
+`tools/embed_vulkan_runtime.py` checks the arm64 platform and Metal surface
+exports, bundles it as `aklibMoltenVK.dylib`, and maps Wine's dlopen name to that
+native backend. Generic builds discover it by adapter name. It is signed with
+Tolkara's compatibility libraries; the macOS MoltenVK library remains outside
+the app. Retain MoltenVK's supplied licence when distributing a build.
+
+The downstream Wine driver accepts the Metal surface extension without requiring
+the deprecated macOS-only surface extension, which iOS MoltenVK does not export.
+On the Mac, MegaBonk's unchanged Steam Windows build now initializes Direct3D 11
+and creates a Metal-backed swap chain through Wine/FEX, DXVK macOS and MoltenVK.
+Gameplay and physical iPad graphics remain unverified.
+
+The same downstream Wine build passes our original offscreen Direct3D 11
+fixture on the Mac with `WINESINGLEPROCESS=1`, `WINEJITPOOL=dual:256` and
+`FEX_MAXCODEBUFFERSIZE=24`: compile vertex and pixel shaders, draw a triangle,
+then verify every pixel in a 16×16 staging readback. This exercises real GPU
+rendering without game code or automated input. Hybrid ARM64EC/ARM64X image
+code must be placed in the executable pool, and ARM64X relocation writes must
+use its writable alias. A separate 32-bit parent/child fixture verifies image
+name pointer conversion, inherited environment and child exit status.
+
+Tolkara's iOS 27 simulator now loads the native simulator MoltenVK backend and
+passes the x86-64 startup and public Vulkan capability fixtures. Its Apple2
+GPU reports no BC compression, precise occlusion queries, multiple viewports,
+cube arrays or indirect draws with a nonzero base instance. DXVK rejects the
+Direct3D feature levels requested by the game. This matches Apple's documented
+[simulator GPU limits](https://developer.apple.com/documentation/metal/developing-metal-apps-that-run-in-simulator).
+It does not establish what the physical iPad's GPU supports; that needs a
+separate device test.
+
+On 2026-10-03 the standalone window fixture exposed another single-process
+issue: a server-created desktop belongs to the current process but has no
+client-side `WND`, so `NtUserGetAncestor(GA_ROOT)` failed while traversing it.
+The Wine fork now recognizes that desktop as `WND_DESKTOP`. The fixture passes
+root and child ancestry, invalid-handle rejection, swap-chain presentation and
+all readback pixels both in a standalone single-process session and in normal
+Wine mode. MegaBonk then creates its Metal swap chain and loads its assets with
+the aliased executable pool enabled. Visible gameplay remains unverified.
+An original Win32-only fixture also passes top-level and child ancestry and
+invalid-handle rejection with this fix under Tolkara's iOS simulator.
+
+On 2026-10-06, the physical M5 iPad passes the original Vulkan capability,
+Direct3D 11 shader/triangle/readback, visible-window and 40-thread allocation
+fixtures. FEX's allocator now requests aligned virtual spans directly, and
+omits the 256 MiB L2 reservation when that cache is disabled. MegaBonk runs
+with a 4 GiB Wine reservation and two Unity job workers. AppKit inserts Wine's
+Metal child view into the layer tree and honors its resizing mask. AudioUnit
+resolves the output adapter before its native reexport; output callbacks carry
+nonzero samples without errors. The user confirms a playable run, with a camera
+mouse problem. The installed confinement/recentering fix passes our original
+UIKit input fixtures. An original physical Wine cursor fixture now verifies
+that pointer lock activates, repeated recentering returns exact positions,
+and release unlocks the pointer without failed warp errors. The missing
+`convertRectFromScreen:` implementation had prevented confinement from
+activating. Manual camera feel validation remains pending.
+
+The native Steam Cloud client uses the user's approved Steam session over TLS,
+with the remembered login in the iPad Keychain. It imports three genuine saves
+before guest entry. After the user's run, the iPad uploaded both changed saves;
+an independent authenticated download matches all three iPad files byte for
+byte. Synchronization runs before launch, every minute during play, and on clean
+exit. Final synchronization passes through an original physical Wine fixture:
+the exit observer runs once, all three saves are verified, and completion is
+logged before process shutdown. The coordinator keeps the main event loop
+responsive while waiting. Embedded wineserver must not schedule SIGKILL against
+its shared native host when the logical Windows process exits; the fork now
+marks that process dead without killing the host. An original Mac exit fixture
+also survives three seconds of host finalization. Force-close or crash skips the
+final attempt; pending saves are checked on the next launch.
+The first synchronization pulls and backs up local files. Later syncs
+compare both sides against verified hashes, preserve conflicts, and defer
+remote replacement while the game is running. This is independent of the
+Windows Steam client's login; it does not supply a pretend Steam identity to
+the game. The game currently saves under its working directory's
+`Saves/CloudDir/0`; the configured remote path uses the authenticated account.
+Full sanitizer and UIKit fixture suites pass. The simulator's feature limits
+remain as described above.
+
 ### The 32-bit window (design, 2026-09-26)
 
 The kernel rule behind the 4 GB floor is explicit in XNU's Mach-O loader

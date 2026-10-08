@@ -639,3 +639,9 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations \
     -framework Security translation/Security/Keychain.m tests/test_system_roots.m \
     -o build/emulation/test_system_roots
 build/emulation/test_system_roots build/emulation/system-roots.plist
+
+# Original Steam Cloud protocol and conflict fixtures; no account or network.
+xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Ilauncher/Cloud -framework Foundation launcher/Cloud/SteamCloudWire.m launcher/Cloud/SteamCloudSync.m \
+    launcher/Cloud/SteamCloudCoordinator.m -framework Security tests/test_steam_cloud.m -lz -o build/emulation/test_steam_cloud
+build/emulation/test_steam_cloud

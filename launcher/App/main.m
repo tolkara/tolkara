@@ -11,6 +11,7 @@
 #import "NativeGuest.h"
 #import "SignedFileProbe.h"
 #import "StartupActivity.h"
+#import "../Cloud/SteamCloudCoordinator.h"
 #include "HostDiagnostics.h"
 #include <errno.h>
 #include <mach/mach_time.h>
@@ -32,6 +33,12 @@
 @property(nonatomic, strong) TKLibraryViewController *libraryController;
 @property(nonatomic, strong) TKAppLibrary *library;
 @property(nonatomic, strong, nullable) TKApp *launchingApp;
+@property(nonatomic, strong) TKSteamCloudCoordinator *steamCloud;
+@property(nonatomic) BOOL cloudPrepared;
+@property(nonatomic) BOOL cloudPreparing;
+@property(nonatomic) BOOL cloudFullStartup;
+@property(nonatomic, strong) TKApp *cloudApp;
+@property(nonatomic, copy) NSString *cloudContainer;
 // iPadOS allows one guest startup per process; some checks also end it.
 @property(nonatomic) BOOL sessionUsed;
 // A plain launch (library shown, no development arguments): a game that
@@ -63,6 +70,9 @@ static TKAppLibrary *OpenLibrary(void) {
 static BOOL CanStartApps(void) {
     NSString *support=[NSBundle.mainBundle.privateFrameworksPath stringByAppendingPathComponent:@"libAKSupport.dylib"];
     return [NSFileManager.defaultManager fileExistsAtPath:support];
+}
+static void FlushSteamCloudAtExit(int code, void *context) {
+    if (!code) @autoreleasepool { [(__bridge TKSteamCloudCoordinator *)context flush]; }
 }
 static const char *ModeIdentifier(TKExecutionMode mode) { return (TKExecutionModeIdentifier(mode)?:@"none").UTF8String; }
 // Files shows the app's Documents under its bundle name (Tolkara or TolkaraDiagnostics).
@@ -184,8 +194,11 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
     // --execution-mode=<id> > saved choice > TOLKARA_MODE preselection > ask.
     NSString *source=nil;
-    self.executionMode=TKExecutionModeResolve(arguments,NSUserDefaults.standardUserDefaults,
-        [NSBundle.mainBundle objectForInfoDictionaryKey:TKExecutionModePreselectionKey],&source);
+    NSString *saveProblem=nil;
+    if(TKExecutionModeApplySaveArgument(arguments,NSUserDefaults.standardUserDefaults,&saveProblem))
+        self.executionMode=TKExecutionModeResolve(arguments,NSUserDefaults.standardUserDefaults,
+            [NSBundle.mainBundle objectForInfoDictionaryKey:TKExecutionModePreselectionKey],&source);
+    else { self.executionMode=TKExecutionModeNone;source=saveProblem; }
     self.executionModeSource=source;
     fprintf(stderr,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),source.UTF8String);
     // Any Local signing launch makes the container folder, so a fresh install
@@ -202,11 +215,12 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(arenaDidPrepare:)
         name:TKLocalArenaDidPrepare object:nil];
 #endif
-    // A plain launch (no arguments, or only a per-launch --execution-mode)
+    // A plain launch (no arguments, or a mode choice with optional explicit save)
     // shows the app library. Any other launch is a development run from
     // tools/: keep its plain status screen and behaviour.
     BOOL plain=YES;
-    for(NSUInteger i=1;i<arguments.count;i++) if(![arguments[i] hasPrefix:TKExecutionModeArgumentPrefix]) plain=NO;
+    for(NSUInteger i=1;i<arguments.count;i++) if(![arguments[i] hasPrefix:TKExecutionModeArgumentPrefix] &&
+        ![arguments[i] isEqualToString:TKExecutionModeSaveArgument]) plain=NO;
     if (plain) {
         self.uiSession=YES;
         self.libraryController=[[TKLibraryViewController alloc] initWithLibrary:self.library];
@@ -715,7 +729,25 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 }
 // container: Local signing's validated page container, or nil for the
 // Developer-service/debugger path. Callers choose it; this only applies it.
+- (void)resumeCloudPreparedNativeGame { [self runNativeGame:self.cloudFullStartup app:self.cloudApp container:self.cloudContainer]; }
 - (void)runNativeGame:(BOOL)fullStartup app:(TKApp *)app container:(NSString *)container {
+    if (!self.cloudPrepared && [TKSteamCloudCoordinator configuredProfile:app.profile documents:TKDocumentsPath(@"")]) {
+        if(self.cloudPreparing)return;self.cloudPreparing=YES;
+        self.cloudFullStartup=fullStartup;self.cloudApp=app;self.cloudContainer=container;
+        self.steamCloud=[[TKSteamCloudCoordinator alloc] initWithProfile:app.profile documents:TKDocumentsPath(@"")];
+        self.status.text=@"Synchronizing Steam Cloud saves…";
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            NSError *error=nil;NSString *report=nil;BOOL ready=[self.steamCloud prepareWithReport:&report error:&error];
+            dispatch_async(dispatch_get_main_queue(),^{
+                self.cloudPreparing=NO;
+                if(!ready) { self.status.text=report?:[NSString stringWithFormat:@"Steam Cloud sync failed (%@:%ld). Saves preserved. See SteamCloud/%@/sync.log.",error.domain,(long)error.code,app.profile];[self showStartStopped];return; }
+                self.cloudPrepared=YES;[self.steamCloud startPeriodicSync];
+                ng_set_exit_observer(FlushSteamCloudAtExit,(__bridge void *)self.steamCloud);
+                // The guest enters from a timer callout, after this dispatch block returns.
+                [self performSelector:@selector(resumeCloudPreparedNativeGame) withObject:nil afterDelay:0];
+            });
+        });return;
+    }
     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
     UIApplication.sharedApplication.idleTimerDisabled = YES;
     NSString *logPath = TKDocumentsPath(@"native-guest.log");
@@ -811,6 +843,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // process after a short note: the next tap on Tolkara opens the library
     // ready to start another app (one guest startup per process).
     if (ok && fullStartup && self.uiSession) {
+        [self.steamCloud flush];
         fprintf(log,"[host] %s closed; ending this session\n",app.name.UTF8String); fflush(log);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{ exit(0); });
     }
@@ -1026,6 +1059,15 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         fclose(log);
         self.status.text=ok?@"Signed file-mapped code executed natively.":@"Signed file probe failed. See probe log.";
         return;
+    }
+    for(NSString *argument in arguments) if([argument hasPrefix:@"--steam-cloud-sync="]) {
+        NSString *profile=[argument substringFromIndex:19];
+        self.steamCloud=[[TKSteamCloudCoordinator alloc] initWithProfile:profile documents:TKDocumentsPath(@"")];
+        self.status.text=@"Synchronizing Steam Cloud saves…";
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            NSError *error=nil;NSString *report=nil;BOOL ready=[self.steamCloud prepareWithReport:&report error:&error];
+            dispatch_async(dispatch_get_main_queue(),^{self.status.text=ready?report:(report?:[NSString stringWithFormat:@"Steam Cloud sync failed (%@:%ld). Saves preserved.",error.domain,(long)error.code]);});
+        });return;
     }
     if([arguments containsObject:@"--signed-cache-probe"]) { self.status.text=TKSignedCacheProbeReport();return; }
     if([arguments containsObject:@"--shader-pause-probe"]) { self.status.text=TKShaderPauseProbeReport();return; }
