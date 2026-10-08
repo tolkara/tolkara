@@ -161,7 +161,6 @@ static NSString *sha1(NSData *bytes) {
         if (push.count) {
             NSDictionary *verified = [self listing:client remote:remote error:error]; if (!verified) return NO;
             for (NSString *name in push) if (![verified[name][@"sha1"] isEqual:sha1(push[name])]) { if (error) *error = syncError(43); return NO; }
-            listing = verified;
         }
         // Re-read before replacing to preserve a save written during the network operation.
         for (NSString *name in downloads) {
@@ -171,7 +170,10 @@ static NSString *sha1(NSData *bytes) {
         }
         for (NSString *name in downloads) if (![downloads[name] writeToFile:[_localDirectory stringByAppendingPathComponent:name] options:NSDataWritingAtomic error:error]) return NO;
         NSMutableDictionary *hashes = [NSMutableDictionary new];
-        for (NSString *name in listing) hashes[name] = listing[name][@"sha1"];
+        // The baseline is what both sides now hold: an uploaded file's bytes, and
+        // otherwise the listing synchronized against. A file another device
+        // changed during the upload stays a remote change for the next sync.
+        for (NSString *name in listing) hashes[name] = push[name] ? sha1(push[name]) : listing[name][@"sha1"];
         NSData *state = [NSJSONSerialization dataWithJSONObject:@{@"appID":@(_appID),@"steamID":@(client.steamID),@"files":hashes} options:NSJSONWritingPrettyPrinted error:error];
         if (!state || ![state writeToFile:baselinePath options:NSDataWritingAtomic error:error]) return NO;
         chmod(baselinePath.fileSystemRepresentation,0600);

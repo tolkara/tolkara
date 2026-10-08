@@ -7,23 +7,40 @@
 static NSData *bytes(NSString *s) { return [s dataUsingEncoding:NSUTF8StringEncoding]; }
 static NSData *hash(NSData *data) { unsigned char h[20];CC_SHA1(data.bytes,(CC_LONG)data.length,h);return [NSData dataWithBytes:h length:20]; }
 @interface FixtureConnection : TKSteamCloudConnection
-@property(nonatomic,strong) NSData *remote;
+@property(nonatomic,strong) NSData *remote;   // save.json
+@property(nonatomic,strong) NSMutableDictionary<NSString *,NSData *> *files;
+@property(nonatomic,copy) NSString *uploading;
+@property(nonatomic,strong) NSDictionary<NSString *,NSData *> *changeAfterBatch;   // another device's write
 @property(nonatomic) BOOL corruptDownload;
 @property(nonatomic) unsigned uploads;
 @end
 @implementation FixtureConnection
+- (NSMutableDictionary *)files { if(!_files)_files=[NSMutableDictionary new];return _files; }
+- (NSData *)remote { return self.files[@"save.json"]; }
+- (void)setRemote:(NSData *)remote { self.files[@"save.json"]=remote; }
 - (uint64_t)steamID { return 123; } // Synthetic test account; never connected to Steam.
 - (BOOL)connectWithUsername:(NSString *)username token:(NSString *)token error:(NSError **)error { (void)username;(void)token;(void)error;return YES; }
 - (void)disconnect {}
 - (NSDictionary *)call:(NSString *)method fields:(NSDictionary *)fields error:(NSError **)error {
     (void)fields;(void)error;
     if([method isEqual:@"Cloud.GetAppFileChangelist#1"]) {
-        NSData *file=TKCloudProto(@{@1:@"save.json",@2:hash(self.remote),@3:@1234,@4:@(self.remote.length),@5:@0,@7:@0});
-        return TKCloudParse(TKCloudProto(@{@1:@12,@2:@[file],@4:@[bytes(@"fixture/")]}));
+        NSMutableArray *listed=[NSMutableArray new];
+        for(NSString *name in [self.files.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+            NSData *data=self.files[name];
+            [listed addObject:TKCloudProto(@{@1:name,@2:hash(data),@3:@1234,@4:@(data.length),@5:@0,@7:@0})];
+        }
+        return TKCloudParse(TKCloudProto(@{@1:@12,@2:listed,@4:@[bytes(@"fixture/")]}));
     }
-    if([method isEqual:@"Cloud.ClientFileDownload#1"])return TKCloudParse(TKCloudProto(@{@999:self.corruptDownload?bytes(@"bad download"):self.remote}));
+    if([method isEqual:@"Cloud.ClientFileDownload#1"]) {
+        NSString *name=[fields[@2] substringFromIndex:@"fixture/".length];
+        return TKCloudParse(TKCloudProto(@{@999:self.corruptDownload?bytes(@"bad download"):self.files[name]}));
+    }
     if([method isEqual:@"Cloud.BeginAppUploadBatch#1"])return TKCloudParse(TKCloudProto(@{@1:@77,@4:@13}));
-    if([method isEqual:@"Cloud.CompleteAppUploadBatchBlocking#1"])return @{};
+    if([method isEqual:@"Cloud.CompleteAppUploadBatchBlocking#1"]) {
+        if([fields[@3] unsignedIntValue]==1 && self.changeAfterBatch) { [self.files addEntriesFromDictionary:self.changeAfterBatch];self.changeAfterBatch=nil; }
+        return @{};
+    }
+    if([method isEqual:@"Cloud.ClientBeginFileUpload#1"]) self.uploading=[fields[@6] substringFromIndex:@"fixture/".length];
     if([method isEqual:@"Cloud.ClientBeginFileUpload#1"])return TKCloudParse(TKCloudProto(@{@2:@[TKCloudProto(@{@4:@4,@6:@0,@7:@([fields[@2] unsignedLongLongValue])})]}));
     if([method isEqual:@"Cloud.ClientCommitFileUpload#1"])return TKCloudParse(TKCloudProto(@{@1:@YES}));
     assert(!"unexpected synthetic service call");return nil;
@@ -40,7 +57,7 @@ static NSData *hash(NSData *data) { unsigned char h[20];CC_SHA1(data.bytes,(CC_L
 - (TKSteamCloudConnection *)newConnection { return self.fixture; }
 - (NSData *)transfer:(NSDictionary *)metadata host:(unsigned)host path:(unsigned)path tls:(unsigned)tls headers:(unsigned)headers data:(NSData *)data error:(NSError **)error {
     (void)host;(void)path;(void)tls;(void)headers;(void)error;
-    if(data) { self.fixture.remote=data;self.fixture.uploads++;return NSData.data; }
+    if(data) { self.fixture.files[self.fixture.uploading]=data;self.fixture.uploads++;return NSData.data; }
     return TKCloudBytes(metadata,999);
 }
 @end
@@ -93,9 +110,23 @@ int main(void) { @autoreleasepool {
     assert(![sync syncUsername:@"fixture" token:@"fixture" allowUpload:YES report:&report error:&error]);assert(error.code==32);
     NSData *broken=[NSJSONSerialization dataWithJSONObject:@{@"appID":@42,@"steamID":@123,@"files":@42} options:0 error:nil];assert([broken writeToFile:[state stringByAppendingPathComponent:@"baseline.json"] atomically:YES]);error=nil;
     assert(![sync syncUsername:@"fixture" token:@"fixture" allowUpload:YES report:&report error:&error]);assert(error.code==31);
+    // Another device changes b.json after our upload of a.json completes. The
+    // baseline keeps b.json's synchronized hash, so the next sync downloads the
+    // newer b.json instead of uploading the stale local copy over it.
+    NSString *pairLocal=[root stringByAppendingPathComponent:@"pair-local"],*pairState=[root stringByAppendingPathComponent:@"pair-state"];
+    FixtureConnection *pair=[FixtureConnection new];pair.files[@"a.json"]=bytes(@"a-1");pair.files[@"b.json"]=bytes(@"b-1");
+    FixtureSync *pairSync=[[FixtureSync alloc] initWithAppID:42 remoteDirectory:@"fixture/" localDirectory:pairLocal stateDirectory:pairState fileNames:@[@"a.json",@"b.json"]];pairSync.fixture=pair;
+    error=nil;assert([pairSync syncUsername:@"fixture" token:@"fixture" allowUpload:YES report:&report error:&error]);
+    assert([bytes(@"a-2") writeToFile:[pairLocal stringByAppendingPathComponent:@"a.json"] atomically:YES]);
+    pair.changeAfterBatch=@{@"b.json":bytes(@"b-2")};
+    assert([pairSync syncUsername:@"fixture" token:@"fixture" allowUpload:YES report:&report error:&error]);
+    assert(pair.uploads==1 && [pair.files[@"a.json"] isEqual:bytes(@"a-2")] && [pair.files[@"b.json"] isEqual:bytes(@"b-2")]);
+    assert([pairSync syncUsername:@"fixture" token:@"fixture" allowUpload:YES report:&report error:&error]);
+    assert(pair.uploads==1 && [pair.files[@"b.json"] isEqual:bytes(@"b-2")]);
+    assert([[NSData dataWithContentsOfFile:[pairLocal stringByAppendingPathComponent:@"b.json"]] isEqual:bytes(@"b-2")]);
     assert([NSFileManager.defaultManager removeItemAtPath:root error:nil]);
     FixtureCoordinator *coordinator=[[FixtureCoordinator alloc] initWithProfile:@"fixture" documents:NSTemporaryDirectory()];
     assert(NSThread.isMainThread);[coordinator flush];assert(coordinator.callbackRan);
     puts("Steam Cloud: final flush keeps main-thread callbacks responsive PASS");
-    puts("Steam Cloud: bounded protobuf, malformed input, first pull, backups, uploads, remote changes, conflicts and symlink rejection PASS");
+    puts("Steam Cloud: bounded protobuf, malformed input, first pull, backups, uploads, remote changes, conflicts, a remote change during upload and symlink rejection PASS");
 } return 0; }
