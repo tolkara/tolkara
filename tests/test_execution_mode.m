@@ -116,6 +116,31 @@ int main(void) {
         assert(Resolve(@[],defaults,nil,&source)==TKExecutionModeLocalSigning && [source isEqualToString:@"saved"]);
         [defaults removePersistentDomainForName:suite];
 
+        // Explicit setup persists a choice for a later plain launch; diagnostic
+        // per-launch overrides above still leave the saved choice untouched.
+        TKExecutionModeSave(defaults,TKExecutionModeDeveloperService);
+        assert(TKExecutionModeApplySaveArgument(@[@"--execution-mode=local-signing"],defaults,&reason) && !reason);
+        assert(TKExecutionModeLoad(defaults)==TKExecutionModeDeveloperService);
+        assert(TKExecutionModeApplySaveArgument(@[@"--save-execution-mode",@"--execution-mode=local-signing"],defaults,&reason) && !reason);
+        NSUserDefaults *reloaded=[[NSUserDefaults alloc] initWithSuiteName:suite];
+        assert(Resolve(@[],reloaded,nil,&source)==TKExecutionModeLocalSigning && [source isEqualToString:@"saved"]);
+        for(NSArray *bad in @[@[@"--save-execution-mode"],@[@"--save-execution-mode",@"--execution-mode=bogus"],
+                @[@"--save-execution-mode",@"--execution-mode=local-signing",@"--execution-mode=developer-service"],
+                @[@"--save-execution-mode",@"--save-execution-mode",@"--execution-mode=local-signing"]]) {
+            assert(!TKExecutionModeApplySaveArgument(bad,defaults,&reason));
+            assert(TKExecutionModeSourceIsInvalid(reason) && TKExecutionModeLoad(defaults)==TKExecutionModeLocalSigning);
+        }
+#if TOLKARA_INTEGRATED_AUTH
+        assert(TKExecutionModeApplySaveArgument(@[@"--save-execution-mode",@"--execution-mode=developer-service"],defaults,&reason));
+        assert(Resolve(@[],reloaded,nil,&source)==TKExecutionModeDeveloperService && [source isEqualToString:@"saved"]);
+        assert(!TKExecutionModeApplySaveArgument(@[@"--save-execution-mode",@"--execution-mode=external-jit"],defaults,&reason));
+        assert(TKExecutionModeLoad(defaults)==TKExecutionModeDeveloperService);
+#else
+        assert(!TKExecutionModeApplySaveArgument(@[@"--save-execution-mode",@"--execution-mode=developer-service"],defaults,&reason));
+        assert(TKExecutionModeLoad(defaults)==TKExecutionModeLocalSigning);
+#endif
+        [defaults removePersistentDomainForName:suite];
+
         // Local signing container.
         NSString *home=@"/var/mobile/Containers/Data/Application/TEST-HOME";
         assert([TKLocalSigningContainerDisplayPath() isEqualToString:@"Documents/LocalSigning/page-container.dylib"]);

@@ -3,6 +3,7 @@
 NSString *const TKExecutionModeDefaultsKey=@"TolkaraExecutionMode";
 NSString *const TKExecutionModePreselectionKey=@"TolkaraPreselectedExecutionMode";
 NSString *const TKExecutionModeArgumentPrefix=@"--execution-mode=";
+NSString *const TKExecutionModeSaveArgument=@"--save-execution-mode";
 NSString *const TKExecutionModeSourceArgument=@"argument";
 NSString *const TKExecutionModeSourceSaved=@"saved";
 NSString *const TKExecutionModeSourcePreselected=@"TOLKARA_MODE";
@@ -85,8 +86,24 @@ void TKExecutionModeSave(NSUserDefaults *defaults, TKExecutionMode mode) {
     if(identifier) [defaults setObject:identifier forKey:TKExecutionModeDefaultsKey];
     else [defaults removeObjectForKey:TKExecutionModeDefaultsKey];
 }
+BOOL TKExecutionModeApplySaveArgument(NSArray<NSString *> *arguments, NSUserDefaults *defaults, NSString **reason) {
+    if(reason) *reason=nil;
+    NSUInteger saves=0, modes=0; NSString *value=nil;
+    for(NSString *argument in arguments) {
+        if([argument isEqualToString:TKExecutionModeSaveArgument]) saves++;
+        if([argument hasPrefix:TKExecutionModeArgumentPrefix]) { modes++;value=[argument substringFromIndex:TKExecutionModeArgumentPrefix.length]; }
+    }
+    if(!saves) return YES;
+    NSString *problem=nil;
+    TKExecutionMode mode=TKExecutionModeFromIdentifier(value);
+    if(saves!=1 || modes!=1 || !mode) problem=@"requires one --save-execution-mode and one valid --execution-mode";
+    else if(!TKExecutionModeAvailable(mode,&problem)) {}  // availability supplies its reason
+    else { TKExecutionModeSave(defaults,mode);return YES; }
+    if(reason) *reason=[@"invalid --save-execution-mode: " stringByAppendingString:problem];
+    return NO;
+}
 BOOL TKExecutionModeSourceIsInvalid(NSString *source) {
-    return [source hasPrefix:TKExecutionModeSourceInvalidArgument] || [source hasPrefix:TKExecutionModeSourceInvalidPreselection];
+    return [source hasPrefix:TKExecutionModeSourceInvalidArgument] || [source hasPrefix:TKExecutionModeSourceInvalidPreselection] || [source hasPrefix:@"invalid --save-execution-mode"];
 }
 static TKExecutionMode Resolved(TKExecutionMode mode, NSString *why, NSString **source) {
     if(source) *source=why;

@@ -138,6 +138,20 @@ provisioning profile expires or you change the bundle ID or Keychain group.
 > command. If it fails, the individual steps are readable in the script and
 > each prints its own diagnosis.
 
+The development `--execution-mode` argument applies to one launch and leaves
+an existing saved choice unchanged. If a tested development run succeeds but a
+regular library launch uses another mode, select the tested mode with
+**Execution mode…**. An explicit setup launch can also save that same choice:
+
+```bash
+xcrun devicectl device process launch --terminate-existing --device "$DEVICE" \
+  "$TOLKARA_BUNDLE_ID" --execution-mode=developer-service --save-execution-mode
+```
+
+This opens the library and persists the named mode. The save flag requires one
+valid mode available in the installed build; invalid or repeated choices leave
+the previous saved choice intact.
+
 ### Local signing: build the page container
 
 With `TOLKARA_MODE=local-signing` in `local.env`, `tools/install.sh` does this

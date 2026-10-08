@@ -24,6 +24,10 @@ extern NSString *const TKExecutionModePreselectionKey;   // Info.plist "TolkaraP
 extern NSString *const TKExecutionModeArgumentPrefix;    // "--execution-mode=": one launch only, never saved
 TKExecutionMode TKExecutionModeLoad(NSUserDefaults *defaults);
 void TKExecutionModeSave(NSUserDefaults *defaults, TKExecutionMode mode);  // None forgets the choice
+extern NSString *const TKExecutionModeSaveArgument;  // "--save-execution-mode"
+// Explicit setup only: persist exactly one valid, available --execution-mode.
+// Without the save flag this does nothing; rejected requests leave the choice intact.
+BOOL TKExecutionModeApplySaveArgument(NSArray<NSString *> *arguments, NSUserDefaults *defaults, NSString **reason);
 
 // Where a resolved mode came from. A rejected --execution-mode value or
 // preselection resolves to None with a source that starts with one of the two
