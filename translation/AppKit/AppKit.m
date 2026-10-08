@@ -291,6 +291,10 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 - (instancetype)initWithFrame:(CGRect)f {
     if ((self = [super initWithFrame:f])) {
         self.multipleTouchEnabled = NO;
+        // Before the first pointer event the cursor rests mid-window, as a
+        // Mac's would somewhere on screen: not in a corner, where a game that
+        // polls the position would hover whatever sits there.
+        _last = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
         _softwareCursor=[NSProcessInfo.processInfo.arguments containsObject:@"--software-cursor"];
         AKLog(@"cursor presentation=%@",_softwareCursor?@"software overlay":@"native iPad pointer");
         _cursorView=[UIImageView new]; _cursorView.userInteractionEnabled=NO;
@@ -327,6 +331,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 - (void)setNsWindow:(NSWindow *)window {
     _nsWindow = window;
     window.ak_mouseLocation = CGPointMake(_last.x, self.bounds.size.height - _last.y);
+    if (window) mouseScreenLocation = [window convertPointToScreen:window.ak_mouseLocation];
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -338,6 +343,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         _last.x = MAX(0, MIN(self.bounds.size.width - 1, _last.x));
         _last.y = MAX(0, MIN(self.bounds.size.height - 1, _last.y));
         self.nsWindow.ak_mouseLocation = CGPointMake(_last.x, self.bounds.size.height - _last.y);
+        if (self.nsWindow) mouseScreenLocation = [self.nsWindow convertPointToScreen:self.nsWindow.ak_mouseLocation];
         [self positionCursor];
     }
 }
@@ -445,7 +451,9 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         (void)pad;AKHostView *view=weakSelf;if(!view || !view.window.isKeyWindow)return;
         NSEvent *event=[NSEvent new];event.window=view.nsWindow;event.type=NSEventTypeScrollWheel;
         event.locationInWindow=view.nsWindow.ak_mouseLocation;event.modifierFlags=view->_mods;
-        event.deltaX=event.scrollingDeltaX=x;event.deltaY=event.scrollingDeltaY=y;
+        // GCMouse reports the device's own direction. AppKit's deltas follow
+        // natural scrolling, the default on the iPad as on the Mac.
+        event.deltaX=event.scrollingDeltaX=-x;event.deltaY=event.scrollingDeltaY=-y;
         event.timestamp=NSProcessInfo.processInfo.systemUptime;[NSApp postEvent:event atStart:NO];
     };
     AKLog(@"raw mouse input installed");
@@ -563,9 +571,12 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 }
 - (void)hover:(UIHoverGestureRecognizer *)g {
     _hoverUpdates++;
+    // An ended or cancelled hover (iPadOS hides an idle pointer) neither
+    // establishes that the pointer left the window nor reports where it is:
+    // its location reads as the view's corner. The pointer stays where it
+    // last was, as on a Mac.
+    if(g.state!=UIGestureRecognizerStateBegan && g.state!=UIGestureRecognizerStateChanged)return;
     CGPoint point=[g locationInView:self];
-    // A cancelled recognizer does not establish that the hardware pointer left
-    // the window. Keep visibility tied to its actual in-window location.
     [self moveHoverTo:point inside:CGRectContainsPoint(self.bounds,point)];
 }
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
