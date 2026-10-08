@@ -94,7 +94,7 @@ static NSPoint mouseScreenLocation;
 @implementation NSView { NSMutableArray<NSView *> *_subviews; NSMutableArray<NSDictionary *> *_cursorRects; NSMutableArray<NSTrackingArea *> *_trackingAreas; __weak NSView *_superview; }
 - (instancetype)init { return [self initWithFrame:CGRectZero]; }
 - (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super init])) { _frame = frame; _bounds = (CGRect){CGPointZero, frame.size}; _subviews = [NSMutableArray new]; _cursorRects=[NSMutableArray new]; _trackingAreas=[NSMutableArray new]; }
+    if ((self = [super init])) { _frame = frame; _bounds = (CGRect){CGPointZero, frame.size}; _subviews = [NSMutableArray new]; _cursorRects=[NSMutableArray new]; _trackingAreas=[NSMutableArray new]; _autoresizesSubviews=YES; }
     return self;
 }
 - (CALayer *)makeBackingLayer { return [CALayer layer]; }
@@ -106,23 +106,57 @@ static NSPoint mouseScreenLocation;
     _layer = l;
     // As AppKit's: a view's layer is placed by its origin, which Wine's Mac driver sets as the position.
     l.anchorPoint = CGPointZero;
-    l.frame = _frame; l.delegate = nil;
+    l.frame = _frame; l.delegate = nil; l.hidden=_hidden;
 }
+- (void)setHidden:(BOOL)hidden { _hidden=hidden; _layer.hidden=hidden; }
 - (void)setFrame:(NSRect)f {
+    NSSize oldSize=_bounds.size;
     _frame = f; _bounds.size = f.size;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     _layer.frame = f;
     [CATransaction commit];
+    if(_autoresizesSubviews && !CGSizeEqualToSize(oldSize,f.size)) [self resizeSubviewsWithOldSize:oldSize];
+}
+- (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
+    for(NSView *view in self.subviews) {
+        CGRect frame=view.frame;
+        for(unsigned axis=0;axis<2;axis++) {
+            unsigned mask=(unsigned)(view.autoresizingMask>>(axis*3))&7;
+            if(!mask) continue;
+            CGFloat old=axis?oldSize.height:oldSize.width;
+            CGFloat delta=(axis?_bounds.size.height:_bounds.size.width)-old;
+            CGFloat origin=axis?frame.origin.y:frame.origin.x;
+            CGFloat length=axis?frame.size.height:frame.size.width;
+            CGFloat segments[3]={MAX(origin,0),MAX(length,0),MAX(old-origin-length,0)};
+            CGFloat total=0;unsigned count=0;
+            for(unsigned i=0;i<3;i++) if(mask&(1u<<i)) { total+=segments[i];count++; }
+            CGFloat offset=(mask&1)?delta*(total?segments[0]/total:1.0/count):0;
+            CGFloat growth=(mask&2)?delta*(total?segments[1]/total:1.0/count):0;
+            if(axis) { frame.origin.y+=offset;frame.size.height=MAX(0,length+growth); }
+            else { frame.origin.x+=offset;frame.size.width=MAX(0,length+growth); }
+        }
+        view.frame=frame;
+    }
 }
 - (void)setFrameSize:(NSSize)s { self.frame = (CGRect){_frame.origin, s}; }
 - (NSView *)superview { return _superview; }
 - (NSArray<NSView *> *)subviews { return [_subviews copy]; }
 - (void)addSubview:(NSView *)v {
+    [self addSubview:v positioned:1 relativeTo:nil];
+}
+- (void)addSubview:(NSView *)v positioned:(NSInteger)ordering relativeTo:(NSView *)relative {
+    if(!v) return;
+    for(NSView *ancestor=self;ancestor;ancestor=ancestor.superview) if(ancestor==v) return;
     [v removeFromSuperview];
-    [_subviews addObject:v]; v->_superview = self; v.nextResponder = self; v.window = _window;
+    NSUInteger index=ordering<0?0:_subviews.count;
+    NSUInteger sibling=[_subviews indexOfObjectIdenticalTo:relative];
+    if(sibling!=NSNotFound) index=sibling+(ordering<0?0:1);
+    NSView *next=index<_subviews.count?_subviews[index]:nil;
+    [_subviews insertObject:v atIndex:index]; v->_superview = self; v.nextResponder = self; v.window = _window;
     if (!_layer) self.wantsLayer = YES;
     if (!v.layer) v.wantsLayer = YES;
-    [_layer addSublayer:v.layer];
+    if(next) [_layer insertSublayer:v.layer below:next.layer];
+    else [_layer addSublayer:v.layer];
 }
 - (void)removeFromSuperview {
     [_layer removeFromSuperlayer];
@@ -395,8 +429,11 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 - (void)lockChanged:(NSNotification *)notification { (void)notification; AKLog(@"pointer lock active=%d",self.window.windowScene.pointerLockState.locked); }
 - (void)anchorChanged:(NSNotification *)notification {
     if(!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{[self anchorChanged:notification];});return; }
-    _last=CGPointMake([notification.userInfo[@"x"] doubleValue],[notification.userInfo[@"y"] doubleValue]);
-    self.nsWindow.ak_mouseLocation=CGPointMake(_last.x,self.bounds.size.height-_last.y);
+    NSPoint screen=CGPointMake([notification.userInfo[@"x"] doubleValue],
+        NSScreen.mainScreen.frame.size.height-[notification.userInfo[@"y"] doubleValue]);
+    self.nsWindow.ak_mouseLocation=[self.nsWindow convertPointFromScreen:screen];
+    mouseScreenLocation=screen;
+    _last=CGPointMake(self.nsWindow.ak_mouseLocation.x,self.bounds.size.height-self.nsWindow.ak_mouseLocation.y);
 }
 - (void)mouseConnected:(NSNotification *)notification { [self installMouse:notification.object]; [self captureChanged:nil]; }
 - (void)installMouse:(GCMouse *)mouse {
@@ -405,11 +442,7 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
     mouse.mouseInput.mouseMovedHandler=^(GCMouseInput *input,float dx,float dy) {
         (void)input; AKHostView *view=weakSelf;
         if(!view || !view.window.isKeyWindow || ![view usesRelativeMouse])return;
-        NSEvent *event=[NSEvent new];event.window=view.nsWindow;event.modifierFlags=view->_mods;
-        event.type=view->_pressedRight?NSEventTypeRightMouseDragged:view->_pressedLeft?NSEventTypeLeftMouseDragged:NSEventTypeMouseMoved;
-        event.buttonNumber=view->_pressedRight?1:0;event.locationInWindow=view.nsWindow.ak_mouseLocation;
-        event.deltaX=dx;event.deltaY=-dy;event.timestamp=NSProcessInfo.processInfo.systemUptime;
-        [NSApp postEvent:event atStart:NO];
+        [view postRelativeMouseX:dx y:dy];
     };
     mouse.mouseInput.leftButton.pressedChangedHandler=^(GCControllerButtonInput *button,float value,BOOL pressed) { (void)button;(void)value;[weakSelf rawButton:0 pressed:pressed]; };
     mouse.mouseInput.rightButton.pressedChangedHandler=^(GCControllerButtonInput *button,float value,BOOL pressed) { (void)button;(void)value;[weakSelf rawButton:1 pressed:pressed]; };
@@ -421,6 +454,25 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         event.timestamp=NSProcessInfo.processInfo.systemUptime;[NSApp postEvent:event atStart:NO];
     };
     AKLog(@"raw mouse input installed");
+}
+// Preserve physical deltas while keeping a virtual cursor inside the desktop
+// confinement rect. Wine uses absolute positions inside it and deltas at its edges.
+- (void)postRelativeMouseX:(CGFloat)dx y:(CGFloat)dy {
+    if(!isfinite(dx) || !isfinite(dy))return;
+    NSPoint point=self.nsWindow.ak_mouseLocation;
+    point.x+=dx;point.y+=dy;
+    NSRect rect=self.nsWindow.mouseConfinementRect;
+    if(CGRectIsEmpty(rect))rect=(NSRect){CGPointZero,self.bounds.size};
+    point.x=fmax(CGRectGetMinX(rect),fmin(CGRectGetMaxX(rect)-1,point.x));
+    point.y=fmax(CGRectGetMinY(rect)+1,fmin(CGRectGetMaxY(rect),point.y));
+    self.nsWindow.ak_mouseLocation=point;
+    mouseScreenLocation=[self.nsWindow convertPointToScreen:point];
+    _last=CGPointMake(point.x,self.bounds.size.height-point.y);
+    NSEvent *event=[NSEvent new];event.window=self.nsWindow;event.modifierFlags=_mods;
+    event.type=_pressedRight?NSEventTypeRightMouseDragged:_pressedLeft?NSEventTypeLeftMouseDragged:NSEventTypeMouseMoved;
+    event.buttonNumber=_pressedRight?1:0;event.locationInWindow=point;
+    event.deltaX=dx;event.deltaY=-dy;event.timestamp=NSProcessInfo.processInfo.systemUptime;
+    [NSApp postEvent:event atStart:NO];
 }
 - (void)rawButton:(NSInteger)button pressed:(BOOL)pressed {
     if(!self.window.isKeyWindow)return;
@@ -677,11 +729,19 @@ static void logLayer(CALayer *layer,unsigned depth) {
 - (BOOL)isVisible { return _uiWindow && !_uiWindow.hidden; }
 - (NSUInteger)occlusionState { return self.isVisible && _uiWindow.windowScene.activationState!=UISceneActivationStateBackground ? 2 : 0; }
 - (NSPoint)mouseLocationOutsideOfEventStream { return _ak_mouseLocation; }
+- (void)setMouseConfinementRect:(NSRect)rect {
+    if(!isfinite(rect.origin.x) || !isfinite(rect.origin.y) || !isfinite(rect.size.width) || !isfinite(rect.size.height))rect=CGRectZero;
+    _mouseConfinementRect=CGRectIsEmpty(rect)?CGRectZero:rect;
+    AKMouseSetConfined(!CGRectIsEmpty(_mouseConfinementRect));
+}
+
 // Struct and scalar results: the stub forwarding would leave them undefined.
 - (NSRect)contentLayoutRect { return _contentView ? _contentView.frame : (NSRect){CGPointZero,_contentRect.size}; }
 // One surface: the window's frame is the screen space it is shown in.
 - (NSPoint)convertPointToScreen:(NSPoint)p { NSRect f=self.frame; return (NSPoint){f.origin.x+p.x,f.origin.y+p.y}; }
 - (NSPoint)convertPointFromScreen:(NSPoint)p { NSRect f=self.frame; return (NSPoint){p.x-f.origin.x,p.y-f.origin.y}; }
+- (NSRect)convertRectFromScreen:(NSRect)rect { rect.origin=[self convertPointFromScreen:rect.origin];return rect; }
+- (NSRect)convertRectToScreen:(NSRect)rect { rect.origin=[self convertPointToScreen:rect.origin];return rect; }
 - (void)setCollectionBehavior:(NSUInteger)b { _collectionBehavior=b; }
 - (NSUInteger)collectionBehavior { return _collectionBehavior; }
 - (void)setMinSize:(NSSize)size { _contentMinSize=size; }   // frame and content sizes coincide here
@@ -776,7 +836,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
 // One game surface: shown is key.
 - (void)orderFront:(id)sender { (void)sender; [self ak_orderFront]; }
 - (void)makeKeyWindow { if (self.visible) [self ak_orderFront]; }
-- (void)orderOut:(id)sender { _uiWindow.hidden = YES; uncoverLauncher(); }
+- (void)orderOut:(id)sender { if(!CGRectIsEmpty(_mouseConfinementRect))self.mouseConfinementRect=CGRectZero; _uiWindow.hidden = YES; uncoverLauncher(); }
 - (void)setIsVisible:(BOOL)visible { visible ? [self ak_orderFront] : [self orderOut:nil]; }
 - (void)makeMainWindow { }   // single game surface; already key
 - (void)close { [self orderOut:nil]; [(NSMutableArray *)NSApp.windows removeObject:self]; }

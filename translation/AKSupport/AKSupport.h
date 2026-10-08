@@ -34,3 +34,4 @@ void AKCursorHide(void);
 void AKCursorUnhide(void);
 bool AKMouseIsCaptured(void);
 void AKMouseSetCaptured(bool captured);
+void AKMouseSetConfined(bool confined);

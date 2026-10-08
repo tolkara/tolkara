@@ -45,6 +45,8 @@
 @end
 @interface NSObject (FixtureHostInput)
 - (void)postKeys:(NSSet *)presses down:(BOOL)down;
+- (void)postRelativeMouseX:(CGFloat)dx y:(CGFloat)dy;
+- (void)anchorChanged:(NSNotification *)notification;
 - (void)touchMoveBy:(CGPoint)delta;
 - (void)touchScrollBy:(CGPoint)delta;
 - (void)touchButton:(unsigned)button pressed:(BOOL)pressed;
@@ -88,6 +90,9 @@ int main(void) { @autoreleasepool {
     assert(CGRectEqualToRect([NSWindow frameRectForContentRect:rect styleMask:15], rect) && CGRectEqualToRect([NSPanel contentRectForFrameRect:rect styleMask:15], rect));
     NSPanel *panel = [[NSPanel alloc] initWithContentRect:rect styleMask:0 backing:2 defer:NO];
     panel.floatingPanel = YES; assert([panel isKindOfClass:NSWindow.class] && panel.isFloatingPanel);
+    NSRect screenRect=CGRectMake(11,22,30,40);
+    assert(CGRectEqualToRect([panel convertRectFromScreen:screenRect],CGRectMake(10,20,30,40)));
+    assert(CGRectEqualToRect([panel convertRectToScreen:[panel convertRectFromScreen:screenRect]],screenRect));
 
     // Tracking areas are kept once each, for their owner.
     NSTrackingArea *area = [[NSTrackingArea alloc] initWithRect:rect options:0x20 owner:view userInfo:@{@"k": @1}];
@@ -102,6 +107,28 @@ int main(void) { @autoreleasepool {
     assert(CGPointEqualToPoint(plain.layer.anchorPoint, CGPointZero));
     assert(CGPointEqualToPoint(plain.layer.position, CGPointMake(10, 20)) && CGRectEqualToRect(plain.layer.frame, CGRectMake(10, 20, 30, 40)));
     assert(CGRectEqualToRect(view.layer.frame, CGRectMake(5, 6, 100, 50)));
+
+    // Wine inserts its Metal view below existing content, then keeps it sized
+    // to that content through AppKit's width/height autoresizing mask.
+    NSView *parent=[[NSView alloc] initWithFrame:CGRectMake(0,0,100,50)];
+    NSView *front=[[NSView alloc] initWithFrame:parent.bounds];
+    NSView *back=[[NSView alloc] initWithFrame:parent.bounds];
+    [parent addSubview:front];
+    [parent addSubview:back positioned:-1 relativeTo:nil];
+    assert(parent.subviews[0]==back && parent.subviews[1]==front);
+    assert(back.superview==parent && back.layer.superlayer==parent.layer);
+    assert(parent.layer.sublayers[0]==back.layer);
+    back.autoresizingMask=(1u<<1)|(1u<<4);
+    parent.frame=CGRectMake(0,0,200,100);
+    assert(CGSizeEqualToSize(back.frame.size,CGSizeMake(200,100)));
+    assert(CGSizeEqualToSize(front.frame.size,CGSizeMake(100,50)));
+    back.hidden=YES;assert(back.isHidden && back.layer.hidden);
+    back.hidden=NO;assert(!back.layer.hidden);
+    [parent addSubview:back positioned:1 relativeTo:front];
+    assert(parent.subviews.lastObject==back && parent.layer.sublayers.lastObject==back.layer);
+    parent.autoresizesSubviews=NO;parent.frame=CGRectMake(0,0,300,150);
+    assert(CGSizeEqualToSize(back.frame.size,CGSizeMake(200,100)));
+    [back addSubview:parent];assert(parent.superview==nil);
 
     // The window's scale reaches a content view's layer unless the view keeps its own.
     window.contentView = view; view.layer.contentsScale = 1;
@@ -162,6 +189,25 @@ int main(void) { @autoreleasepool {
     }
     assert(responder.downs==1 && responder.ups==1 && responder.lastCode==49);
 
+    // Our input fixture: a captured pointer stays at the clip boundary while
+    // its raw deltas survive, and recentering updates both position APIs.
+    [host setFrame:CGRectMake(0,0,200,100)];
+    window.mouseConfinementRect=CGRectMake(10,20,100,50);
+    assert(AKMouseIsCaptured() && [NSWindow instancesRespondToSelector:@selector(setMouseConfinementRect:)]);
+    AKMouseSetCaptured(false);assert(AKMouseIsCaptured()); // Reassociation cannot release confinement.
+    window.ak_mouseLocation=CGPointMake(50,40);
+    [host postRelativeMouseX:5 y:-3];
+    NSEvent *move=[app nextEventMatchingMask:1ULL<<NSEventTypeMouseMoved untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+    assert(move && CGPointEqualToPoint(move.locationInWindow,CGPointMake(55,37)) && move.deltaX==5 && move.deltaY==3);
+    [host postRelativeMouseX:200 y:-100];
+    move=[app nextEventMatchingMask:1ULL<<NSEventTypeMouseMoved untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+    assert(move && CGPointEqualToPoint(move.locationInWindow,CGPointMake(109,21)) && move.deltaX==200 && move.deltaY==100);
+    [host anchorChanged:[NSNotification notificationWithName:@"AKMouseAnchorChanged" object:nil userInfo:@{@"x":@50,@"y":@(height-40)}]];
+    assert(CGPointEqualToPoint(window.mouseLocationOutsideOfEventStream,CGPointMake(50,40)) && CGPointEqualToPoint(NSEvent.mouseLocation,CGPointMake(50,40)));
+    [host postRelativeMouseX:-4 y:2];
+    move=[app nextEventMatchingMask:1ULL<<NSEventTypeMouseMoved untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+    assert(move && CGPointEqualToPoint(move.locationInWindow,CGPointMake(46,42)) && move.deltaX==-4 && move.deltaY==-2);
+    window.mouseConfinementRect=CGRectZero;assert(!AKMouseIsCaptured());
     // Software keys take the same event queue as hardware keys, preserve
     // Unicode and never depend on reading the guest's text/selection.
     AKTouchControls *controls = [host valueForKey:@"_touchControls"];
@@ -187,7 +233,7 @@ int main(void) { @autoreleasepool {
     hostView.frame = CGRectMake(0, 0, 200, 100);
     controls.trackpadEnabled = YES;
     [host touchMoveBy:CGPointMake(10, -5)];
-    NSEvent *move = next_input();
+    move = next_input();
     assert(move.type == NSEventTypeMouseMoved && move.locationInWindow.x == 110 && move.locationInWindow.y == 55);
     assert(move.deltaX == 10 && move.deltaY == -5);
     [host touchMoveBy:CGPointMake(10000, -10000)];

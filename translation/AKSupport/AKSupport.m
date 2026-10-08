@@ -53,9 +53,14 @@ static atomic_uint cursorHideCount;
 bool AKCursorIsHidden(void) { return atomic_load(&cursorHideCount)>0; }
 void AKCursorHide(void) { atomic_fetch_add(&cursorHideCount,1); }
 void AKCursorUnhide(void) { unsigned count=atomic_load(&cursorHideCount); while(count && !atomic_compare_exchange_weak(&cursorHideCount,&count,count-1)) {} }
-static atomic_bool mouseCaptured;
-bool AKMouseIsCaptured(void) { return atomic_load(&mouseCaptured); }
+static atomic_bool mouseCaptured, mouseConfined;
+bool AKMouseIsCaptured(void) { return atomic_load(&mouseCaptured) || atomic_load(&mouseConfined); }
 void AKMouseSetCaptured(bool captured) {
     if(atomic_exchange(&mouseCaptured,captured)!=captured)
+        [NSNotificationCenter.defaultCenter postNotificationName:@"AKMouseCaptureDidChange" object:nil];
+}
+
+void AKMouseSetConfined(bool confined) {
+    if(atomic_exchange(&mouseConfined,confined)!=confined)
         [NSNotificationCenter.defaultCenter postNotificationName:@"AKMouseCaptureDidChange" object:nil];
 }

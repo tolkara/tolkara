@@ -82,12 +82,17 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 @property (nonatomic) NSRect frame;
 @property (nonatomic) NSRect bounds;
 @property (nonatomic) BOOL wantsLayer;
+@property (nonatomic) NSUInteger autoresizingMask;
+@property (nonatomic) BOOL autoresizesSubviews;
+@property (nonatomic, getter=isHidden) BOOL hidden;
 @property (nonatomic, strong) CALayer *layer;
 @property (nonatomic, weak) NSWindow *window;
 @property (nonatomic, readonly) NSView *superview;
 @property (nonatomic, readonly) NSArray<NSView *> *subviews;
 - (CALayer *)makeBackingLayer;
 - (void)addSubview:(NSView *)v;
+- (void)addSubview:(NSView *)v positioned:(NSInteger)ordering relativeTo:(NSView *)relative;
+- (void)resizeSubviewsWithOldSize:(NSSize)size;
 - (void)removeFromSuperview;
 - (NSPoint)convertPoint:(NSPoint)p fromView:(NSView *)v;
 - (NSPoint)convertPoint:(NSPoint)p toView:(NSView *)v;
@@ -140,6 +145,7 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 - (id)screen;
 @property (weak) id delegate;
 @property NSPoint ak_mouseLocation;
+@property (nonatomic) NSRect mouseConfinementRect;
 - (NSPoint)mouseLocationOutsideOfEventStream;
 @property (readonly) CGFloat backingScaleFactor;
 @property (readonly) NSRect frame;
@@ -151,6 +157,8 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 @property (readonly) NSRect contentLayoutRect;
 - (NSPoint)convertPointToScreen:(NSPoint)p;
 - (NSPoint)convertPointFromScreen:(NSPoint)p;
+- (NSRect)convertRectFromScreen:(NSRect)rect;
+- (NSRect)convertRectToScreen:(NSRect)rect;
 - (void)toggleFullScreen:(id)sender;
 // Windows on the iPad have no frame of their own: content and frame are one.
 - (NSRect)frameRectForContentRect:(NSRect)rect;
