@@ -25,6 +25,6 @@ xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_displays"
 "${CC[@]}" translation/AKSupport/AKSupport.m translation/CoreAudio/*.m tests/test_audio_hardware.m \
     $(cat translation/CoreAudio/ldflags) -framework CoreAudio -o build/emulation/test_audio_hardware
 xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_audio_hardware"
-"${CC[@]}" -Itranslation/AppKit translation/AKSupport/AKSupport.m translation/AppKit/*.m tests/test_appkit_views.m \
+"${CC[@]}" -Itranslation/AppKit translation/AKSupport/AKSupport.m translation/AppKit/*.m translation/AppKit/*.c tests/test_appkit_views.m \
     $(cat translation/AppKit/ldflags) -o build/emulation/test_appkit_views
 xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_appkit_views"

@@ -2,6 +2,7 @@
 #import "EventMonitors.h"
 #import "Images.h"
 #import "TextInput.h"
+#import "TouchControls.h"
 #import <GameController/GameController.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -25,6 +26,7 @@ NSApplication *NSApp;
 #define PASS(sel) - (void)sel(NSEvent *)e { [self.nextResponder sel e]; }
 PASS(keyDown:) PASS(keyUp:) PASS(flagsChanged:) PASS(mouseDown:) PASS(mouseUp:) PASS(mouseMoved:)
 PASS(mouseDragged:) PASS(rightMouseDown:) PASS(rightMouseUp:) PASS(rightMouseDragged:) PASS(scrollWheel:)
+PASS(otherMouseDown:) PASS(otherMouseUp:) PASS(otherMouseDragged:)
 @end
 
 // Local monitors are experimental and opt-in (launch argument
@@ -239,11 +241,19 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
     return AKHeldFlags(held);
 }
 
-@interface AKHostView : UIView <UIPointerInteractionDelegate>
-@property (weak) NSWindow *nsWindow;
+@interface AKHostView : UIView <UIPointerInteractionDelegate, AKTouchControlsDelegate>
+@property (nonatomic, weak) NSWindow *nsWindow;
 @end
 
-@implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime; }
+@implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime; CGPoint _cursorHotSpot;
+    AKTouchControls *_touchControls;
+    BOOL _touchCursorActive, _touchCursorInitialized, _pressedMiddle;
+    NSTimeInterval _lastTouchClickTime;
+    CGPoint _lastTouchClickPoint;
+    unsigned _lastTouchButton;
+    NSInteger _touchClickCount;
+    CGSize _touchViewportSize;
+}
 - (instancetype)initWithFrame:(CGRect)f {
     if ((self = [super initWithFrame:f])) {
         self.multipleTouchEnabled = NO;
@@ -260,11 +270,121 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(lockChanged:) name:UIPointerLockStateDidChangeNotification object:nil];
         for(GCMouse *mouse in GCMouse.mice)[self installMouse:mouse];
         [self addGestureRecognizer:[[UIHoverGestureRecognizer alloc] initWithTarget:self action:@selector(hover:)]];
+        // Optional on-screen keyboard and trackpad: on by default on iPhone,
+        // off on iPad, where they would cover part of the game.
+        if (AKTouchControls.enabled) [self installTouchControls];
     }
     return self;
 }
+- (void)installTouchControls {
+    _touchControls = [[AKTouchControls alloc] initWithFrame:CGRectZero];
+    _touchControls.delegate = self;
+    _touchControls.translatesAutoresizingMaskIntoConstraints = NO;
+    [self addSubview:_touchControls];
+    [NSLayoutConstraint activateConstraints:@[
+        [_touchControls.widthAnchor constraintEqualToConstant:96],
+        [_touchControls.heightAnchor constraintEqualToConstant:44],
+        [_touchControls.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-12],
+        [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
+    ]];
+    [self touchTrackpadChanged:_touchControls.trackpadEnabled];
+}
 - (BOOL)canBecomeFirstResponder { return YES; }
-- (void)layoutSubviews { [super layoutSubviews]; [self.nsWindow ak_hostBoundsChanged:self.bounds]; }
+- (void)setNsWindow:(NSWindow *)window {
+    _nsWindow = window;
+    window.ak_mouseLocation = CGPointMake(_last.x, self.bounds.size.height - _last.y);
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [self.nsWindow ak_hostBoundsChanged:self.bounds];
+    if (!_touchCursorInitialized && _touchControls.trackpadEnabled) [self touchTrackpadChanged:YES];
+    if (!CGSizeEqualToSize(_touchViewportSize, self.bounds.size)) {
+        [_touchControls cancelTouches];
+        _touchViewportSize = self.bounds.size;
+        _last.x = MAX(0, MIN(self.bounds.size.width - 1, _last.x));
+        _last.y = MAX(0, MIN(self.bounds.size.height - 1, _last.y));
+        self.nsWindow.ak_mouseLocation = CGPointMake(_last.x, self.bounds.size.height - _last.y);
+        [self positionCursor];
+    }
+}
+- (void)touchTrackpadChanged:(BOOL)enabled {
+    self.multipleTouchEnabled = enabled;
+    if (enabled && !_touchCursorInitialized && self.bounds.size.width > 0 && self.bounds.size.height > 0) {
+        _last = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
+        self.nsWindow.ak_mouseLocation = CGPointMake(_last.x, self.bounds.size.height - _last.y);
+        _touchCursorInitialized = YES;
+    }
+    _touchCursorActive = enabled;
+    _pointerInside = enabled;
+    [self cursorChanged:nil];
+}
+- (void)activateTouchCursor {
+    if (!_touchCursorActive) { _touchCursorActive = YES; [self cursorChanged:nil]; }
+    _pointerInside = YES;
+}
+- (void)touchMoveBy:(CGPoint)delta {
+    if (!isfinite(delta.x) || !isfinite(delta.y)) return;
+    [self activateTouchCursor];
+    NSEventType type = _pressedRight ? NSEventTypeRightMouseDragged : _pressedLeft ? NSEventTypeLeftMouseDragged : _pressedMiddle ? NSEventTypeOtherMouseDragged : NSEventTypeMouseMoved;
+    NSInteger button = _pressedRight ? 1 : _pressedMiddle ? 2 : 0;
+    if (AKMouseIsCaptured()) {
+        // Camera motion uses deltas even at a screen edge, without a physical mouse.
+        NSEvent *event = [NSEvent new];
+        event.type = type; event.window = self.nsWindow; event.buttonNumber = button;
+        event.locationInWindow = self.nsWindow.ak_mouseLocation; event.modifierFlags = _mods;
+        event.deltaX = delta.x; event.deltaY = delta.y;
+        event.timestamp = NSProcessInfo.processInfo.systemUptime;
+        [NSApp postEvent:event atStart:NO];
+        [self positionCursor];
+    } else {
+        CGPoint point = CGPointMake(MAX(0, MIN(self.bounds.size.width - 1, _last.x + delta.x)),
+                                   MAX(0, MIN(self.bounds.size.height - 1, _last.y + delta.y)));
+        [self postMouse:type at:point button:button];
+    }
+}
+- (void)touchScrollBy:(CGPoint)delta {
+    [self activateTouchCursor];
+    NSEvent *event = [NSEvent new];
+    event.type = NSEventTypeScrollWheel; event.window = self.nsWindow;
+    event.locationInWindow = self.nsWindow.ak_mouseLocation; event.modifierFlags = _mods;
+    event.deltaX = event.scrollingDeltaX = delta.x;
+    event.deltaY = event.scrollingDeltaY = delta.y;
+    event.timestamp = NSProcessInfo.processInfo.systemUptime;
+    [NSApp postEvent:event atStart:NO];
+}
+- (void)touchButton:(unsigned)button pressed:(BOOL)pressed {
+    if (button > 2) return;
+    [self activateTouchCursor];
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (pressed) {
+        BOOL twice = _touchClickCount == 1 && button == _lastTouchButton && now - _lastTouchClickTime < 0.5 &&
+                     hypot(_last.x - _lastTouchClickPoint.x, _last.y - _lastTouchClickPoint.y) < 4;
+        _touchClickCount = twice ? 2 : 1;
+        _lastTouchClickTime = now; _lastTouchClickPoint = _last; _lastTouchButton = button;
+    }
+    NSEventType type = button == 2 ? (pressed ? NSEventTypeOtherMouseDown : NSEventTypeOtherMouseUp) :
+                       button == 1 ? (pressed ? NSEventTypeRightMouseDown : NSEventTypeRightMouseUp) :
+                                     (pressed ? NSEventTypeLeftMouseDown : NSEventTypeLeftMouseUp);
+    [self postMouse:type at:_last button:button clicks:_touchClickCount];
+}
+- (void)postTextKey:(unsigned short)code characters:(NSString *)characters unmodified:(NSString *)unmodified modifiers:(NSEventModifierFlags)modifiers {
+    for (unsigned index = 0; index < 2; index++) {
+        NSEvent *event = [NSEvent new];
+        event.type = index == 0 ? NSEventTypeKeyDown : NSEventTypeKeyUp;
+        event.window = self.nsWindow; event.keyCode = code; event.modifierFlags = modifiers;
+        event.characters = characters; event.charactersIgnoringModifiers = unmodified;
+        event.timestamp = NSProcessInfo.processInfo.systemUptime;
+        [NSApp postEvent:event atStart:NO];
+    }
+}
+- (void)touchInsertText:(NSString *)text {
+    AKEnumerateTextKeys(text, ^(NSString *characters, NSString *unmodified, unsigned short code, NSUInteger modifiers) {
+        [self postTextKey:code characters:characters unmodified:unmodified modifiers:modifiers];
+    });
+}
+- (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters {
+    [self postTextKey:code characters:characters unmodified:characters modifiers:0];
+}
 - (BOOL)usesRelativeMouse { return AKMouseIsCaptured() && GCMouse.mice.count>0; }
 - (void)captureChanged:(NSNotification *)notification {
     (void)notification;
@@ -311,12 +431,17 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 }
 
 - (void)postMouse:(NSEventType)t at:(CGPoint)p button:(NSInteger)b {
+    [self postMouse:t at:p button:b clicks:1];
+}
+- (void)postMouse:(NSEventType)t at:(CGPoint)p button:(NSInteger)b clicks:(NSInteger)clicks {
     if(t==NSEventTypeLeftMouseDown)_pressedLeft=YES;
     if(t==NSEventTypeLeftMouseUp)_pressedLeft=NO;
     if(t==NSEventTypeRightMouseDown)_pressedRight=YES;
     if(t==NSEventTypeRightMouseUp)_pressedRight=NO;
+    if(t==NSEventTypeOtherMouseDown)_pressedMiddle=YES;
+    if(t==NSEventTypeOtherMouseUp)_pressedMiddle=NO;
     NSEvent *e = [NSEvent new];
-    e.type = t; e.window = self.nsWindow; e.modifierFlags = _mods; e.buttonNumber = b; e.clickCount = 1;
+    e.type = t; e.window = self.nsWindow; e.modifierFlags = _mods; e.buttonNumber = b; e.clickCount = clicks;
     e.timestamp = NSProcessInfo.processInfo.systemUptime;
     e.locationInWindow = CGPointMake(p.x, self.bounds.size.height - p.y); self.nsWindow.ak_mouseLocation=e.locationInWindow;   // AppKit: bottom-left origin
     mouseScreenLocation=[self.nsWindow convertPointToScreen:e.locationInWindow];
@@ -333,7 +458,8 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
     if(!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{ [self cursorChanged:nil]; }); return; }
     NSCursor *cursor=NSCursor.currentCursor;
     CGImageRef image=[cursor.image CGImageForProposedRect:NULL context:nil hints:nil];
-    _cursorView.image=_softwareCursor && image ? [UIImage imageWithCGImage:image] : nil;
+    _cursorView.image = image ? [UIImage imageWithCGImage:image] :
+        [[UIImage systemImageNamed:@"cursorarrow"] imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
     _gamePointerStyle=nil;
     if(!_softwareCursor && image) {
         CGPathRef path=AKCreateCursorPath(image,cursor.image.size,cursor.hotSpot);
@@ -342,16 +468,16 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
             CGPathRelease(path);
         }
     }
-    _cursorView.bounds=(CGRect){CGPointZero,cursor.image.size};
+    _cursorView.bounds=(CGRect){CGPointZero,image ? cursor.image.size : CGSizeMake(18, 24)};
+    _cursorHotSpot=image ? cursor.hotSpot : CGPointZero;   // the fallback arrow's tip is its corner
     [self positionCursor]; [_pointer invalidate];
 }
 - (void)positionCursor {
-    NSCursor *cursor=NSCursor.currentCursor;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    _cursorView.frame=(CGRect){CGPointMake(_last.x-cursor.hotSpot.x,_last.y-cursor.hotSpot.y),cursor.image.size};
+    _cursorView.frame=(CGRect){CGPointMake(_last.x-_cursorHotSpot.x,_last.y-_cursorHotSpot.y),_cursorView.bounds.size};
     unsigned reasons=(!_pointerInside?1:0) | (AKCursorIsHidden()?2:0) | (!_cursorView.image?4:0);
-    _cursorView.hidden=!_softwareCursor || reasons!=0;
+    _cursorView.hidden=!(_softwareCursor || _touchCursorActive) || reasons!=0;
     if(reasons!=_cursorVisibilityReasons) { _cursorVisibilityReasons=reasons; AKLog(@"cursor visibility hidden=%d outside=%d game_hidden=%d no_image=%d",reasons!=0,!!(reasons&1),!!(reasons&2),!!(reasons&4)); }
     [CATransaction commit];
     // The desktop client owns a nested event loop. UIKit's outer-loop commit
@@ -376,7 +502,9 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 }
 - (void)moveHoverTo:(CGPoint)point inside:(BOOL)inside {
     if([self usesRelativeMouse])return;
-    BOOL changed=_pointerInside!=inside || !CGPointEqualToPoint(_last,point);
+    BOOL wasTouchCursor = _touchCursorActive;
+    _touchCursorActive = NO;
+    BOOL changed=wasTouchCursor || _pointerInside!=inside || !CGPointEqualToPoint(_last,point);
     _pointerInside=inside;
     if(changed) [self postMouse:_pressedRight?NSEventTypeRightMouseDragged:_pressedLeft?NSEventTypeLeftMouseDragged:NSEventTypeMouseMoved at:point button:_pressedRight?1:0];
     NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;
@@ -395,18 +523,29 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 }
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
 static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSecondary) != 0; }
+- (BOOL)handleTrackpadTouches:(NSSet<UITouch *> *)touches event:(UIEvent *)event {
+    if (!_touchControls.trackpadEnabled) return NO;
+    for (UITouch *touch in touches) if (touch.type == UITouchTypeDirect) {
+        [_touchControls processTouches:touches withEvent:event];
+        return YES;
+    }
+    return NO;
+}
 - (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
+    if ([self handleTrackpadTouches:t event:ev]) return;
     BOOL r = AKIsRight(ev);if(r?_pressedRight:_pressedLeft)return; _last = [t.anyObject locationInView:self];
     [self reconcileModifiers:AKMods(ev.modifierFlags)];
     [self postMouse:r ? NSEventTypeRightMouseDown : NSEventTypeLeftMouseDown at:_last button:r];
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
+    if ([self handleTrackpadTouches:t event:ev]) return;
     if([self usesRelativeMouse])return;
     BOOL r = _pressedRight;
     CGPoint point=[t.anyObject locationInView:self];if(CGPointEqualToPoint(point,_last))return;
     [self postMouse:r ? NSEventTypeRightMouseDragged : NSEventTypeLeftMouseDragged at:point button:r];
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
+    if ([self handleTrackpadTouches:t event:ev]) return;
     if(!_pressedRight && !_pressedLeft)return;
     [self postMouse:_pressedRight ? NSEventTypeRightMouseUp : NSEventTypeLeftMouseUp at:[self usesRelativeMouse]?_last:[t.anyObject locationInView:self] button:_pressedRight];
 }
@@ -438,7 +577,7 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
         e.modifierFlags = _mods;
         e.type = isMod || k.keyCode == 0x39 ? NSEventTypeFlagsChanged : down ? NSEventTypeKeyDown : NSEventTypeKeyUp;
         e.characters = k.characters; e.charactersIgnoringModifiers = k.charactersIgnoringModifiers;
-        static unsigned loggedKeys; if(loggedKeys<8) { loggedKeys++; AKLog(@"keyboard event type=%lu keyCode=%u",(unsigned long)e.type,e.keyCode); }
+        static unsigned loggedKeys; if(loggedKeys<8) { loggedKeys++; AKLog(@"keyboard event type=%lu",(unsigned long)e.type); }
         [NSApp postEvent:e atStart:NO];
     }
 }
@@ -653,6 +792,9 @@ static void logLayer(CALayer *layer,unsigned depth) {
         case NSEventTypeRightMouseDragged: [_contentView rightMouseDragged:e]; break;
         case NSEventTypeRightMouseDown: [_contentView rightMouseDown:e]; break;
         case NSEventTypeRightMouseUp: [_contentView rightMouseUp:e]; break;
+        case NSEventTypeOtherMouseDown: [_contentView otherMouseDown:e]; break;
+        case NSEventTypeOtherMouseUp: [_contentView otherMouseUp:e]; break;
+        case NSEventTypeOtherMouseDragged: [_contentView otherMouseDragged:e]; break;
         case NSEventTypeMouseMoved: if (_acceptsMouseMovedEvents) [self.firstResponder mouseMoved:e]; break;
         case NSEventTypeScrollWheel: [_contentView scrollWheel:e]; break;
     }
@@ -758,7 +900,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
     // Preserve button/key boundaries, but combine consecutive motion samples.
     // This prevents a fast pointer from queuing stale movement ahead of key-up.
     NSEvent *last=_queue.lastObject;
-    BOOL motion=e.type==NSEventTypeMouseMoved || e.type==NSEventTypeLeftMouseDragged || e.type==NSEventTypeRightMouseDragged;
+    BOOL motion=e.type==NSEventTypeMouseMoved || e.type==NSEventTypeLeftMouseDragged || e.type==NSEventTypeRightMouseDragged || e.type==NSEventTypeOtherMouseDragged;
     if(!atStart && motion && last.type==e.type && last.window==e.window && last.modifierFlags==e.modifierFlags && last.buttonNumber==e.buttonNumber) {
         e.deltaX+=last.deltaX;e.deltaY+=last.deltaY;[_queue removeLastObject];
     }
@@ -786,7 +928,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
                     if(e.type==NSEventTypeKeyDown || e.type==NSEventTypeKeyUp) {
                         double age=NSProcessInfo.processInfo.systemUptime-e.timestamp;
                         static unsigned loggedDelivery;
-                        if(loggedDelivery<16) { loggedDelivery++; AKLog(@"keyboard dequeued type=%lu keyCode=%u age_ms=%.1f pending=%lu",(unsigned long)e.type,e.keyCode,age*1000,(unsigned long)_queue.count); }
+                        if(loggedDelivery<16) { loggedDelivery++; AKLog(@"keyboard dequeued type=%lu age_ms=%.1f pending=%lu",(unsigned long)e.type,age*1000,(unsigned long)_queue.count); }
                     }
                 }
                 return e;

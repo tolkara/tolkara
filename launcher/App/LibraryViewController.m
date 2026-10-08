@@ -4,12 +4,20 @@
 @interface TKLibraryViewController () <UIDocumentPickerDelegate>
 @end
 
+// The AppKit adapter's AKTouchControlsDefaultsKey (translation/AppKit/TouchControls.h):
+// the adapter loads with a game, so the launcher names the setting itself.
+static NSString *const TKTouchControlsKey=@"AKTouchControls";
+static BOOL TKTouchControlsShown(void) {
+    NSNumber *saved=[NSUserDefaults.standardUserDefaults objectForKey:TKTouchControlsKey];
+    return [saved isKindOfClass:NSNumber.class] ? saved.boolValue : UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPhone;
+}
+
 @implementation TKLibraryViewController {
     TKAppLibrary *_library;
     NSArray<TKApp *> *_apps;
     dispatch_queue_t _queue;
     BOOL _discovered, _importing;
-    UIBarButtonItem *_addItem;
+    UIBarButtonItem *_addItem, *_controlsItem;
 }
 
 - (instancetype)initWithLibrary:(TKAppLibrary *)library {
@@ -33,7 +41,10 @@
     diagnostics.accessibilityLabel=@"Diagnostics";
     UIBarButtonItem *mode=[[UIBarButtonItem alloc] initWithTitle:@"Execution Mode"
         style:UIBarButtonItemStylePlain target:self action:@selector(showExecutionMode)];
-    self.navigationItem.leftBarButtonItems=@[diagnostics,mode];
+    _controlsItem=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"hand.tap"] menu:nil];
+    _controlsItem.accessibilityLabel=@"On-Screen Controls";
+    [self updateControlsMenu];
+    self.navigationItem.leftBarButtonItems=@[diagnostics,mode,_controlsItem];
     // Files copied in with the Files app or a profile's install script appear
     // when Tolkara returns to the foreground.
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh)
@@ -187,6 +198,18 @@
 
 - (void)showDiagnostics { [self.delegate libraryViewControllerShowDiagnostics:self]; }
 - (void)showExecutionMode { [self.delegate libraryViewControllerShowExecutionMode:self]; }
+// Optional keyboard and touch-trackpad buttons over a game, read when it starts.
+- (void)updateControlsMenu {
+    __weak TKLibraryViewController *weakSelf=self;
+    UIAction *toggle=[UIAction actionWithTitle:@"On-Screen Controls" image:nil identifier:nil handler:^(UIAction *a) {
+        (void)a;
+        [NSUserDefaults.standardUserDefaults setBool:!TKTouchControlsShown() forKey:TKTouchControlsKey];
+        [weakSelf updateControlsMenu];
+    }];
+    toggle.state=TKTouchControlsShown()?UIMenuElementStateOn:UIMenuElementStateOff;
+    _controlsItem.menu=[UIMenu menuWithTitle:@"Keyboard and touch-trackpad buttons over the game, from its next start"
+        children:@[toggle]];
+}
 
 - (void)showDetailsOfApp:(TKApp *)app from:(UIView *)view {
     NSMutableString *message=[NSMutableString new];

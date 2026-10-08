@@ -1,9 +1,10 @@
 # Tolkara
 
-Tolkara runs **unmodified** arm64 macOS applications on an iPad. It loads the
-original executable as data, executes its instructions natively on the iPad's
-Apple silicon, and translates the macOS API calls it makes (AppKit, Metal,
-CoreAudio, Carbon, Security, …) into their iPadOS equivalents.
+Tolkara runs **unmodified** arm64 macOS applications on an iPad, with
+experimental iPhone support. It loads the original executable as data,
+executes its instructions natively on the device's Apple silicon, and
+translates the macOS API calls it makes (AppKit, Metal, CoreAudio, Carbon,
+Security, …) into their iOS/iPadOS equivalents.
 
 It follows the model of [Wine](https://www.winehq.org) and Valve's
 [Proton](https://github.com/ValveSoftware/Proton): the program is not ported or
@@ -35,6 +36,11 @@ FEX, the Windows game Heroes of Might and Magic III: Horn of the Abyss plays
 with Developer service ([docs/WINDOWS.md](docs/WINDOWS.md)). See
 [COMPATIBILITY.md](COMPATIBILITY.md) for details and known problems. Other
 applications will need more API coverage; reports and patches are welcome.
+
+iPhone support is experimental: on an iPhone 16 Pro Max with iOS 27, the WoW
+Forever client logs in and plays with Developer service. Optional on-screen
+keyboard and touch-trackpad controls, shown by default on iPhone, stand in for
+a keyboard and mouse. See [docs/IPHONE.md](docs/IPHONE.md).
 
 Notable limits today: with Developer service, preparing executable memory takes
 time at every launch, about 3 MB per second (33 seconds for Heroes III), and
@@ -81,7 +87,8 @@ in [docs/LOCAL_AUTHORIZATION.md](docs/LOCAL_AUTHORIZATION.md).
 ## Getting started
 
 You need a Mac with Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen),
-Python 3, an Apple developer account, and an iPad with Developer Mode enabled.
+Python 3, an Apple developer account, and an iPad or an
+[experimentally supported iPhone](docs/IPHONE.md) with Developer Mode enabled.
 The full walkthrough, including signing and Developer Mode, is in
 **[docs/BUILDING.md](docs/BUILDING.md)**. In short:
 

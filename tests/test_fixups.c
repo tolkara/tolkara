@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 static bool resolve(const char *name, int ordinal, bool weak, bool lazy, uint64_t *value, void *context) {
     (void)context; (void)weak; (void)lazy;
@@ -29,6 +30,7 @@ static void observe(uint64_t address, uint64_t value, const char *symbol, void *
 }
 static void setup(GuestImage *i, const uint8_t *r, size_t rn, const uint8_t *b, size_t bn) {
     *i = (GuestImage){0}; i->segment_count = 1; i->dylib_count = 1;
+    i->mapped_size = GM_PAGE_SIZE;
     i->segments[0] = (GISegment){.address=0x100000000, .size=GM_PAGE_SIZE, .file_size=GM_PAGE_SIZE, .prot=3};
     assert(gm_map(&i->memory, 0x100000000, GM_PAGE_SIZE, 3, 7, false, false) == GM_OK);
     i->rebase_offset=256; i->rebase_size=(uint32_t)rn;
@@ -37,6 +39,64 @@ static void setup(GuestImage *i, const uint8_t *r, size_t rn, const uint8_t *b, 
     assert(gm_populate(&i->memory, 0x100000200, b, bn) == GM_OK);
     uint64_t pointer = 0x100000800;
     assert(gm_populate(&i->memory, 0x100000000, &pointer, 8) == GM_OK);
+}
+static size_t put_uleb(uint8_t *out, uint64_t value) {
+    size_t size = 0;
+    do {
+        uint8_t byte = value & 0x7f; value >>= 7;
+        out[size++] = byte | (value ? 0x80 : 0);
+    } while (value);
+    return size;
+}
+static void large_rebases(void) {
+    // A real large image can exceed a million pointers in one opcode or
+    // cumulatively. The source stream is in a separate read-only segment.
+    const uint64_t count = 1000001, base = 0x100000000;
+    uint64_t bytes = (count * 8 + GM_PAGE_SIZE - 1) & ~(uint64_t)(GM_PAGE_SIZE - 1);
+    for (unsigned split = 0; split < 2; split++) {
+        GuestImage image = {0}; GFStats stats; char error[256]; uint64_t value;
+        image.segment_count = 2; image.mapped_size = bytes + GM_PAGE_SIZE;
+        image.segments[0] = (GISegment){.address=base, .size=bytes, .file_size=bytes, .prot=3};
+        image.segments[1] = (GISegment){.address=base+bytes, .size=GM_PAGE_SIZE,
+            .file_offset=bytes, .file_size=GM_PAGE_SIZE, .prot=1};
+        assert(gm_map(&image.memory, base, bytes, 3, 3, false, false) == GM_OK);
+        assert(gm_map(&image.memory, base+bytes, GM_PAGE_SIZE, 1, 1, false, false) == GM_OK);
+        uint8_t stream[32] = {0x11, 0x20, 0, 0x60};
+        size_t length = 4;
+        length += put_uleb(stream+length, split ? 600000 : count);
+        if (split) { stream[length++] = 0x60; length += put_uleb(stream+length, count-600000); }
+        stream[length++] = 0;
+        image.rebase_offset = (uint32_t)bytes; image.rebase_size = (uint32_t)length;
+        assert(gm_populate(&image.memory, base+bytes, stream, length) == GM_OK);
+        assert(gf_apply(&image, 0x200000, resolve, NULL, &stats, error, sizeof error));
+        assert(stats.rebases == count && stats.binds == 0);
+        assert(gm_read(&image.memory, base, &value, 8) == GM_OK && value == 0x200000);
+        assert(gm_read(&image.memory, base+(count-1)*8, &value, 8) == GM_OK && value == 0x200000);
+        gi_destroy(&image);
+    }
+    // Repeatedly resetting to a valid slot cannot evade the image-sized work
+    // budget. Reject the next operation without writing that pointer again.
+    size_t limit = GM_PAGE_SIZE / 8, length = 1;
+    uint8_t *stream = malloc(4*(limit+1)+2); assert(stream);
+    stream[0] = 0x11;
+    for (size_t n = 0; n <= limit; n++) {
+        stream[length++] = 0x20; stream[length++] = 0; stream[length++] = 0x51;
+    }
+    stream[length++] = 0;
+    GuestImage image; GFStats stats; char error[256]; uint64_t value;
+    setup(&image, stream, length, NULL, 0);
+    assert(!gf_apply(&image, 1, resolve, NULL, &stats, error, sizeof error));
+    assert(stats.rebases == limit && strstr(error, "rebase count exceeds image pointer budget"));
+    assert(gm_read(&image.memory, 0x100000000, &value, 8) == GM_OK && value == 0x100000800+limit);
+    gi_destroy(&image); free(stream);
+    // A huge repeat is refused before any pointer is touched.
+    uint8_t huge[16] = {0x11, 0x20, 0, 0x60}; length = 4;
+    length += put_uleb(huge+length, UINT64_MAX); huge[length++] = 0;
+    setup(&image, huge, length, NULL, 0);
+    assert(!gf_apply(&image, 1, resolve, NULL, &stats, error, sizeof error));
+    assert(stats.rebases == 0 && strstr(error, "rebase count exceeds image pointer budget"));
+    assert(gm_read(&image.memory, 0x100000000, &value, 8) == GM_OK && value == 0x100000800);
+    gi_destroy(&image);
 }
 // One page, one import, one chain, built by hand.
 static size_t chained_blob(uint8_t *out, uint16_t format) {
@@ -73,6 +133,7 @@ static void chained_setup(GuestImage *i, uint16_t format, uint64_t first, uint64
 }
 
 int main(void) {
+    large_rebases();
     GuestImage i; GFStats stats; char error[256]; uint64_t value;
     const uint8_t r[] = {0x11,0x20,0,0x51,0};
     const uint8_t b[] = {0x11,0x40,'_','s','a','m','p','l','e',0,0x70,8,0x60,0x7c,0x90,0};
@@ -266,4 +327,5 @@ int main(void) {
     }
     puts("PASS: Mach-O pointer relocation, import binding, signed addends, observed fixups, malformed fixup bounds");
     puts("PASS: lazy binds first, chained fixups, chained initializers read after fixups, malformed chains");
+    puts("PASS: large rebase streams and image-sized work budget, including repeated targets and huge counts");
 }

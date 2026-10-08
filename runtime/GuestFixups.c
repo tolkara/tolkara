@@ -46,8 +46,12 @@ typedef struct { GFObserve observe; void *context; } Observer;
 static void notify(const Observer *o, uint64_t address, uint64_t value, const char *symbol) {
     if (o->observe) o->observe(address, value, symbol, o->context);
 }
-static bool rebases(GuestImage *image, Cursor *c, uint64_t slide, const Observer *o, GFStats *stats) {
+static bool rebases(GuestImage *image, Cursor *c, uint64_t slide, const Observer *o, GFStats *stats,
+                    char *error, size_t error_size) {
     size_t seg = SIZE_MAX; uint64_t offset = 0; unsigned type = 0;
+    // Large images can legitimately contain more than a million pointers.
+    // Bound work by the loaded image, including streams that revisit a slot.
+    uint64_t limit = image->mapped_size / sizeof(uint64_t);
     while (c->p < c->end) {
         uint8_t byte = *c->p++, op = byte & 0xf0, imm = byte & 15;
         uint64_t count = 0, skip = 0;
@@ -63,13 +67,18 @@ static bool rebases(GuestImage *image, Cursor *c, uint64_t slide, const Observer
         case REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB: count = leb(c, false); skip = leb(c, false); break;
         default: return false;
         }
-        if (c->bad || count > 1000000 || skip > UINT64_MAX - 8) return false;
+        if (c->bad || skip > UINT64_MAX - 8) return false;
+        if (count > limit - stats->rebases) {
+            snprintf(error, error_size, "rebase count exceeds image pointer budget (%llu)", (unsigned long long)limit);
+            return false;
+        }
         while (count--) {
             uint64_t address, value;
-            if (type != REBASE_TYPE_POINTER || ++stats->rebases > 1000000 || !target(image, seg, offset, &address) ||
+            if (type != REBASE_TYPE_POINTER || !target(image, seg, offset, &address) ||
                 gm_read(&image->memory, address, &value, 8) != GM_OK) return false;
             value += slide; // Mach-O pointer arithmetic intentionally wraps for negative slides.
             if (gm_populate(&image->memory, address, &value, 8) != GM_OK || !add(&offset, 8 + skip)) return false;
+            stats->rebases++;
             notify(o, address, value, NULL);
         }
     }
@@ -324,7 +333,7 @@ bool gf_apply_observed(GuestImage *image, uint64_t slide, GFResolve resolve, voi
         uint8_t *bytes = stream(image, offsets[i], sizes[i]);
         if (!bytes) { snprintf(error, error_size, "fixup stream outside readable image"); return false; }
         Cursor c = {bytes, bytes + sizes[i], false};
-        bool ok = i == 0 ? rebases(image, &c, slide, &o, stats) : binds(image, &c, i == 1, i == 3, resolve, context, &o, stats, error, error_size);
+        bool ok = i == 0 ? rebases(image, &c, slide, &o, stats, error, error_size) : binds(image, &c, i == 1, i == 3, resolve, context, &o, stats, error, error_size);
         size_t consumed = (size_t)(c.p - bytes);
         free(bytes);
         if (!ok) { if (error_size && !error[0]) snprintf(error, error_size, "invalid or unsupported fixup stream %zu at byte %zu (rebases=%zu binds=%zu)", i, consumed, stats->rebases, stats->binds); return false; }

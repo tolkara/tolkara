@@ -16,6 +16,7 @@ typedef NS_ENUM(NSUInteger, NSEventType) {
     NSEventTypeMouseMoved = 5, NSEventTypeLeftMouseDragged = 6, NSEventTypeRightMouseDragged = 7,
     NSEventTypeKeyDown = 10, NSEventTypeKeyUp = 11, NSEventTypeFlagsChanged = 12,
     NSEventTypeScrollWheel = 22,
+    NSEventTypeOtherMouseDown = 25, NSEventTypeOtherMouseUp = 26, NSEventTypeOtherMouseDragged = 27,
 };
 typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
     NSEventModifierFlagCapsLock = 1 << 16, NSEventModifierFlagShift = 1 << 17,
@@ -43,6 +44,9 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 - (void)rightMouseDown:(NSEvent *)e;
 - (void)rightMouseUp:(NSEvent *)e;
 - (void)rightMouseDragged:(NSEvent *)e;
+- (void)otherMouseDown:(NSEvent *)e;
+- (void)otherMouseUp:(NSEvent *)e;
+- (void)otherMouseDragged:(NSEvent *)e;
 - (void)scrollWheel:(NSEvent *)e;
 @end
 

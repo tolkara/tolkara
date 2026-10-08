@@ -2,6 +2,7 @@
 // run in the simulator (tools/test_translation_sim.sh): no scene is connected,
 // so windows are never put on screen here.
 #import "AppKit.h"
+#import "TouchControls.h"
 #include <assert.h>
 
 // Draws by updating its layer, as Wine's Mac driver does.
@@ -44,6 +45,9 @@
 @end
 @interface NSObject (FixtureHostInput)
 - (void)postKeys:(NSSet *)presses down:(BOOL)down;
+- (void)touchMoveBy:(CGPoint)delta;
+- (void)touchScrollBy:(CGPoint)delta;
+- (void)touchButton:(unsigned)button pressed:(BOOL)pressed;
 @end
 @interface FixtureKeyResponder : NSResponder
 @property unsigned downs, ups;
@@ -56,6 +60,11 @@
 @end
 
 static void run_main_queue(void) { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false); }
+static NSEvent *next_input(void) {
+    NSEvent *event = [NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+    assert(event);
+    return event;
+}
 
 int main(void) { @autoreleasepool {
     // Marking for display coalesces into one updateLayer on the main queue;
@@ -125,6 +134,18 @@ int main(void) { @autoreleasepool {
     space.characters=space.charactersIgnoringModifiers=@" ";
     FixturePress *press=[FixturePress new];press.key=space;
     press.timestamp=NSProcessInfo.processInfo.systemUptime;
+    // On-screen controls are optional: with no stored choice an iPad shows
+    // none and keeps single-touch input; iPhone shows them.
+    NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
+    [defaults removeObjectForKey:AKTouchControlsDefaultsKey];
+    BOOL phone=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPhone;
+    UIView *plainHost=[NSClassFromString(@"AKHostView") new];
+    assert(AKTouchControls.enabled==phone && !![plainHost valueForKey:@"_touchControls"]==phone);
+    if(!phone) assert(!plainHost.multipleTouchEnabled);
+    [defaults setBool:NO forKey:AKTouchControlsDefaultsKey];
+    plainHost=[NSClassFromString(@"AKHostView") new];
+    assert(![plainHost valueForKey:@"_touchControls"] && !plainHost.multipleTouchEnabled);
+    [defaults setBool:YES forKey:AKTouchControlsDefaultsKey];
     id host=[NSClassFromString(@"AKHostView") new];
     [host setValue:window forKey:@"nsWindow"];
     FixtureKeyResponder *responder=[FixtureKeyResponder new];
@@ -140,6 +161,63 @@ int main(void) { @autoreleasepool {
         [app sendEvent:key];
     }
     assert(responder.downs==1 && responder.ups==1 && responder.lastCode==49);
+
+    // Software keys take the same event queue as hardware keys, preserve
+    // Unicode and never depend on reading the guest's text/selection.
+    AKTouchControls *controls = [host valueForKey:@"_touchControls"];
+    assert(controls && controls.hasText && controls.isSecureTextEntry);
+    // Only the two buttons take touches; the gap between them is the game's.
+    controls.frame = CGRectMake(0, 0, 96, 44); [controls layoutIfNeeded];
+    assert([controls pointInside:CGPointMake(20, 20) withEvent:nil] && [controls pointInside:CGPointMake(70, 20) withEvent:nil]);
+    assert(![controls pointInside:CGPointMake(48, 20) withEvent:nil]);
+    [controls insertText:@"@ñ🙂"];
+    NSArray<NSString *> *typed = @[@"@", @"ñ", @"🙂"];
+    for (unsigned i = 0; i < 3; i++) for (unsigned up = 0; up < 2; up++) {
+        NSEvent *event = next_input();
+        assert(event.type == (up ? NSEventTypeKeyUp : NSEventTypeKeyDown));
+        assert(event.window == window && [event.characters isEqual:typed[i]]);
+        assert(event.keyCode == (i ? 0xFF : 19));
+    }
+    [controls deleteBackward];
+    assert(next_input().keyCode == 51 && next_input().type == NSEventTypeKeyUp);
+    [controls insertText:@"\n"];
+    assert(next_input().keyCode == 36 && next_input().type == NSEventTypeKeyUp);
+
+    UIView *hostView = host;
+    hostView.frame = CGRectMake(0, 0, 200, 100);
+    controls.trackpadEnabled = YES;
+    [host touchMoveBy:CGPointMake(10, -5)];
+    NSEvent *move = next_input();
+    assert(move.type == NSEventTypeMouseMoved && move.locationInWindow.x == 110 && move.locationInWindow.y == 55);
+    assert(move.deltaX == 10 && move.deltaY == -5);
+    [host touchMoveBy:CGPointMake(10000, -10000)];
+    move = next_input();
+    assert(move.locationInWindow.x == 199 && move.locationInWindow.y == 100);
+    // Camera deltas continue at an edge with no GCMouse attached.
+    AKMouseSetCaptured(true);
+    [host touchMoveBy:CGPointMake(40, 20)];
+    move = next_input();
+    assert(move.deltaX == 40 && move.deltaY == 20 && move.locationInWindow.x == 199);
+    AKMouseSetCaptured(false);
+    [host touchScrollBy:CGPointMake(-2, 3)];
+    NSEvent *wheelInput = next_input();
+    AKQuartzEvent *wheelInputCG = (__bridge AKQuartzEvent *)wheelInput.CGEvent;
+    assert(wheelInput.type == NSEventTypeScrollWheel && wheelInput.scrollingDeltaY == 3);
+    assert([wheelInputCG integerValueField:11] == 3 && [wheelInputCG integerValueField:12] == -2);
+    for (unsigned button = 0; button < 3; button++) {
+        [host touchButton:button pressed:YES];
+        [host touchButton:button pressed:NO];
+        NSEvent *down = next_input(), *up = next_input();
+        assert(down.type == (button == 2 ? NSEventTypeOtherMouseDown : button == 1 ? NSEventTypeRightMouseDown : NSEventTypeLeftMouseDown));
+        assert(up.type == down.type + 1 && down.buttonNumber == button && up.buttonNumber == button);
+        assert([(__bridge AKQuartzEvent *)down.CGEvent integerValueField:3] == button);
+    }
+    [host touchButton:0 pressed:YES]; [host touchButton:0 pressed:NO];
+    assert(next_input().clickCount == 1); (void)next_input();
+    [host touchButton:0 pressed:YES]; [host touchButton:0 pressed:NO];
+    assert(next_input().clickCount == 2); (void)next_input();
+    controls.trackpadEnabled = NO;
+    assert(!hostView.multipleTouchEnabled);
 
     // Windows are numbered once each; with none on screen, none is found.
     assert(window.windowNumber > 0 && other.windowNumber != window.windowNumber && panel.windowNumber != other.windowNumber);

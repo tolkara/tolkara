@@ -5,7 +5,7 @@
 - `runtime/`: Mach-O loading, guest memory, native execution (Developer service arena, Local signing page container `SignedImage`, or External JIT arena `DebuggerArena`), carried libraries (`GuestLink`), runtime stubs (`GuestStubs`), interpreter diagnostics.
 - `translation/`: macOS API adapters (AppKit input/windowing, Metal shader handling, audio, Security).
 - `authorization/`: Developer service: bundled pairing, transport, tunnel extension and memory-preparation protocol.
-- `launcher/`: the iPad app. `profiles/`: data-only descriptions of tested applications.
+- `launcher/`: the iPad (and experimental iPhone) app. `profiles/`: data-only descriptions of tested applications.
 - `tests/`: C, Objective-C, Swift and Python tests; `testguest/`: our synthetic guest fixture.
 - `tools/`: builds, diagnostics and regression scripts. `docs/`: building guide and architecture.
 - `build/` and `logs/` are ignored outputs. Third-party applications and assets are never committed.
@@ -17,6 +17,7 @@ Requires Xcode, XcodeGen and Python 3. Personal settings (team, bundle ID, devic
 ```sh
 tools/test_emulation.sh     # sanitizer regression suite on the Mac
 tools/test_translation_sim.sh   # the UIKit-backed adapters' tests, run in the simulator
+tools/test_touch_controls_ui.sh --self-test   # on-screen controls on our own test screen, in the simulator
 tools/run.sh sim            # loader diagnostics in the simulator (TolkaraDiagnostics scheme)
 TOLKARA_MODE=local-signing tools/run.sh sim   # Local signing: first initializer of testguest (or GUEST_EXE) from an ad-hoc page container
 tools/install.sh            # build, sign and install the Tolkara app on the configured iPad

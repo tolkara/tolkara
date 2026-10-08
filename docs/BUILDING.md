@@ -1,10 +1,13 @@
 # Building and installing Tolkara
 
 Tolkara is meant to be built by you: you build it, you sign it with your own
-Apple developer identity, and it runs on your own iPad. (External JIT is the one
-exception to the signing: you build it unsigned and your sideloading tool signs
-it; see step 4.) This page takes you from a fresh clone to a running
-application.
+Apple developer identity, and it runs on your own iPad or iPhone. (External
+JIT is the one exception to the signing: you build it unsigned and your
+sideloading tool signs it; see step 4.) This page takes you from a fresh clone
+to a running application.
+
+An iPhone (experimental) is built, signed and enrolled the same way; where this
+page says iPad, read iPhone. [IPHONE.md](IPHONE.md) has what differs.
 
 ## What you need
 
@@ -15,7 +18,8 @@ application.
   extended virtual addressing capabilities, which free personal teams cannot
   sign, and free provisioning profiles expire after seven days.
 - An Apple-silicon iPad. Development and testing so far used an iPad Pro (M5)
-  on iPadOS 27.
+  on iPadOS 27. iPhone support is experimental and was tested on an iPhone 16
+  Pro Max with iOS 27.
 - A macOS arm64 application that you own, installed on the Mac.
 
 ## 1. Enable Developer Mode on the iPad
@@ -71,6 +75,14 @@ registers the bundle IDs and the iPad with your team and creates the profiles.
 If it reports a signing error, open `Tolkara.xcodeproj` once in Xcode, select
 the `Tolkara` and `LocalAuthorizationTunnel` targets, and let Xcode repair
 signing under Signing & Capabilities.
+
+To build from Xcode instead, run `tools/generate.sh`, open
+`Tolkara.xcodeproj` and run the **Tolkara** scheme on your device. The scheme
+starts the app without Xcode's debugger, which must not stay attached to a
+game; keep **Debug executable** off. Such a build carries the generic
+compatibility libraries (as `NATIVE_GUEST_SHIMS=GENERIC tools/install.sh`
+would). `tools/generate.sh` rewrites the project, so keep personal settings in
+`local.env`.
 
 ## 3. Build and install
 

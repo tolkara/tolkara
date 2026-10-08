@@ -3,6 +3,9 @@
 The macOS arm64 Classic beta client (1.60.1) from `_classic_beta_`. See
 [COMPATIBILITY.md](../../COMPATIBILITY.md) for what works.
 
+It also logs in and plays on an iPhone (experimental); see
+[docs/IPHONE.md](../../docs/IPHONE.md).
+
 You need your own installation made by the Battle.net app on a Mac, and your own
 account. Nothing from the game is included here.
 
@@ -33,8 +36,8 @@ game as usual.
 [README](../../README.md#three-ways-to-run-code); choose one. With Local signing,
 the client logs in and plays on an iPad Pro M5 (2026-09-27), with no debugger,
 helper or tunnel: the unpacked code matched the signed page container byte for
-byte and all 13,280 initializers ran into the original `main`. It has not yet
-been validated with Developer service.
+byte and all 13,280 initializers ran into the original `main`. With
+Developer service it has been played on an iPhone, not yet on an iPad.
 Like the Era client, this client unpacks its own code at launch, so its Local
 signing page container must be built from a capture of its final code pages —
 producing such a capture in the app is not wired yet (see

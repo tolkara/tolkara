@@ -17,10 +17,24 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: "0.1"
     ENABLE_USER_SCRIPT_SANDBOXING: NO
-    TARGETED_DEVICE_FAMILY: "2"
+    TARGETED_DEVICE_FAMILY: "1,2"
     CLANG_ENABLE_OBJC_ARC: YES
     GUEST_RUNTIME: emulated
     HEADER_SEARCH_PATHS: "$(SRCROOT)/runtime $(SRCROOT)/translation/Metal"
+schemes:
+  Tolkara:
+    build:
+      targets:
+        Tolkara: all
+    run:
+      config: Debug
+      executable: Tolkara
+      # Guest execution must not keep Xcode's debugger attached.
+      debugEnabled: false
+    management:
+      shared: true
+      isShown: true
+      orderHint: 0
 targetTemplates:
   AppBase:
     type: application
@@ -45,8 +59,8 @@ targetTemplates:
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIRequiresFullScreen: NO
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown"
-        INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
     postBuildScripts:
       - name: Package guest runtime
@@ -64,6 +78,10 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID)
+        # A direct Xcode build gets the generic compatibility libraries;
+        # tools/install.sh passes its own choice. TolkaraDiagnostics, used by
+        # tools/run.sh, keeps none unless one is passed.
+        NATIVE_GUEST_SHIMS: GENERIC
         GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) TOLKARA_INTEGRATED_AUTH=1"
         INFOPLIST_FILE: authorization/App/Integrated-Info.plist
         SWIFT_VERSION: "5.0"

@@ -1,6 +1,7 @@
 # World of Warcraft Classic (Classic Era)
 
-Tested with the macOS arm64 Classic Era client 1.15.x on an iPad Pro (M5). See
+Tested with the macOS arm64 Classic Era client 1.15.x on an iPad Pro (M5); on
+an iPhone (experimental) it reaches the login screen. See
 [COMPATIBILITY.md](../../COMPATIBILITY.md) for what works.
 
 You need your own installation made by the Battle.net app on a Mac, and your own
@@ -24,6 +25,12 @@ gigabytes, so use a cable) and verifies the executable's hash before and after.
 It copies only your region and language settings, not account settings, saved
 credentials or add-ons. Pass `--source` if the game is installed elsewhere, and
 `--skip-data` to refresh the client without copying `Data` again.
+
+The client needs a saved region and language. If the Mac installation has
+never saved them (no `portal`, `textLocale` and `audioLocale` in
+`_classic_era_/WTF/Config.wtf`), it opens a region picker that the AppKit
+adapter cannot show yet, and stops. Start the game once on the Mac, choose your
+region and languages, quit, and run the script again with `--skip-data`.
 
 Open Tolkara, choose an execution mode if it asks, tap World of Warcraft Classic
 in the library (it appears once the files are copied), and log in inside the
