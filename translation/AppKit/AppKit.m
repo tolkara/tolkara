@@ -359,21 +359,16 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 - (void)touchMoveBy:(CGPoint)delta {
     if (!isfinite(delta.x) || !isfinite(delta.y)) return;
     [self activateTouchCursor];
-    NSEventType type = _pressedRight ? NSEventTypeRightMouseDragged : _pressedLeft ? NSEventTypeLeftMouseDragged : _pressedMiddle ? NSEventTypeOtherMouseDragged : NSEventTypeMouseMoved;
-    NSInteger button = _pressedRight ? 1 : _pressedMiddle ? 2 : 0;
     if (AKMouseIsCaptured()) {
-        // Camera motion uses deltas even at a screen edge, without a physical mouse.
-        NSEvent *event = [NSEvent new];
-        event.type = type; event.window = self.nsWindow; event.buttonNumber = button;
-        event.locationInWindow = self.nsWindow.ak_mouseLocation; event.modifierFlags = _mods;
-        event.deltaX = delta.x; event.deltaY = delta.y;
-        event.timestamp = NSProcessInfo.processInfo.systemUptime;
-        [NSApp postEvent:event atStart:NO];
+        // Camera motion uses deltas even at a screen edge, without a physical
+        // mouse: the same confined path as a mouse's (which takes y up).
+        [self postRelativeMouseX:delta.x y:-delta.y];
         [self positionCursor];
     } else {
+        NSEventType type = _pressedRight ? NSEventTypeRightMouseDragged : _pressedLeft ? NSEventTypeLeftMouseDragged : _pressedMiddle ? NSEventTypeOtherMouseDragged : NSEventTypeMouseMoved;
         CGPoint point = CGPointMake(MAX(0, MIN(self.bounds.size.width - 1, _last.x + delta.x)),
                                    MAX(0, MIN(self.bounds.size.height - 1, _last.y + delta.y)));
-        [self postMouse:type at:point button:button];
+        [self postMouse:type at:point button:_pressedRight ? 1 : _pressedMiddle ? 2 : 0];
     }
 }
 - (void)touchScrollBy:(CGPoint)delta {
@@ -469,8 +464,8 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
     mouseScreenLocation=[self.nsWindow convertPointToScreen:point];
     _last=CGPointMake(point.x,self.bounds.size.height-point.y);
     NSEvent *event=[NSEvent new];event.window=self.nsWindow;event.modifierFlags=_mods;
-    event.type=_pressedRight?NSEventTypeRightMouseDragged:_pressedLeft?NSEventTypeLeftMouseDragged:NSEventTypeMouseMoved;
-    event.buttonNumber=_pressedRight?1:0;event.locationInWindow=point;
+    event.type=_pressedRight?NSEventTypeRightMouseDragged:_pressedLeft?NSEventTypeLeftMouseDragged:_pressedMiddle?NSEventTypeOtherMouseDragged:NSEventTypeMouseMoved;
+    event.buttonNumber=_pressedRight?1:_pressedMiddle?2:0;event.locationInWindow=point;
     event.deltaX=dx;event.deltaY=-dy;event.timestamp=NSProcessInfo.processInfo.systemUptime;
     [NSApp postEvent:event atStart:NO];
 }

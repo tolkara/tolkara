@@ -244,6 +244,12 @@ int main(void) { @autoreleasepool {
     [host touchMoveBy:CGPointMake(40, 20)];
     move = next_input();
     assert(move.deltaX == 40 && move.deltaY == 20 && move.locationInWindow.x == 199);
+    // Like a mouse's, touch motion stays inside Wine's confinement rect.
+    window.mouseConfinementRect = CGRectMake(10, 20, 100, 50);
+    [host touchMoveBy:CGPointMake(-500, 0)];
+    move = next_input();
+    assert(move.deltaX == -500 && move.locationInWindow.x == 10 && move.locationInWindow.y >= 21 && move.locationInWindow.y <= 70);
+    window.mouseConfinementRect = CGRectZero;
     AKMouseSetCaptured(false);
     [host touchScrollBy:CGPointMake(-2, 3)];
     NSEvent *wheelInput = next_input();
