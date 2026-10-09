@@ -870,6 +870,21 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         });
         return;
     }
+    // Tolkara Management (the Mac app) removes an application's files from
+    // Documents; the result goes to Documents/management-result.txt.
+    NSUInteger removal=[arguments indexOfObject:@"--remove-app-folder"];
+    if(removal!=NSNotFound) {
+        NSString *result=@"Not removed: --remove-app-folder needs a folder.";
+        if(removal+1<arguments.count) {
+            NSError *error=nil;
+            NSArray<NSString *> *names=[self.library removeApplicationFolder:arguments[removal+1] error:&error];
+            result=names ? [NSString stringWithFormat:@"Removed %@ (%@).",arguments[removal+1],[names componentsJoinedByString:@", "]]
+                : [@"Not removed: " stringByAppendingString:error.localizedDescription];
+        }
+        self.status.text=result;
+        [result writeToFile:TKDocumentsPath(@"management-result.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        return;
+    }
 #if TOLKARA_INTEGRATED_AUTH
     if([arguments containsObject:@"--prepare-authorization-import"]) {
         self.status.text=[TKEnrollmentImport prepare]?@"Protected enrollment handoff directory ready.":@"Enrollment handoff directory unavailable.";

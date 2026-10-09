@@ -259,8 +259,32 @@ int main(int argc, const char **argv) {
         assert(![fm fileExistsAtPath:[cased stringByAppendingPathComponent:@"gone"]]);
         assert(![aliasLibrary caseAliasesForApp:inPlace].count && ![aliasLibrary linkCaseAliasesForApp:inPlace].count);
 
+        // Removing an application's folder for Tolkara Management: only a folder that holds
+        // an application, never Tolkara's own or Documents, and the profile comes back with its files.
+        NSString *managed=[tmp stringByAppendingPathComponent:@"Managed"];
+        NSString *managedDocuments=[managed stringByAppendingPathComponent:@"Documents"];
+        NSArray *managedProfiles=@[@{@"id":@"m",@"name":@"Managed",@"workingDirectory":@"Game/_beta_",@"executable":@"M.app/Contents/MacOS/M"}];
+        copy_file(fixture,[managedDocuments stringByAppendingPathComponent:@"Game/_beta_/M.app/Contents/MacOS/M"]);
+        write_text(@"data",[managedDocuments stringByAppendingPathComponent:@"Game/Data/d"]);
+        write_text(@"mine",[managedDocuments stringByAppendingPathComponent:@"Notes/n.txt"]);
+        write_text(@"module",[managedDocuments stringByAppendingPathComponent:@"GuestModules/x"]);
+        TKAppLibrary *manager=open_library(managedDocuments,[managed stringByAppendingPathComponent:@"Support"],managedProfiles);
+        assert([manager discover].count==1);
+        for (NSString *refused in @[@"",@"/",@"..",@"Game/..",@"../Game",@"/Game",@"Game/",@".hidden",@"GuestModules",@"LocalSigning",
+                                    @"GuestCompatibility/Nibs",@"Notes",@"Missing"]) {
+            error=nil;
+            assert(![manager removeApplicationFolder:refused error:&error] && error);
+        }
+        assert([fm fileExistsAtPath:[managedDocuments stringByAppendingPathComponent:@"Notes/n.txt"]]);
+        NSArray<NSString *> *removedNames=[manager removeApplicationFolder:@"Game" error:&error];
+        assert([removedNames isEqual:@[@"Managed"]] && !manager.apps.count);
+        assert(![fm fileExistsAtPath:[managedDocuments stringByAppendingPathComponent:@"Game"]]);
+        assert([fm fileExistsAtPath:[managedDocuments stringByAppendingPathComponent:@"GuestModules/x"]]);
+        copy_file(fixture,[managedDocuments stringByAppendingPathComponent:@"Game/_beta_/M.app/Contents/MacOS/M"]);
+        assert([manager discover].count==1);
+
         assert([[NSData dataWithContentsOfFile:fixture] isEqual:original]);
         assert([fm removeItemAtPath:tmp error:&error]);
-        puts("PASS: app library import in place and by copy, profiles, legacy module, order, persistence, integrity, hostile entries and case aliases");
+        puts("PASS: app library import in place and by copy, profiles, legacy module, order, persistence, integrity, hostile entries, case aliases and folder removal");
     }
 }

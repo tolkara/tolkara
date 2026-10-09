@@ -78,6 +78,13 @@ typedef NS_ENUM(NSInteger, TKAppSource) {
 // of an executable is deleted when no other entry uses it.
 - (BOOL)removeApp:(TKApp *)app error:(NSError **)error;
 - (BOOL)recordLaunchOfApp:(TKApp *)app error:(NSError **)error;
+// Deletes an application's files: a folder in Documents (relative, for
+// example "World of Warcraft") that holds an entry's or a profile's
+// executable, never Tolkara's own folders (GuestModules, GuestCompatibility,
+// LocalSigning) or Documents itself. Entries whose files were inside go too;
+// their profiles are added again when their files are copied back. Returns
+// the names of the applications removed. For Tolkara Management on the Mac.
+- (nullable NSArray<NSString *> *)removeApplicationFolder:(NSString *)folder error:(NSError **)error;
 
 // Absolute, checked paths for starting the app. A Documents executable must be
 // a regular file that stays inside Documents; a copy must match its hash.

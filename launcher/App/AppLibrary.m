@@ -405,6 +405,44 @@ static NSString *bundle_executable(NSString *path, NSError **error) {
         record[@"lastLaunched"]=@(NSDate.date.timeIntervalSince1970);
     }];
 }
+static BOOL path_inside(id path, NSString *folder) {
+    return [path isKindOfClass:NSString.class] && ([path isEqual:folder] || [path hasPrefix:[folder stringByAppendingString:@"/"]]);
+}
+- (NSArray<NSString *> *)removeApplicationFolder:(NSString *)folder error:(NSError **)error {
+    NSString *first=[folder isKindOfClass:NSString.class] ? [folder componentsSeparatedByString:@"/"].firstObject : nil;
+    if (!valid_relative(folder,NO) || [first hasPrefix:@"."] ||
+        [@[TKModulesDirectory,@"GuestCompatibility",@"LocalSigning"] containsObject:first]) {
+        library_error(error,@"Only an application's folder inside Documents can be removed.");
+        return nil;
+    }
+    NSString *path=[_documents stringByAppendingPathComponent:folder], *root=real_path(_documents), *real=real_path(path);
+    struct stat info;
+    if (lstat(path.fileSystemRepresentation,&info) || !S_ISDIR(info.st_mode) || !root || !real || !path_inside(real,root) || [real isEqual:root]) {
+        library_error(error,@"The folder is not in Documents.");
+        return nil;
+    }
+    NSMutableArray<NSString *> *names=[NSMutableArray new];
+    @synchronized (self) {
+        NSMutableArray *records=[NSMutableArray new];
+        NSMutableSet *dismissed=[_dismissedProfiles mutableCopy];
+        for (NSDictionary *record in _records) {
+            if (path_inside(record[@"executable"],folder) || path_inside(record[@"workingDirectory"],folder)) {
+                [names addObject:record[@"name"]?:folder];
+                if (record[@"profile"]) [dismissed removeObject:record[@"profile"]];
+            } else [records addObject:record];
+        }
+        for (NSDictionary *profile in _profiles)
+            if (path_inside([TKAppLibrary executableOfProfile:profile],folder) || path_inside(profile[@"workingDirectory"],folder)) {
+                if (![names containsObject:profile[@"name"]]) [names addObject:profile[@"name"]];
+                [dismissed removeObject:profile[@"id"]];
+            }
+        // Only a folder that holds an application: nothing else of the user's in Documents.
+        if (!names.count) { library_error(error,@"The folder holds no application."); return nil; }
+        if (![self saveRecords:records dismissed:dismissed legacy:_legacyImported error:error]) return nil;
+    }
+    if (![NSFileManager.defaultManager removeItemAtPath:path error:error]) return nil;
+    return names;
+}
 - (BOOL)removeApp:(TKApp *)app error:(NSError **)error {
     NSString *unusedCopy=nil;
     @synchronized (self) {
