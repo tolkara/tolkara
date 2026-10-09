@@ -20,7 +20,10 @@ account. For External JIT you build it without a signing team
 (`tools/package_ipa.sh`) and the tool you sideload it with signs it. As a convenience for External JIT only,
 each [release](https://github.com/tolkara/tolkara/releases) also carries that
 unsigned build, `Tolkara-unsigned.ipa`, made from the tagged source and holding
-only Tolkara's own code; it is not the main way to get Tolkara. Nothing here is distributed through the App
+only Tolkara's own code; it is not the main way to get Tolkara. Releases also
+carry Tolkara Management, a Mac app that does the self-build for you: it
+builds Tolkara on your Mac and signs it with your own account
+([docs/MANAGEMENT.md](docs/MANAGEMENT.md)). Nothing here is distributed through the App
 Store, and the repository and releases contain no third-party application code
 or assets.
 
@@ -80,13 +83,22 @@ was obtained with.
 | [`authorization/`](authorization) | Developer service. iPadOS only lets a development-signed app run code it did not sign after a debugger has prepared that memory. This module does that on the iPad itself: a bundled packet-tunnel extension reaches the device's own developer service, prepares the memory, and detaches before any application code runs. No Mac is needed after the one-time enrollment. |
 | [`launcher/`](launcher) | The UIKit app: the app library, the execution-mode choice, starting apps, and a separate Diagnostics menu. |
 | [`profiles/`](profiles) | Small data files that describe a tested application: its name and where its files live. No code. |
+| [`management/`](management) | Tolkara Management, the Mac app that guides a user through building, installing and setting up an application ([docs/MANAGEMENT.md](docs/MANAGEMENT.md)). |
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the protocol notes
 in [docs/LOCAL_AUTHORIZATION.md](docs/LOCAL_AUTHORIZATION.md).
 
 ## Getting started
 
-You need a Mac with Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen),
+**The easy way:** download `Tolkara-Management.dmg` from the
+[releases](https://github.com/tolkara/tolkara/releases). Tolkara Management
+is a Mac app that checks every requirement step by step, builds Tolkara on
+your Mac with your own Apple developer account, installs it on your iPad and
+copies your game, such as World of Warcraft Forever. You still need a paid
+Apple Developer Program membership, Xcode and your own copy of the game. See
+[docs/MANAGEMENT.md](docs/MANAGEMENT.md).
+
+**By hand:** you need a Mac with Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen),
 Python 3, an Apple developer account, and an iPad or an
 [experimentally supported iPhone](docs/IPHONE.md) with Developer Mode enabled.
 The full walkthrough, including signing and Developer Mode, is in

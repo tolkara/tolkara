@@ -1,0 +1,66 @@
+# Tolkara Management: the Mac app that guides a user through building and
+# installing Tolkara and setting up an application. Generate with
+#   xcodegen --spec management/project.yml
+# (tools/package_management.sh does this). It carries a copy of Tolkara's own
+# source (git archive of HEAD) and builds it with the user's own team.
+name: TolkaraManagement
+options:
+  bundleIdPrefix: org.tolkara
+  deploymentTarget: { macOS: "14.0" }
+settings:
+  base:
+    MARKETING_VERSION: ${TOLKARA_VERSION}
+    CURRENT_PROJECT_VERSION: 1
+    SWIFT_VERSION: "5.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    DEAD_CODE_STRIPPING: YES
+targets:
+  TolkaraManagement:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+      - path: Assets.xcassets
+    settings:
+      base:
+        PRODUCT_NAME: Tolkara Management
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolkara.management
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Tolkara Management
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        INFOPLIST_KEY_NSHumanReadableCopyright: "MIT License. Not affiliated with Apple or Blizzard."
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Runs Xcode's tools and the repository's scripts: not sandboxed.
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        COMBINE_HIDPI_IMAGES: YES
+    postBuildScripts:
+      - name: Embed Tolkara source
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          "$SRCROOT/../tools/embed_management_source.sh" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+  TolkaraManagementTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [Tests]
+    dependencies:
+      - target: TolkaraManagement
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.tolkara.management.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Tolkara Management.app/Contents/MacOS/Tolkara Management"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+schemes:
+  TolkaraManagement:
+    build:
+      targets:
+        TolkaraManagement: all
+        TolkaraManagementTests: [test]
+    test:
+      targets: [TolkaraManagementTests]

@@ -17,3 +17,5 @@ DerivedData/
 local.env
 __pycache__/
 Tolkara.xcodeproj/
+management/TolkaraManagement.xcodeproj/
+*.dmg

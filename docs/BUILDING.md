@@ -6,6 +6,10 @@ JIT is the one exception to the signing: you build it unsigned and your
 sideloading tool signs it; see step 4.) This page takes you from a fresh clone
 to a running application.
 
+Prefer not to use the command line? [Tolkara Management](MANAGEMENT.md), a
+Mac app, does every step on this page for you, with your own account, and
+checks each one.
+
 An iPhone (experimental) is built, signed and enrolled the same way; where this
 page says iPad, read iPhone. [IPHONE.md](IPHONE.md) has what differs.
 
