@@ -58,6 +58,30 @@ class ProfileTests(unittest.TestCase):
         without = {k: v for k, v in good.items() if k not in ('runtime', 'libraries')}
         with self.assertRaises(ValueError): check(self.write(without))
 
+    def test_setup(self):
+        # What the Mac app reads: plain data, https links, the destination above the working directory.
+        good = {'id': 'a', 'name': 'A', 'workingDirectory': 'Games/A', 'executable': 'A.app/Contents/MacOS/A',
+                'setup': {'source': '/Applications/Games', 'destination': 'Games',
+                          'getApp': {'name': 'Store', 'url': 'https://example.com/get', 'path': '/Applications/Store.app', 'steps': ['Install A.']},
+                          'risk': {'summary': 'Online game.', 'history': [{'when': '2020', 'text': 'Tolerated.'}],
+                                   'links': [{'title': 'Source', 'url': 'https://example.com/source'}]}}}
+        check(self.write(good))
+        check(self.write({**good, 'setup': {}}))
+        check(self.write({**good, 'setup': {'destination': 'Games/A'}}))
+        for setup in ([], {'command': 'x'}, {'source': 'Applications/Games'}, {'destination': 'Other'}, {'destination': 'Games/A/B'},
+                      {'destination': 'Gam'}, {'destination': '../Games'}, {'installer': '../install.py'}, {'installer': 'install.sh'},
+                      {'installer': 'missing.py'}, {'getApp': {'name': 'Store'}}, {'getApp': {'name': 'Store', 'url': 'http://example.com'}},
+                      {'getApp': {'name': 'Store', 'url': 'https://example.com', 'path': 'Store.app'}},
+                      {'getApp': {'name': 'Store', 'url': 'https://example.com', 'steps': 'Install'}},
+                      {'getApp': {'name': 'Store', 'url': 'https://example.com', 'run': 'x'}},
+                      {'risk': {}}, {'risk': {'summary': ''}}, {'risk': {'summary': 'x', 'history': [{'when': '2020'}]}},
+                      {'risk': {'summary': 'x', 'links': [{'title': 'x', 'url': 'javascript:alert(1)'}]}},
+                      {'risk': {'summary': 'x', 'history': [{'when': 'a', 'text': 'b'}] * 17}}):
+            with self.assertRaises(ValueError, msg=repr(setup)): check(self.write({**good, 'setup': setup}))
+        # Not for a profile run by a compatibility runtime.
+        runtime = {'id': 'w', 'name': 'W', 'workingDirectory': 'W/game', 'runtime': 'W/Runtime', 'executable': 'bin/run'}
+        with self.assertRaises(ValueError): check(self.write({**runtime, 'setup': {}}))
+
     def test_heroes3_hd_settings(self):
         # The staged copy's HD mod settings: pinned keys replaced in place, CRLF kept, defaults used on a fresh copy.
         sys.path.insert(0, str(ROOT / 'profiles' / 'heroes3-hota'))

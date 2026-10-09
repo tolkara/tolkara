@@ -77,3 +77,51 @@ remembered too. Inside Documents it runs in place (the folder containing its
 
 A profile folder may include a helper script that copies the user's **own**
 installed files to the iPad. It must never download or contain the application.
+
+## Setting up with Tolkara Management
+
+[Tolkara Management](../docs/MANAGEMENT.md), the Mac setup app, offers a
+profile that has a `setup` block. The block is data only. The iPad launcher
+ignores it.
+
+```json
+"setup": {
+  "source": "/Applications/Example",
+  "destination": "Example",
+  "installer": "install.py",
+  "getApp": {
+    "name": "Example Store",
+    "url": "https://example.com/download",
+    "path": "/Applications/Example Store.app",
+    "steps": ["Install Example from Example Store."]
+  },
+  "risk": {
+    "summary": "Example is an online game. Your account could be suspended or banned; that risk is yours alone.",
+    "history": [{ "when": "2020", "text": "What the publisher has said or done about compatibility layers." }],
+    "links": [{ "title": "Source", "url": "https://example.com/statement" }]
+  }
+}
+```
+
+- `source` (optional): the usual absolute path of the Mac folder that
+  becomes `Documents/<destination>`. The user can choose another folder.
+  Without it, the user always chooses.
+- `destination` (optional): that folder under Documents. It defaults to the
+  first component of `workingDirectory`, and it must be `workingDirectory`
+  or a folder above it. The app finds the executable at `source` followed by
+  `workingDirectory/executable` minus `destination`.
+- `installer` (optional): the profile folder's copy helper. The app runs it
+  as `python3 <installer> --source <folder> --device <UDID>`, with
+  `local.env` written. Only built-in profiles' helpers run. Without one, or
+  for a profile the user added, the folder is copied with `devicectl`.
+- `getApp` (optional): where to get the application. `url` must be https,
+  and `path` is where its installer app usually lives. `steps` holds at most
+  16 short instructions, and `**bold**` is allowed in them.
+- `risk` (optional): the notice the user must accept before choosing an
+  online game. Keep `summary` short, factual and plain. Each `history` entry
+  must be backed by one of the `links` (https), and say no more than its
+  source does. If the wording changes, users are asked to accept it again.
+
+A profile with a `runtime` cannot have `setup` yet. `tools/check_profile.py`
+validates all of this, and `management/App/Core/Profile.swift` follows the
+same rules.

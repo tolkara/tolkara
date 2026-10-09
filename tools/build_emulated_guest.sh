@@ -44,10 +44,14 @@ done
 if [ -z "${TOLKARA_PROFILE:-}" ] && [ -f "$ROOT/local.env" ]; then
     TOLKARA_PROFILE=$(cd "$ROOT" && . tools/localenv.sh && tolkara_load_env && printf '%s' "${TOLKARA_PROFILE:-}")
 fi
+# Several of your own: separated by ':' (like PATH), the first taking precedence.
 if [ -n "${TOLKARA_PROFILE:-}" ]; then
-    case "$TOLKARA_PROFILE" in /*) PROFILE="$TOLKARA_PROFILE";; *) PROFILE="$ROOT/$TOLKARA_PROFILE";; esac
-    python3 "$ROOT/tools/check_profile.py" "$PROFILE"
-    cp "$PROFILE" "$OUT/Guest/Profiles/0-local.json"
+    IFS=: read -r -a OWN_PROFILES <<< "$TOLKARA_PROFILE"
+    for i in "${!OWN_PROFILES[@]}"; do
+        case "${OWN_PROFILES[$i]}" in /*) PROFILE="${OWN_PROFILES[$i]}";; *) PROFILE="$ROOT/${OWN_PROFILES[$i]}";; esac
+        python3 "$ROOT/tools/check_profile.py" "$PROFILE"
+        cp "$PROFILE" "$OUT/Guest/Profiles/0-local-$i.json"
+    done
 fi
 
 # Build/sign only our compatibility libraries. The original is never patched.

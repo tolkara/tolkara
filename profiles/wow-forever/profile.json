@@ -3,6 +3,68 @@
   "name": "World of Warcraft Forever",
   "workingDirectory": "World of Warcraft/_classic_beta_",
   "executable": "World of Warcraft Beta.app/Contents/MacOS/World of Warcraft",
-  "tested": "Classic beta 1.60.1, macOS arm64 client, iPad Pro M5",
-  "notes": "Copy your own installed 'World of Warcraft' folder into the app's Documents. Log in inside the game. See profiles/README.md."
+  "tested": "Classic beta 1.60.1, macOS arm64 client, iPad Pro M5; iPhone 16 Pro Max (experimental)",
+  "notes": "Copy your own installed 'World of Warcraft' folder into the app's Documents. Log in inside the game. See profiles/README.md.",
+  "setup": {
+    "source": "/Applications/World of Warcraft",
+    "destination": "World of Warcraft",
+    "installer": "install.py",
+    "getApp": {
+      "name": "Battle.net",
+      "url": "https://download.battle.net/en-us/desktop",
+      "path": "/Applications/Battle.net.app",
+      "steps": [
+        "Install the Battle.net app on this Mac and sign in with your Blizzard account.",
+        "In Battle.net, install World of Warcraft Forever (the Classic beta) for Mac in its usual place, the Applications folder.",
+        "Start the game once on this Mac and log in, so that it saves your region. Then quit the game and Battle.net."
+      ]
+    },
+    "risk": {
+      "summary": "World of Warcraft is an online game, and Blizzard does not support Tolkara. Playing on a system the game was not released for may be against its terms of use. Tolkara does not change the game, but your account could still be suspended or banned. That risk is yours alone: the Tolkara authors accept no responsibility for lost accounts, characters, purchases or subscriptions. Consider trying a free Starter account first.",
+      "history": [
+        {
+          "when": "2006",
+          "text": "WoW players on Cedega, a Wine-based layer, were banned by mistake. Blizzard reversed the bans within about a week and credited the lost play time."
+        },
+        {
+          "when": "2012",
+          "text": "Blizzard said playing Diablo III through Linux or Wine would not by itself get anyone banned; cheating would."
+        },
+        {
+          "when": "2018",
+          "text": "A Blizzard forum post said playing Overwatch on Linux is not bannable. Overwatch bans that hit Wine and DXVK players that year were all overturned."
+        },
+        {
+          "when": "2022",
+          "text": "When a Battle.net update broke Wine, Blizzard said this was unintended and shipped a fix."
+        },
+        {
+          "when": "2023",
+          "text": "Diablo IV on Steam is Steam Deck Verified, so it runs through Valve's Proton. Blizzard still calls Linux unsupported."
+        },
+        {
+          "when": "Today",
+          "text": "No Blizzard statement covers an iPad running the Mac client. Tolkara works the way Wine and Proton do, but nothing guarantees Blizzard will treat it the same way."
+        }
+      ],
+      "links": [
+        {
+          "title": "Blizzard on playing Overwatch on Linux (2018)",
+          "url": "https://us.forums.blizzard.com/en/overwatch/t/can-we-get-banned-for-playing-on-linux/70929/4"
+        },
+        {
+          "title": "Blizzard reverses the 2006 Cedega bans",
+          "url": "https://www.engadget.com/2006-11-22-blizz-unbans-cedega-users.html"
+        },
+        {
+          "title": "Overwatch Linux bans overturned (2018)",
+          "url": "https://www.pcgamesn.com/overwatch/overwatch-linux-bans"
+        },
+        {
+          "title": "Tolkara: online games and account risk",
+          "url": "https://github.com/tolkara/tolkara#online-games-and-account-risk"
+        }
+      ]
+    }
+  }
 }
