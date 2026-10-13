@@ -23,12 +23,13 @@ int main(void) {
     update(&pad, &trace, 0, 0, 0, 1.2);
     assert(trace.count == 1 && trace.events[0].action == AKTrackpadMove);
     assert(trace.events[0].x == 20 && trace.events[0].y == -20);
-    // Lifting and placing somewhere else does not teleport the cursor.
+    // A tap reports where the finger was (the host brings the pointer there
+    // and clicks); motion between gestures stays relative and does not teleport.
     trace.count = 0;
     update(&pad, &trace, 1, 500, 400, 2);
     update(&pad, &trace, 0, 0, 0, 2.1);
-    assert(trace.count == 2 && trace.events[0].action == AKTrackpadDown && trace.events[0].button == 0);
-    assert(trace.events[1].action == AKTrackpadUp);
+    assert(trace.count == 1 && trace.events[0].action == AKTrackpadTap);
+    assert(trace.events[0].x == 500 && trace.events[0].y == 400 && trace.events[0].button == 0);
     // One-, two- and three-finger taps are left, right and middle clicks.
     for (unsigned fingers = 2; fingers <= 3; fingers++) {
         trace.count = 0;
@@ -37,8 +38,8 @@ int main(void) {
         update(&pad, &trace, 1, 20, 20, 3.1);
         update(&pad, &trace, 1, 22, 22, 3.12);
         update(&pad, &trace, 0, 0, 0, 3.2);
-        assert(trace.count == 2 && trace.events[0].action == AKTrackpadDown && trace.events[0].button == fingers - 1);
-        assert(trace.events[1].action == AKTrackpadUp && trace.events[1].button == fingers - 1);
+        assert(trace.count == 1 && trace.events[0].action == AKTrackpadTap && trace.events[0].button == fingers - 1);
+        assert(trace.events[0].x == 22 && trace.events[0].y == 22);
     }
     // Scroll accumulates small movements into wheel lines, not clicks/motion.
     trace.count = 0;

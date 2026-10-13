@@ -24,8 +24,7 @@ void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, dou
         else if (pad->fingers && !pad->blocked && pad->travelled <= 8 &&
                  isfinite(time) && time >= pad->started && time - pad->started <= 0.35) {
             unsigned button = pad->peak == 3 ? 2 : pad->peak == 2 ? 1 : 0;
-            emit(context, AKTrackpadDown, 0, 0, button);
-            emit(context, AKTrackpadUp, 0, 0, button);
+            emit(context, AKTrackpadTap, pad->x, pad->y, button);
         }
         memset(pad, 0, sizeof *pad);
         return;

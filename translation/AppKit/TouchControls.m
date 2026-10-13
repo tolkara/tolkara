@@ -16,6 +16,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     switch (action) {
         case AKTrackpadMove: [controls.delegate touchMoveBy:CGPointMake(x, y)]; break;
         case AKTrackpadScroll: [controls.delegate touchScrollBy:CGPointMake(x, y)]; break;
+        case AKTrackpadTap: [controls.delegate touchTapAt:CGPointMake(x, y) button:button]; break;
         case AKTrackpadDown: [controls.delegate touchButton:button pressed:YES]; break;
         case AKTrackpadUp: [controls.delegate touchButton:button pressed:NO]; break;
     }
@@ -25,6 +26,10 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchControlsDefaultsKey];
     return [saved isKindOfClass:NSNumber.class] ? saved.boolValue :
         UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
+}
++ (BOOL)explicitlyDisabled {
+    NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchControlsDefaultsKey];
+    return [saved isKindOfClass:NSNumber.class] && !saved.boolValue;
 }
 
 - (UIButton *)buttonWithSymbol:(NSString *)symbol label:(NSString *)label action:(SEL)action {
@@ -112,6 +117,10 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
     [self cancelTouches];
     if (self.keyboardVisible) [self dismissKeyboard];
     else [self becomeFirstResponder];
+}
+- (void)showKeyboard {
+    [self cancelTouches];
+    if (!self.keyboardVisible) [self becomeFirstResponder];
 }
 - (void)dismissKeyboard {
     if (self.isFirstResponder) {

@@ -277,11 +277,25 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
 
 @interface AKHostView : UIView <UIPointerInteractionDelegate, AKTouchControlsDelegate>
 @property (nonatomic, weak) NSWindow *nsWindow;
+// The guest's first responder changed (NSWindow.makeFirstResponder:).
+- (void)guestFirstResponderChanged:(NSResponder *)responder;
 @end
+
+// Whether a responder is where typed text goes. Our NSResponder base class
+// forwards -insertText: up the chain, so only the two-argument NSTextInputClient
+// entry point, or an override of -insertText:, says "this is a text field".
+static BOOL AKResponderIsTextClient(NSResponder *responder) {
+    if (!responder) return NO;
+    if ([responder respondsToSelector:@selector(insertText:replacementRange:)]) return YES;
+    IMP forwarded = method_getImplementation(class_getInstanceMethod(NSResponder.class, @selector(insertText:)));
+    Method own = class_getInstanceMethod(object_getClass(responder), @selector(insertText:));
+    return own && method_getImplementation(own) != forwarded;
+}
 
 @implementation AKHostView { CGPoint _last; NSEventModifierFlags _mods; BOOL _pressedRight, _pressedLeft, _pointerInside, _softwareCursor; UIImageView *_cursorView; UIPointerInteraction *_pointer; UIPointerStyle *_gamePointerStyle; unsigned _hoverUpdates, _pointerUpdates, _cursorVisibilityReasons; NSTimeInterval _pointerReportTime; CGPoint _cursorHotSpot;
     AKTouchControls *_touchControls;
     BOOL _touchCursorActive, _touchCursorInitialized, _pressedMiddle;
+    NSTimeInterval _lastTouchTime;
     NSTimeInterval _lastTouchClickTime;
     CGPoint _lastTouchClickPoint;
     unsigned _lastTouchButton;
@@ -386,6 +400,41 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
     event.deltaY = event.scrollingDeltaY = delta.y;
     event.timestamp = NSProcessInfo.processInfo.systemUptime;
     [NSApp postEvent:event atStart:NO];
+}
+// A tap on the touch trackpad is a direct touch: bring the pointer to the
+// touched spot first (so a game's hover sees it), then press, as the direct
+// touch path does. With the pointer captured by a hardware mouse the click
+// stays at the pointer: captured motion is relative and must not jump.
+- (void)touchTapAt:(CGPoint)point button:(unsigned)button {
+    if (button > 2) return;
+    _lastTouchTime = NSProcessInfo.processInfo.systemUptime;
+    [self activateTouchCursor];
+    if (![self usesRelativeMouse]) {
+        CGPoint clamped = CGPointMake(MAX(0, MIN(self.bounds.size.width - 1, point.x)),
+                                      MAX(0, MIN(self.bounds.size.height - 1, point.y)));
+        [self postMouse:NSEventTypeMouseMoved at:clamped button:0];
+    }
+    [self touchButton:button pressed:YES];
+    [self touchButton:button pressed:NO];
+}
+// A guest with a text client can need the on-screen keyboard (a login field).
+// Some games swap the first responder to the field itself; those get the
+// keyboard opened right away when a finger just touched. Games that keep one
+// text-capable responder for the whole session — World of Warcraft's engine
+// routes keys to its focused edit box itself — give no focus event, so for
+// them this is what puts the keyboard button on an iPad that never turned the
+// controls on, and the user opens the keyboard with it.
+- (void)guestFirstResponderChanged:(NSResponder *)responder {
+    BOOL text = AKResponderIsTextClient(responder);
+    static unsigned loggedResponders;
+    if (loggedResponders < 12) { loggedResponders++; AKLog(@"guest first responder=%@ text=%d", responder ? NSStringFromClass(object_getClass(responder)) : @"(none)", text); }
+    if (!text) return;
+    if (!_touchControls && ![AKTouchControls explicitlyDisabled]) [self installTouchControls];
+    if (GCKeyboard.coalescedKeyboard) return;
+    // Only a field the finger just touched opens the keyboard by itself: a
+    // game that focuses one on its own would otherwise cover the screen.
+    if (NSProcessInfo.processInfo.systemUptime - _lastTouchTime > 2.5) return;
+    [_touchControls showKeyboard];
 }
 - (void)touchButton:(unsigned)button pressed:(BOOL)pressed {
     if (button > 2) return;
@@ -592,7 +641,14 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
 - (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
     if ([self handleTrackpadTouches:t event:ev]) return;
     BOOL r = AKIsRight(ev);if(r?_pressedRight:_pressedLeft)return; _last = [t.anyObject locationInView:self];
+    _lastTouchTime = NSProcessInfo.processInfo.systemUptime;
     [self reconcileModifiers:AKMods(ev.modifierFlags)];
+    // The pointer arrives where the finger did before the button goes down. A
+    // game's hover state follows mouse-moved events (World of Warcraft's login
+    // buttons do), so without this a tap presses nothing until a drag has
+    // brought the pointer over the button first. The move's delta is zero: the
+    // location was already taken.
+    [self postMouse:NSEventTypeMouseMoved at:_last button:0];
     [self postMouse:r ? NSEventTypeRightMouseDown : NSEventTypeLeftMouseDown at:_last button:r];
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
@@ -762,6 +818,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
     if (r && ![r acceptsFirstResponder]) return NO;
     [_firstResponder resignFirstResponder];
     _firstResponder = r; [r becomeFirstResponder];
+    [_host guestFirstResponderChanged:r];
     return YES;
 }
 - (void)setContentView:(NSView *)v {
