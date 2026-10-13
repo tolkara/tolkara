@@ -14,5 +14,18 @@
 	<string>$(TOLKARA_MODE)</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow the app you run in Tolkara to use the microphone, for example for in-game voice chat.</string>
+	<key>GCSupportsControllerUserInteraction</key>
+	<true/>
+	<key>GCSupportedGameControllers</key>
+	<array>
+		<dict>
+			<key>ProfileName</key>
+			<string>ExtendedGamepad</string>
+		</dict>
+		<dict>
+			<key>ProfileName</key>
+			<string>MicroGamepad</string>
+		</dict>
+	</array>
 </dict>
 </plist>

@@ -3,6 +3,7 @@
 // mode, and offers development checks in a separate Diagnostics menu.
 #import <UIKit/UIKit.h>
 #import "AppLibrary.h"
+#import "ControllerProbe.h"
 #import "Diagnostics.h"
 #import "DiagnosticsViewController.h"
 #import "ExecutionMode.h"
@@ -409,6 +410,10 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
 - (NSArray<TKDiagnosticSection *> *)diagnosticSections {
     NSMutableArray *sections=[NSMutableArray new];
     TKAppLibrary *library=self.library;
+    // Run from a timer callout, as at launch: these block the main thread.
+    void (^onMainRunLoop)(dispatch_block_t)=^(dispatch_block_t block) {
+        [NSTimer scheduledTimerWithTimeInterval:0.3 repeats:NO block:^(NSTimer *timer) { (void)timer; block(); }];
+    };
     [sections addObject:[TKDiagnosticSection sectionWithTitle:@"Runtime" footer:@"These checks run only Tolkara's own code." items:@[
         [TKDiagnostic diagnosticWithTitle:@"Host diagnostics" detail:@"Debugger, code signing, memory and the arena limit. No probe sample runs." run:^(TKDiagnosticReport report) {
             report(TKHostDiagnosticsReport(),YES);
@@ -435,6 +440,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         [TKDiagnostic diagnosticWithTitle:@"Captured shaders" detail:@"Compiles every shader library a game left in Documents/ShaderRequests on this iPad." run:^(TKDiagnosticReport report) {
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ report(TKCapturedShaderProbeReport(),YES); });
         }],
+        [TKDiagnostic diagnosticWithTitle:@"Controller input" detail:@"What the iPad's GameController framework delivers here; press buttons on a paired controller for 10 seconds." run:^(TKDiagnosticReport report) {
+            onMainRunLoop(^{ report(TKControllerProbeReport(),YES); });
+        }],
     ]]];
 #if TOLKARA_INTEGRATED_AUTH
     TKLocalAuthorization *authorization=self.localAuthorization;
@@ -459,10 +467,6 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     ]]];
 #endif
     TKDiagnostic *(^endsSession)(TKDiagnostic *)=^(TKDiagnostic *diagnostic) { diagnostic.endsSession=YES; return diagnostic; };
-    // Run from a timer callout, as at launch: these block the main thread.
-    void (^onMainRunLoop)(dispatch_block_t)=^(dispatch_block_t block) {
-        [NSTimer scheduledTimerWithTimeInterval:0.3 repeats:NO block:^(NSTimer *timer) { (void)timer; block(); }];
-    };
     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
     [sections addObject:[TKDiagnosticSection sectionWithTitle:@"Session-ending tests"
         footer:@"These execute host-generated code or load compatibility libraries, and the system may close Tolkara. Reopen Tolkara before starting an app." items:@[
@@ -760,6 +764,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     setvbuf(stdout, NULL, _IOLBF, 0);
     for (NSString *argument in arguments) if ([argument hasPrefix:@"--probe-run-id="]) fprintf(log,"%s\n",argument.UTF8String);
     fprintf(log,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),self.executionModeSource.UTF8String);
+    // What the guest's gamepad code can see: the GameController framework is
+    // process-wide, and the log then carries every call the guest makes into it.
+    TKControllerProbeStartLogging(log);
     NSString *map = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Guest/libraries.json"];
     NSError *error=nil;
     NSString *path=app ? [self.library executablePathForApp:app error:&error] : nil;

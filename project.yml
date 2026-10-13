@@ -48,6 +48,9 @@ targetTemplates:
     dependencies:
       - sdk: Security.framework
       - sdk: libz.tbd
+      # The Diagnostics menu's controller check asks the same framework a
+      # guest's gamepad code uses (host-side; see ControllerProbe.m).
+      - sdk: GameController.framework
     entitlements:
       path: launcher/App.entitlements
       properties:
