@@ -40,6 +40,9 @@ typedef NS_ENUM(NSInteger, TKAppSource) {
 // From the profile: how many of the runtime's processes may run at once in
 // this one (docs/MULTIPROCESS.md); 1 unless it says more.
 @property(nonatomic, readonly) NSUInteger processes;
+// From the profile: the Steam Cloud saves kept in step around each start
+// (profiles/README.md); nil for none.
+@property(nonatomic, readonly, copy, nullable) NSDictionary *steamCloud;
 @property(nonatomic, readonly) NSDate *added;
 @property(nonatomic, readonly, nullable) NSDate *lastLaunched;
 @end

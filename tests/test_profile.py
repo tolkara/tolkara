@@ -60,6 +60,25 @@ class ProfileTests(unittest.TestCase):
         without = {k: v for k, v in good.items() if k not in ('runtime', 'libraries')}
         with self.assertRaises(ValueError): check(self.write(without))
 
+    def test_steam_cloud(self):
+        # Steam Cloud saves the launcher keeps in step: data only, the folder inside Documents.
+        cloud = {'appID': 3405340, 'remoteDirectory': '%WinAppDataLocalLow%Dev/Game/${SteamID}/',
+                 'localDirectory': 'G/prefix/saves', 'fileNames': ['a.json', 'b.json'], 'uploadsEnabled': True, 'required': True}
+        good = {'id': 'g', 'name': 'G', 'workingDirectory': 'G/game', 'runtime': 'G/Runtime', 'executable': 'bin/run',
+                'steamCloud': cloud}
+        check(self.write(good))
+        check(self.write({**good, 'steamCloud': {k: v for k, v in cloud.items() if k not in ('uploadsEnabled', 'required')}}))
+        for change in ({'appID': 0}, {'appID': 2 ** 32}, {'appID': '1'}, {'appID': True}, {'appID': 1.5},
+                       {'remoteDirectory': ''}, {'remoteDirectory': 1}, {'localDirectory': '/G'}, {'localDirectory': '../G'},
+                       {'localDirectory': 'G//saves'}, {'fileNames': []}, {'fileNames': 'a.json'}, {'fileNames': ['a.json', 'a.json']},
+                       {'fileNames': ['d/a.json']}, {'fileNames': ['..']}, {'fileNames': [1]}, {'fileNames': [f'{i}' for i in range(65)]},
+                       {'uploadsEnabled': 1}, {'required': 'yes'}, {'password': 'x'}):
+            with self.assertRaises(ValueError, msg=repr(change)): check(self.write({**good, 'steamCloud': {**cloud, **change}}))
+        for missing in ('appID', 'remoteDirectory', 'localDirectory', 'fileNames'):
+            with self.assertRaises(ValueError, msg=missing):
+                check(self.write({**good, 'steamCloud': {k: v for k, v in cloud.items() if k != missing}}))
+        with self.assertRaises(ValueError): check(self.write({**good, 'steamCloud': []}))
+
     def test_setup(self):
         # What the Mac app reads: plain data, https links, the destination above the working directory.
         good = {'id': 'a', 'name': 'A', 'workingDirectory': 'Games/A', 'executable': 'A.app/Contents/MacOS/A',

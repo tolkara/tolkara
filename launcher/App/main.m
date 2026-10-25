@@ -766,10 +766,10 @@ static void TKScheduleSnapshots(NSArray<NSString *> *arguments, FILE *log) {
 // Developer-service/debugger path. Callers choose it; this only applies it.
 - (void)resumeCloudPreparedNativeGame { [self runNativeGame:self.cloudFullStartup app:self.cloudApp container:self.cloudContainer]; }
 - (void)runNativeGame:(BOOL)fullStartup app:(TKApp *)app container:(NSString *)container {
-    if (!self.cloudPrepared && [TKSteamCloudCoordinator configuredProfile:app.profile documents:TKDocumentsPath(@"")]) {
+    if (!self.cloudPrepared && [TKSteamCloudCoordinator configuredProfile:app.profile documents:TKDocumentsPath(@"") configuration:app.steamCloud]) {
         if(self.cloudPreparing)return;self.cloudPreparing=YES;
         self.cloudFullStartup=fullStartup;self.cloudApp=app;self.cloudContainer=container;
-        self.steamCloud=[[TKSteamCloudCoordinator alloc] initWithProfile:app.profile documents:TKDocumentsPath(@"")];
+        self.steamCloud=[[TKSteamCloudCoordinator alloc] initWithProfile:app.profile documents:TKDocumentsPath(@"") configuration:app.steamCloud];
         self.status.text=@"Synchronizing Steam Cloud saves…";
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
             NSError *error=nil;NSString *report=nil;BOOL ready=[self.steamCloud prepareWithReport:&report error:&error];
@@ -1171,8 +1171,10 @@ static void TKScheduleSnapshots(NSArray<NSString *> *arguments, FILE *log) {
         return;
     }
     for(NSString *argument in arguments) if([argument hasPrefix:@"--steam-cloud-sync="]) {
-        NSString *profile=[argument substringFromIndex:19];
-        self.steamCloud=[[TKSteamCloudCoordinator alloc] initWithProfile:profile documents:TKDocumentsPath(@"")];
+        NSString *profile=[argument substringFromIndex:19];NSDictionary *configuration=nil;
+        NSString *profiles=[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Guest/Profiles"];
+        for(NSDictionary *known in [TKAppLibrary profilesInDirectory:profiles]) if([known[@"id"] isEqual:profile]) configuration=known[@"steamCloud"];
+        self.steamCloud=[[TKSteamCloudCoordinator alloc] initWithProfile:profile documents:TKDocumentsPath(@"") configuration:configuration];
         self.status.text=@"Synchronizing Steam Cloud saves…";
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
             NSError *error=nil;NSString *report=nil;BOOL ready=[self.steamCloud prepareWithReport:&report error:&error];

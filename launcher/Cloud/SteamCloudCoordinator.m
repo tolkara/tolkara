@@ -11,21 +11,23 @@ static BOOL profileName(NSString *name) {
 static NSError *coordinatorError(NSInteger code) { return [NSError errorWithDomain:@"TolkaraSteamCloudSetup" code:code userInfo:nil]; }
 @implementation TKSteamCloudCoordinator {
     NSString *_profile, *_documents, *_directory;
+    NSDictionary *_configuration;
     TKSteamCloudSync *_sync;
     NSDictionary *_credentials;
     BOOL _allowUpload;
     dispatch_queue_t _queue;
     dispatch_source_t _timer;
 }
-+ (BOOL)configuredProfile:(NSString *)profile documents:(NSString *)documents {
++ (BOOL)configuredProfile:(NSString *)profile documents:(NSString *)documents configuration:(NSDictionary *)configuration {
     if (!profileName(profile)) return NO;
+    if (configuration) return YES;
     NSString *path = [documents stringByAppendingPathComponent:[NSString stringWithFormat:@"SteamCloud/%@/config.json",profile]];
     return [NSFileManager.defaultManager fileExistsAtPath:path];
 }
-- (instancetype)initWithProfile:(NSString *)profile documents:(NSString *)documents {
+- (instancetype)initWithProfile:(NSString *)profile documents:(NSString *)documents configuration:(NSDictionary *)configuration {
     if (!profileName(profile)) return nil;
     if ((self = [super init])) {
-        _profile = profile; _documents = documents.stringByResolvingSymlinksInPath;
+        _profile = profile; _documents = documents.stringByResolvingSymlinksInPath; _configuration = [configuration copy];
         _directory = [_documents stringByAppendingPathComponent:[NSString stringWithFormat:@"SteamCloud/%@",profile]];
         _queue = dispatch_queue_create("local.tolkara.steam-cloud",DISPATCH_QUEUE_SERIAL);
     }
@@ -59,17 +61,23 @@ static NSError *coordinatorError(NSInteger code) { return [NSError errorWithDoma
     NSMutableDictionary *read=[query mutableCopy];read[(__bridge id)kSecReturnData]=@YES;read[(__bridge id)kSecMatchLimit]=(__bridge id)kSecMatchLimitOne;
     CFTypeRef result=NULL;OSStatus status=SecItemCopyMatching((__bridge CFDictionaryRef)read,&result);
     NSData *data=CFBridgingRelease(result);
+    if(status==errSecItemNotFound) { if(error)*error=coordinatorError(11);return nil; }
     if(status!=errSecSuccess || ![data isKindOfClass:NSData.class]) { if(error)*error=coordinatorError(4);return nil; }
     NSDictionary *credentials=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
     if(![credentials isKindOfClass:NSDictionary.class] || ![credentials[@"username"] isKindOfClass:NSString.class] || ![credentials[@"refreshToken"] isKindOfClass:NSString.class]) { if(error)*error=coordinatorError(5);return nil; }
     return credentials;
 }
+- (NSDictionary *)configuration {
+    if (_configuration) return _configuration;
+    NSData *data=[NSData dataWithContentsOfFile:[_directory stringByAppendingPathComponent:@"config.json"]];
+    return data.length && data.length<=65536 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+}
 - (BOOL)prepareWithReport:(NSString **)report error:(NSError **)error {
-    NSString *path=[_directory stringByAppendingPathComponent:@"config.json"];
     NSString *rootPrefix=[_documents stringByAppendingString:@"/"];
     if (![_directory.stringByResolvingSymlinksInPath hasPrefix:rootPrefix]) { if(error)*error=coordinatorError(6);return NO; }
-    NSData *data=[NSData dataWithContentsOfFile:path];
-    NSDictionary *config=data.length && data.length<=65536 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    // The state (baseline, backups, sync.log) lives here even when the profile carries the configuration.
+    if (![NSFileManager.defaultManager createDirectoryAtPath:_directory withIntermediateDirectories:YES attributes:nil error:error]) return NO;
+    NSDictionary *config=[self configuration];
     if (![config isKindOfClass:NSDictionary.class] || ![config[@"appID"] isKindOfClass:NSNumber.class] || ![config[@"remoteDirectory"] isKindOfClass:NSString.class] || ![config[@"localDirectory"] isKindOfClass:NSString.class] || ![config[@"fileNames"] isKindOfClass:NSArray.class]) { if(error)*error=coordinatorError(7);return NO; }
     NSString *relative=config[@"localDirectory"];
     NSString *local=[_documents stringByAppendingPathComponent:relative].stringByResolvingSymlinksInPath;
@@ -77,7 +85,21 @@ static NSError *coordinatorError(NSInteger code) { return [NSError errorWithDoma
     for(id name in config[@"fileNames"]) if(![name isKindOfClass:NSString.class]) { if(error)*error=coordinatorError(9);return NO; }
     if(![config[@"fileNames"] count] || [config[@"fileNames"] count]>64 || [NSSet setWithArray:config[@"fileNames"]].count!=[config[@"fileNames"] count]) { if(error)*error=coordinatorError(10);return NO; }
     _allowUpload=[config[@"uploadsEnabled"] isKindOfClass:NSNumber.class] && [config[@"uploadsEnabled"] boolValue];
-    _credentials=[self loadCredentials:error];if(!_credentials)return NO;
+    NSError *signIn=nil;_credentials=[self loadCredentials:&signIn];
+    if(!_credentials) {
+        // Never signed in on this device. A profile marks whether its saves may then diverge;
+        // a config.json in Documents is an explicit opt-in and always needs the sign-in.
+        BOOL required=!_configuration || ([config[@"required"] isKindOfClass:NSNumber.class] && [config[@"required"] boolValue]);
+        if(signIn.code==11) {
+            NSString *message=required ? @"Steam Cloud is not signed in on this device; the game does not start without its saves. Saves preserved."
+                                       : @"Steam Cloud is not signed in on this device; starting without synchronization.";
+            if(report)*report=message;
+            [self record:message error:nil];
+            if(!required) return YES;
+        }
+        if(error)*error=signIn;return NO;
+    }
+    if(_configuration) [self record:@"Steam Cloud configuration from the built-in profile." error:nil];
     _sync=[[TKSteamCloudSync alloc] initWithAppID:[config[@"appID"] unsignedIntValue] remoteDirectory:config[@"remoteDirectory"] localDirectory:local stateDirectory:[_directory stringByAppendingPathComponent:@"state"] fileNames:config[@"fileNames"]];
     BOOL success=[_sync syncUsername:_credentials[@"username"] token:_credentials[@"refreshToken"] allowUpload:_allowUpload report:report error:error];
     [self record:report?*report:nil error:error?*error:nil];return success;
@@ -85,8 +107,7 @@ static NSError *coordinatorError(NSInteger code) { return [NSError errorWithDoma
 - (void)syncNow {
     if(!_sync || !_credentials)return;
     NSError *error=nil;NSString *report=nil;
-    NSData *data=[NSData dataWithContentsOfFile:[_directory stringByAppendingPathComponent:@"config.json"]];
-    NSDictionary *config=data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    NSDictionary *config=[self configuration];
     _allowUpload=[config isKindOfClass:NSDictionary.class] && [config[@"uploadsEnabled"] isKindOfClass:NSNumber.class] && [config[@"uploadsEnabled"] boolValue];
     [_sync syncUsername:_credentials[@"username"] token:_credentials[@"refreshToken"] allowUpload:_allowUpload report:&report error:&error];
     [self record:report error:error];

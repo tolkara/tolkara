@@ -86,6 +86,23 @@ static BOOL valid_processes(id count) {
            [count doubleValue]==[count integerValue] &&
            [count integerValue]>=1 && [count integerValue]<=8;
 }
+// steamCloud, as tools/check_profile.py checks it: a Steam app ID, the saves'
+// Steam Cloud folder, their Documents folder and 1 to 64 distinct file names.
+static BOOL valid_steam_cloud(id cloud) {
+    if (![cloud isKindOfClass:NSDictionary.class]) return NO;
+    NSSet *known=[NSSet setWithArray:@[@"appID",@"remoteDirectory",@"localDirectory",@"fileNames",@"uploadsEnabled",@"required"]];
+    for (id key in cloud) if (![known containsObject:key]) return NO;
+    id appID=cloud[@"appID"], remote=cloud[@"remoteDirectory"], names=cloud[@"fileNames"];
+    if (![appID isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)appID)==CFBooleanGetTypeID() ||
+        [appID doubleValue]!=[appID unsignedLongLongValue] || [appID unsignedLongLongValue]<1 || [appID unsignedLongLongValue]>UINT32_MAX) return NO;
+    if (![remote isKindOfClass:NSString.class] || ![remote length] || [remote length]>1024) return NO;
+    if (!valid_relative(cloud[@"localDirectory"],NO) || [cloud[@"localDirectory"] length]>1024) return NO;
+    if (![names isKindOfClass:NSArray.class] || ![names count] || [names count]>64 || [NSSet setWithArray:names].count!=[names count]) return NO;
+    for (id name in names) if (!valid_relative(name,NO) || [name containsString:@"/"] || [name length]>255) return NO;
+    for (NSString *key in @[@"uploadsEnabled",@"required"])
+        if (cloud[key] && (![cloud[key] isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)cloud[key])!=CFBooleanGetTypeID())) return NO;
+    return YES;
+}
 static NSString *clean_name(id name) {
     if (![name isKindOfClass:NSString.class]) return nil;
     NSString *trimmed=[name stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -123,6 +140,7 @@ static NSString *clean_name(id name) {
 - (NSArray<NSString *> *)libraries { return self.launchProfile[@"libraries"]?:@[]; }
 - (NSUInteger)codePool { return [self.launchProfile[@"codePool"] unsignedIntegerValue]; }
 - (NSUInteger)processes { return MAX([self.launchProfile[@"processes"] unsignedIntegerValue],1u); }
+- (NSDictionary *)steamCloud { return self.launchProfile[@"steamCloud"]; }
 - (NSDate *)added { return [NSDate dateWithTimeIntervalSince1970:[self.record[@"added"] doubleValue]]; }
 - (NSDate *)lastLaunched {
     NSNumber *value=self.record[@"lastLaunched"];
@@ -157,7 +175,8 @@ static NSString *clean_name(id name) {
             (profile[@"environment"] && !valid_environment(profile[@"environment"])) ||
             (profile[@"libraries"] && (!profile[@"runtime"] || !valid_libraries(profile[@"libraries"]))) ||
             (profile[@"codePool"] && (!profile[@"runtime"] || !valid_code_pool(profile[@"codePool"]))) ||
-            (profile[@"processes"] && (!profile[@"runtime"] || !valid_processes(profile[@"processes"])))) continue;
+            (profile[@"processes"] && (!profile[@"runtime"] || !valid_processes(profile[@"processes"]))) ||
+            (profile[@"steamCloud"] && !valid_steam_cloud(profile[@"steamCloud"]))) continue;
         [seen addObject:profile[@"id"]];
         [profiles addObject:profile];
     }

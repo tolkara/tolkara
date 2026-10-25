@@ -48,5 +48,17 @@
     "WINEDLLOVERRIDES": "d3d11,d3d10core=n,b;mscoree,mshtml=",
     "WINE_D3D_CONFIG": "renderer=vulkan"
   },
+  "steamCloud": {
+    "appID": 3405340,
+    "remoteDirectory": "%WinAppDataLocalLow%Ved/Megabonk/Saves/CloudDir/${SteamID}/",
+    "localDirectory": "Megabonk/prefix/drive_c/Games/Megabonk/Saves/CloudDir/0",
+    "fileNames": [
+      "controller_config.json",
+      "progression.json",
+      "stats.json"
+    ],
+    "uploadsEnabled": true,
+    "required": true
+  },
   "notes": "Official Steam Windows files, copied unchanged. Physical M5 iPad passes original D3D11 shader, triangle, pixel-readback and visible-window fixtures, plus a 40-thread memory fixture with D3D11 active. User confirms a playable run; a cursor-confinement and recentering fix is installed for the reported camera issue, passing physical Wine pointer-lock, recentering and release verification; manual camera feel confirmation remains pending. The game uses a 4 GiB Wine reservation, two Unity job workers, a 496 MiB code pool with 128 MiB FEX code buffers (the Developer service caps the arena at 512 MiB; 256 MiB filled after about 8 minutes of play), and needs its VSync setting on to avoid menus drifting down on the iPad. Genuine Steam Cloud saves load on the iPad; its two changed saves were uploaded and independently downloaded with byte-for-byte verification of all three files. Final clean-exit synchronization also passes on the physical iPad after the embedded Wine server self-kill fix. Authentication is stored in the device Keychain. On 2026-10-06, the old saved Local signing choice was replaced with the working Developer service mode; a launch using the saved choice passed. Physical unplugged regular-library confirmation is pending. The simulator Apple2 GPU lacks required D3D capabilities."
 }

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 REQUIRED = ('id', 'name', 'workingDirectory', 'executable')
-OPTIONAL = ('notes', 'tested', 'caseAliases', 'runtime', 'arguments', 'environment', 'libraries', 'codePool', 'processes', 'setup')
+OPTIONAL = ('notes', 'tested', 'caseAliases', 'runtime', 'arguments', 'environment', 'libraries', 'codePool', 'processes', 'setup', 'steamCloud')
 ENVIRONMENT_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 INSTALLER = re.compile(r'[A-Za-z0-9_-]+\.py')
 # setup is read by the Tolkara Management app on the Mac (management/), never by
@@ -16,6 +16,8 @@ GET_APP = ('name', 'url', 'path', 'steps')
 FIRST_RUN = ('settings', 'keys', 'steps')
 SETTING_KEY = re.compile(r'[A-Za-z0-9_]{1,64}')
 RISK = ('summary', 'history', 'links')
+# steamCloud is read by the iPad launcher (launcher/Cloud/SteamCloudCoordinator.m).
+STEAM_CLOUD = ('appID', 'remoteDirectory', 'localDirectory', 'fileNames', 'uploadsEnabled', 'required')
 
 
 def relative(value):
@@ -118,6 +120,30 @@ def check_setup(profile):
         entries(risk.get('links', []), 'setup.risk.links', ('title', 'url'))
 
 
+def check_steam_cloud(profile):
+    """steamCloud: the Steam Cloud saves the launcher keeps in step before each start, every
+    minute while the application runs and after it exits. Data only: the Steam app ID, the
+    files' Steam Cloud folder, the Documents folder that holds them, their names, whether
+    local changes are uploaded, and whether the application may start without a signed-in
+    Steam Cloud. The sign-in itself stays in the device's Keychain, never in a profile."""
+    cloud = profile['steamCloud']
+    if not isinstance(cloud, dict): raise ValueError('steamCloud must be an object')
+    unknown = set(cloud) - set(STEAM_CLOUD)
+    if unknown: raise ValueError('steamCloud: unknown keys: ' + ', '.join(sorted(unknown)))
+    app_id = cloud.get('appID')
+    if not isinstance(app_id, int) or isinstance(app_id, bool) or not 1 <= app_id <= 0xFFFFFFFF:
+        raise ValueError('steamCloud.appID must be a Steam app ID')
+    text(cloud.get('remoteDirectory'), 'steamCloud.remoteDirectory', 1024)
+    if not relative(cloud.get('localDirectory')) or len(cloud['localDirectory']) > 1024:
+        raise ValueError('steamCloud.localDirectory must stay inside Documents')
+    names = cloud.get('fileNames')
+    if (not isinstance(names, list) or not 1 <= len(names) <= 64 or len(set(map(str, names))) != len(names) or
+            not all(isinstance(n, str) and relative(n) and '/' not in n and len(n) <= 255 for n in names)):
+        raise ValueError('steamCloud.fileNames must be 1 to 64 distinct file names')
+    for key in ('uploadsEnabled', 'required'):
+        if key in cloud and not isinstance(cloud[key], bool): raise ValueError(f'steamCloud.{key} must be true or false')
+
+
 def check(path):
     profile = json.loads(Path(path).read_text())
     if not isinstance(profile, dict): raise ValueError('profile must be a JSON object')
@@ -148,6 +174,7 @@ def check(path):
             raise ValueError('processes must be a whole number from 1 to 8')
     check_command_line(profile)
     if 'setup' in profile: check_setup(profile)
+    if 'steamCloud' in profile: check_steam_cloud(profile)
     if 'installer' in profile.get('setup', {}) and not (Path(path).parent / profile['setup']['installer']).is_file():
         raise ValueError('setup.installer is not in the profile folder')
     return profile

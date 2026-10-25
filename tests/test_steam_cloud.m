@@ -140,8 +140,29 @@ int main(void) { @autoreleasepool {
     assert(pair.uploads==1 && [pair.files[@"b.json"] isEqual:bytes(@"b-2")]);
     assert([[NSData dataWithContentsOfFile:[pairLocal stringByAppendingPathComponent:@"b.json"]] isEqual:bytes(@"b-2")]);
     assert([NSFileManager.defaultManager removeItemAtPath:root error:nil]);
-    FixtureCoordinator *coordinator=[[FixtureCoordinator alloc] initWithProfile:@"fixture" documents:NSTemporaryDirectory()];
+    FixtureCoordinator *coordinator=[[FixtureCoordinator alloc] initWithProfile:@"fixture" documents:NSTemporaryDirectory() configuration:nil];
     assert(NSThread.isMainThread);[coordinator flush];assert(coordinator.callbackRan);
+    // The profile's steamCloud block configures sync with no config.json in
+    // Documents. Without a sign-in, a required one refuses to start and an
+    // optional one starts unsynchronized; neither touches the local saves.
+    NSString *documents=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString].stringByResolvingSymlinksInPath;
+    NSString *profile=[@"fixture-" stringByAppendingString:[NSUUID.UUID.UUIDString substringToIndex:8]];
+    NSString *saves=[documents stringByAppendingPathComponent:@"Game/saves"];
+    assert([NSFileManager.defaultManager createDirectoryAtPath:saves withIntermediateDirectories:YES attributes:nil error:nil]);
+    assert([bytes(@"local-only") writeToFile:[saves stringByAppendingPathComponent:@"save.json"] atomically:YES]);
+    NSDictionary *cloud=@{@"appID":@42,@"remoteDirectory":@"fixture/",@"localDirectory":@"Game/saves",@"fileNames":@[@"save.json"],@"required":@YES};
+    assert(![TKSteamCloudCoordinator configuredProfile:profile documents:documents configuration:nil]);
+    assert([TKSteamCloudCoordinator configuredProfile:profile documents:documents configuration:cloud]);
+    TKSteamCloudCoordinator *required=[[TKSteamCloudCoordinator alloc] initWithProfile:profile documents:documents configuration:cloud];
+    error=nil;report=nil;assert(![required prepareWithReport:&report error:&error]);assert(error.code==11 && [report containsString:@"not signed in"]);
+    NSMutableDictionary *optional=[cloud mutableCopy];optional[@"required"]=@NO;
+    TKSteamCloudCoordinator *unsynced=[[TKSteamCloudCoordinator alloc] initWithProfile:profile documents:documents configuration:optional];
+    error=nil;report=nil;assert([unsynced prepareWithReport:&report error:&error]);assert(!error && [report containsString:@"without synchronization"]);
+    assert([[NSData dataWithContentsOfFile:[saves stringByAppendingPathComponent:@"save.json"]] isEqual:bytes(@"local-only")]);
+    NSString *log=[NSString stringWithContentsOfFile:[documents stringByAppendingPathComponent:[NSString stringWithFormat:@"SteamCloud/%@/sync.log",profile]] encoding:NSUTF8StringEncoding error:nil];
+    assert([log containsString:@"not signed in"]);
+    assert([NSFileManager.defaultManager removeItemAtPath:documents error:nil]);
+    puts("Steam Cloud: a profile's configuration without config.json; a required sign-in stops the start, an optional one starts unsynchronized PASS");
     puts("Steam Cloud: final flush keeps main-thread callbacks responsive PASS");
     puts("Steam Cloud: bounded protobuf, malformed input, first pull, zipped downloads, backups, uploads, remote changes, conflicts, a remote change during upload and symlink rejection PASS");
 } return 0; }

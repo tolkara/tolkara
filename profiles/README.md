@@ -74,6 +74,16 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   instances and their used code pools remain retired until Tolkara exits, so
   sequential game launches need additional slots and prepared memory. See
   [docs/MULTIPROCESS.md](../docs/MULTIPROCESS.md). Only with `runtime`.
+- `steamCloud`: Steam Cloud saves the launcher keeps in step before each
+  start, every minute while the application runs and after it exits:
+  `appID`, the saves' Steam Cloud folder `remoteDirectory`, their
+  Documents folder `localDirectory`, their `fileNames` (1 to 64), and
+  optionally `uploadsEnabled` (local changes are uploaded) and `required`
+  (the application does not start unless Steam Cloud is signed in on the
+  device, so its saves never diverge). The sign-in stays in the device's
+  Keychain; sync state, backups and `sync.log` are in
+  `Documents/SteamCloud/<id>/`. On a device with no sync state yet, the
+  first sync takes the Cloud's files and backs up the local ones there.
 
 Every profile in `profiles/` is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library

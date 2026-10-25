@@ -83,7 +83,7 @@ struct ProfileError: LocalizedError {
 
 enum ProfileParser {
     static let required = ["id", "name", "workingDirectory", "executable"]
-    static let optional = ["notes", "tested", "caseAliases", "runtime", "arguments", "environment", "libraries", "codePool", "processes", "setup"]
+    static let optional = ["notes", "tested", "caseAliases", "runtime", "arguments", "environment", "libraries", "codePool", "processes", "setup", "steamCloud"]
 
     static func relative(_ value: Any?) -> Bool {
         guard let value = value as? String, !value.isEmpty, !value.hasPrefix("/") else { return false }
@@ -123,6 +123,10 @@ enum ProfileParser {
                   number.doubleValue == Double(number.intValue), (1...2048).contains(number.intValue) else {
                 throw ProfileError(message: "codePool must be a whole number of megabytes from 1 to 2048, with a runtime.")
             }
+        }
+        // steamCloud is the iPad launcher's (tools/check_profile.py checks it in full).
+        if let cloud = profile["steamCloud"], !(cloud is [String: Any]) {
+            throw ProfileError(message: "steamCloud must be an object.")
         }
         let setup = profile["setup"]
         var source: String?, installer: String?, getApp: AppProfile.GetApp?, firstRun: AppProfile.FirstRun?, risk: AppProfile.Risk?
