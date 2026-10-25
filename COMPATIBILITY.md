@@ -218,3 +218,14 @@ with active rendering. No gameplay input was supplied by the agent. Current
 log /private/tmp/reclaim-session-second-stage.log contains no stack-overflow
 or native allocation exception. Subjective movement/performance/sound report
 and longer-run stability remain pending.
+
+2026-10-25 MegaBonk on the one generic build of main: a Steam-only build had
+dropped MegaBonk's profile, so Wine found none of its libraries and exited at
+start; with the profile built in, all 17 load. The 2026-10-16 restore had also
+put back an old prefix with Wine's own d3d11.dll and the 2 October FEX DLLs,
+so Unity reported "Failed to initialize graphics"; restoring DXVK's d3d11 and
+d3d10core and the current FEX DLLs fixed it, and the user confirms the game
+loads. The restore had not brought back Documents/SteamCloud/megabonk either;
+with its config.json back, the first sync downloaded and verified all three
+genuine Cloud saves, backing up the blank local ones. The login in the
+Keychain survived the container reset.
