@@ -44,6 +44,20 @@ int main(void) {
     assert(gc_run(c,&m,1,done)==GC_MEMORY && c->pc==base && c->retired==retired && m.fault_address==0x8000);
     // Writing code, revoking execute access and changing JIT write mode invalidate cached fetches.
     step(c,&m,0xd2800540);assert(c->x[0]==42);
+    // Forms that translated atomic loops use between an exclusive load and store
+    c->x[1]=0xff;c->x[2]=0x3ff;step(c,&m,0x6b22003f);assert(c->nzcv==6); // CMP W1,W2,UXTB
+    c->x[1]=0x1ff;c->x[2]=0x1ff;step(c,&m,0x6b22003f);assert(!(c->nzcv&4)); // CMP W1,W2,UXTB
+    c->x[1]=100;c->x[2]=0xffffffff;step(c,&m,0x8b22c820);assert(c->x[0]==96); // ADD X0,X1,W2,SXTW #2
+    c->x[1]=5;c->x[2]=5;c->nzcv=4;step(c,&m,0xfa420020);assert(c->nzcv==6); // CCMP X1,X2,#0,EQ
+    c->nzcv=0;step(c,&m,0xfa420021);assert(c->nzcv==1); // CCMP X1,X2,#1,EQ, condition false
+    c->x[1]=1;c->x[2]=65;step(c,&m,0x9ac22020);assert(c->x[0]==2); // LSL X0,X1,X2
+    c->x[1]=0x12345678;step(c,&m,0x53083c20);assert(c->x[0]==0x56); // UBFX W0,W1,#8,#8
+    c->x[0]=0xffffffff;c->x[1]=0xab;step(c,&m,0x33181c20);assert(c->x[0]==0xffffabff); // BFI W0,W1,#8,#8
+    c->x[1]=0x80;step(c,&m,0x93401c20);assert(c->x[0]==0xffffffffffffff80ULL); // SXTB X0,W1
+    c->x[1]=0x11223344;step(c,&m,0x5ac00820);assert(c->x[0]==0x44332211); // REV W0,W1
+    c->x[1]=1;step(c,&m,0xdac01020);assert(c->x[0]==63); // CLZ X0,X1
+    c->x[1]=1;c->x[2]=2;c->nzcv=2;step(c,&m,0x9a020020);assert(c->x[0]==4); // ADC X0,X1,X2
+    c->x[1]=1;c->x[2]=0x200;step(c,&m,0x93c22020|(8u<<10));assert(c->x[0]==0x0100000000000002ULL); // EXTR X0,X1,X2,#8
     step(c,&m,0xd2800560);assert(c->x[0]==43);
     assert(gm_protect(&m,base,GM_PAGE_SIZE,3)==GM_OK);c->pc=base;
     assert(gc_run(c,&m,1,done)==GC_MEMORY && c->memory_result==GM_PROTECTION);

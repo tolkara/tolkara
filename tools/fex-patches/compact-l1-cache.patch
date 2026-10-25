@@ -1,0 +1,15 @@
+--- a/FEXCore/Source/Interface/Core/LookupCache.h
++++ b/FEXCore/Source/Interface/Core/LookupCache.h
+@@ -463,7 +463,12 @@
+   // Start with 8k entries in L1 to give 128KB of L1 cache to each thread.
+   // Max out at 1 million entries to give each thread 16MB of L1 cache maximum.
+   constexpr static size_t MIN_L1_ENTRIES = 8 * 1024;        // Must be a power of 2
++#ifdef FEX_TEB_TSD_OFFSET
++  // Bounded Darwin hosts cannot reserve 16 MiB for every guest thread.
++  constexpr static size_t MAX_L1_ENTRIES = 64 * 1024; // 1 MiB, power of two
++#else
+   constexpr static size_t MAX_L1_ENTRIES = 1 * 1024 * 1024; // Must be a power of 2
++#endif
+ 
+   constexpr static size_t CODE_SIZE = 128 * 1024 * 1024;
+   constexpr static size_t SIZE_PER_PAGE = FEXCore::Utils::FEX_PAGE_SIZE * sizeof(LookupCacheEntry);

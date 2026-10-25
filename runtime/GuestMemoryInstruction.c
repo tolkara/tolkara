@@ -123,8 +123,8 @@ static GMMemoryStep atomic_step(GMSparseMemory *m, uint32_t instruction,
     return GM_STEP_OK;
 }
 
-GMMemoryStep gm_memory_step(GMSparseMemory *memory, uint32_t instruction,
-                            GMMemoryRegisters *r, GMResult *fault) {
+static GMMemoryStep memory_step(GMSparseMemory *memory, uint32_t instruction,
+                                GMMemoryRegisters *r, GMResult *fault, bool unaligned_ordered) {
     if (!r || !fault) return GM_STEP_UNSUPPORTED;
     unsigned rt = instruction & 31, rn = (instruction >> 5) & 31;
     unsigned size = 0, rt2 = 0, destination_width = 64;
@@ -146,7 +146,7 @@ GMMemoryStep gm_memory_step(GMSparseMemory *memory, uint32_t instruction,
         // which is also sufficient for LDAPR's weaker RCpc acquire requirement.
         size = 1u << (instruction >> 30);
         load = rcpc_load || ((instruction >> 22) & 1);
-        if (address % size) { *fault = GM_INVALID; return GM_STEP_FAULT; }
+        if (address % size && !unaligned_ordered) { *fault = GM_INVALID; return GM_STEP_FAULT; }
     } else if ((instruction & 0x3b000000) == 0x39000000 ||
                (instruction & 0x3b000000) == 0x38000000) {
         // Scalar and SIMD/FP load/store immediate and register addressing.
@@ -232,4 +232,13 @@ GMMemoryStep gm_memory_step(GMSparseMemory *memory, uint32_t instruction,
     }
     r->pc += 4;
     return GM_STEP_OK;
+}
+
+GMMemoryStep gm_memory_step(GMSparseMemory *memory, uint32_t instruction,
+                            GMMemoryRegisters *r, GMResult *fault) {
+    return memory_step(memory, instruction, r, fault, false);
+}
+GMMemoryStep gm_memory_step_x86_ordered(GMSparseMemory *memory, uint32_t instruction,
+                                       GMMemoryRegisters *r, GMResult *fault) {
+    return memory_step(memory, instruction, r, fault, true);
 }

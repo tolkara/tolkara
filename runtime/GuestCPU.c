@@ -2,7 +2,8 @@
 #include <string.h>
 
 enum { INVALID, NOP, WIDE, ADD_IMM, ADD_REG, LOGIC, MADD, BRANCH, BRANCH_REG,
-       COND, CBZ, ADDRESS, LOAD, STORE, LOGIC_IMM, TBZ, SELECT };
+       COND, CBZ, ADDRESS, LOAD, STORE, LOGIC_IMM, TBZ, SELECT,
+       ADD_EXT, CCMP, SHIFT_REG, BITFIELD, EXTRACT, ONE_SOURCE, CARRY };
 static uint64_t sign_extend(uint64_t x, unsigned bits) {
     uint64_t sign=UINT64_C(1)<<(bits-1); return (x^sign)-sign;
 }
@@ -74,6 +75,19 @@ static GCDecoded decode(uint64_t pc,uint32_t i) {
     } else if ((i&0x3fe00800)==0x1a800000) {
         d.op=SELECT;d.shift=(i>>12)&15;d.flags=(((i>>30)&1)<<1)|((i>>10)&1);
     } else if ((i&0x7fe00000)==0x1b000000) { d.op=MADD;d.flags=(i>>15)&1; }
+    // Forms a translator's atomic loops use between an exclusive load and store
+    else if ((i&0x1fe00000)==0x0b200000 && ((i>>10)&7)<=4) {
+        d.op=ADD_EXT;d.flags=(i>>29)&3;d.shift=(i>>13)&7;d.amount=(i>>10)&7;
+    } else if ((i&0x3fe00410)==0x3a400000) {
+        d.op=CCMP;d.flags=((i>>30)&1)|(((i>>11)&1)<<1);d.shift=(i>>12)&15;d.immediate=i&15;
+    } else if ((i&0x7fe0f000)==0x1ac02000) { d.op=SHIFT_REG;d.shift=(i>>10)&3; }
+    else if ((i&0x1f800000)==0x13000000 && ((i>>29)&3)!=3 && ((i>>22)&1)==(i>>31)) {
+        d.op=BITFIELD;d.flags=(i>>29)&3;d.shift=(i>>16)&63;d.amount=(i>>10)&63;
+        if(d.width==32 && (d.shift>31 || d.amount>31)) d.op=INVALID;
+    } else if ((i&0x7fa00000)==0x13800000 && ((i>>22)&1)==(i>>31)) {
+        d.op=EXTRACT;d.amount=(i>>10)&63;if(d.width==32 && d.amount>31) d.op=INVALID;
+    } else if ((i&0x7fff0000)==0x5ac00000 && ((i>>10)&63)<=4) { d.op=ONE_SOURCE;d.shift=(i>>10)&63; }
+    else if ((i&0x1fe0fc00)==0x1a000000) { d.op=CARRY;d.flags=(i>>29)&3; }
     else if ((i&0x7c000000)==0x14000000) {
         d.op=BRANCH; d.flags=i>>31; d.immediate=pc+sign_extend(i&0x3ffffff,26)*4;
     } else if ((i&0xfffffc1f)==0xd61f0000 || (i&0xfffffc1f)==0xd63f0000 || (i&0xfffffc1f)==0xd65f0000) {
@@ -131,6 +145,62 @@ static bool register_decoded(GCRegisters *c,const GCDecoded *d) {
         case CBZ:if(((reg(c,d->rd,false)&mask(d->width))!=0)==(d->flags!=0))next=d->immediate;break;
         case TBZ:if(((reg(c,d->rd,false)>>d->amount)&1)==d->flags)next=d->immediate;break;
         case ADDRESS:value=d->immediate;write=true;break;
+        case ADD_EXT: {
+            uint64_t m=reg(c,d->rm,false);
+            switch(d->shift) {
+                case 0:m&=0xff;break; case 1:m&=0xffff;break; case 2:m&=0xffffffff;break;
+                case 4:m=sign_extend(m&0xff,8);break; case 5:m=sign_extend(m&0xffff,16);break;
+                case 6:m=sign_extend(m&0xffffffff,32);break; default:break;
+            }
+            value=arithmetic(c,reg(c,d->rn,true),(m<<d->amount)&mask(d->width),d->flags&2,d->flags&1,d->width);
+            write=true;sp=!(d->flags&1);break;
+        }
+        case CCMP:
+            if(condition(c->nzcv,d->shift))
+                arithmetic(c,reg(c,d->rn,false),(d->flags&2)?d->rm:reg(c,d->rm,false),d->flags&1,true,d->width);
+            else c->nzcv=(uint8_t)d->immediate;
+            break;
+        case SHIFT_REG:
+            value=shifted(reg(c,d->rn,false),d->shift,(unsigned)(reg(c,d->rm,false)%d->width),d->width);
+            write=true;break;
+        case BITFIELD: {
+            unsigned immr=d->shift,imms=d->amount,len,pos;uint64_t source=reg(c,d->rn,false)&mask(d->width),field;
+            if(imms>=immr) { len=imms-immr+1;pos=0;field=source>>immr; }
+            else { len=imms+1;pos=d->width-immr;field=source; }
+            uint64_t bits=len>=64?UINT64_MAX:(UINT64_C(1)<<len)-1;
+            field&=bits;
+            if(d->flags==0 && (field>>(len-1))&1) field|=~bits;
+            uint64_t placed=(field<<pos)&mask(d->width);
+            value=d->flags==1?(reg(c,d->rd,false)&~((bits<<pos)&mask(d->width)))|placed:placed;
+            write=true;break;
+        }
+        case EXTRACT: {
+            uint64_t n=reg(c,d->rn,false)&mask(d->width),m=reg(c,d->rm,false)&mask(d->width);
+            value=d->amount?((m>>d->amount)|(n<<(d->width-d->amount))):m;
+            write=true;break;
+        }
+        case ONE_SOURCE: {
+            uint64_t x=reg(c,d->rn,false)&mask(d->width),r=0;unsigned bytes=d->width/8;
+            if(d->shift==0) { for(unsigned b=0;b<d->width;b++) if((x>>b)&1) r|=UINT64_C(1)<<(d->width-1-b); }
+            else if(d->shift==4) { r=d->width; for(unsigned b=d->width;b-->0;) if((x>>b)&1) { r=d->width-1-b;break; } }
+            else {
+                unsigned group=d->shift==1?2:d->shift==2&&d->width==64?4:bytes;
+                for(unsigned at=0;at<bytes;at+=group)
+                    for(unsigned b=0;b<group;b++) r|=((x>>((at+b)*8))&0xff)<<((at+group-1-b)*8);
+            }
+            value=r;write=true;break;
+        }
+        case CARRY: {
+            uint64_t m=mask(d->width),sign=UINT64_C(1)<<(d->width-1),x=reg(c,d->rn,false)&m;
+            uint64_t y=reg(c,d->rm,false)&m;if(d->flags&2) y=~y&m;
+            uint64_t carry=(c->nzcv>>1)&1,result=(x+y+carry)&m;
+            if(d->flags&1) {
+                bool out=d->width==64?(result<x || (carry && result==x)):((x+y+carry)>>32)!=0;
+                bool overflow=(~(x^y)&(x^result)&sign)!=0;
+                c->nzcv=(result&sign?8:0)|(result==0?4:0)|(out?2:0)|(overflow?1:0);
+            }
+            value=result;write=true;break;
+        }
         default:return false;
     }
     if(write)put(c,d->rd,value,d->width,sp);

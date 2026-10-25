@@ -1,11 +1,13 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <AVFAudio/AVFAudio.h>
 #import "AKSupport.h"
+#import "SessionAudio.h"
 #include <dlfcn.h>
 #include <stdatomic.h>
 @interface AKAudioRenderProbe : NSObject {
 @public
     AURenderCallbackStruct original;
+    size_t processSlot;
     atomic_uint_fast64_t calls, frames, nonzeroBuffers, errors, silent;
 }
 @end
@@ -29,7 +31,15 @@ static void prepareProbes(void) {
 }
 static OSStatus observeRender(void *context,AudioUnitRenderActionFlags *flags,const AudioTimeStamp *time,UInt32 bus,UInt32 frames,AudioBufferList *buffers) {
     AKAudioRenderProbe *probe=(__bridge AKAudioRenderProbe *)context;
+    if (!AKEnterProcessCallback(probe->processSlot)) {
+        if (buffers) for (UInt32 b=0; b<buffers->mNumberBuffers; b++)
+            if (buffers->mBuffers[b].mData)
+                memset(buffers->mBuffers[b].mData,0,buffers->mBuffers[b].mDataByteSize);
+        if (flags) *flags |= kAudioUnitRenderAction_OutputIsSilence;
+        return noErr;
+    }
     OSStatus status=probe->original.inputProc(probe->original.inputProcRefCon,flags,time,bus,frames,buffers);
+    AKLeaveProcessCallback(probe->processSlot);
     atomic_fetch_add_explicit(&probe->calls,1,memory_order_relaxed);
     atomic_fetch_add_explicit(&probe->frames,frames,memory_order_relaxed);
     if(status)atomic_fetch_add_explicit(&probe->errors,1,memory_order_relaxed);
@@ -51,6 +61,10 @@ static BOOL remoteOutput(AudioUnit unit) {
     return component && !AudioComponentGetDescription(component,&description) && description.componentType==kAudioUnitType_Output && description.componentSubType==kAudioUnitSubType_RemoteIO;
 }
 static OSStatus defaultOutput(UInt32 *device) {
+    if(AKSessionAudioOnly()) {
+        if(!AVAudioSession.sharedInstance.currentRoute.outputs.count)return kAudioUnitErr_InvalidPropertyValue;
+        *device=AK_SESSION_OUTPUT_DEVICE;return 0;
+    }
     static OSStatus (*get)(UInt32,UInt32 *,void *);static dispatch_once_t once;
     dispatch_once(&once,^{void *library=dlopen("/System/Library/Frameworks/CoreAudio.framework/CoreAudio",RTLD_NOW|RTLD_LOCAL);get=library?dlsym(library,"AudioHardwareGetProperty"):NULL;});
     if(!get || !AVAudioSession.sharedInstance.currentRoute.outputs.count)return kAudioUnitErr_InvalidPropertyValue;
@@ -85,6 +99,7 @@ OSStatus AudioUnitSetProperty(AudioUnit unit,AudioUnitPropertyID property,AudioU
         else { memcpy(&requested,data,sizeof requested);s=defaultOutput(&current);if(!s && requested!=current)s=kAudioUnitErr_InvalidPropertyValue; }
     } else if(property==kAudioUnitProperty_SetRenderCallback && scope==kAudioUnitScope_Input && element==0 && data && size==sizeof(AURenderCallbackStruct) && remoteOutput(unit)) {
         prepareProbes();AKAudioRenderProbe *probe=[AKAudioRenderProbe new];memcpy(&probe->original,data,size);
+        probe->processSlot=AKCallbackProcess((uintptr_t)probe->original.inputProc);
         if(probe->original.inputProc) {
             AURenderCallbackStruct observed={observeRender,(__bridge void *)probe};
             @synchronized(renderProbes) {

@@ -16,6 +16,34 @@ pull request; say what you tested, on what hardware, with which execution mode
 | Cyberpunk 2077 (GOG, macOS arm64) | 2.3.x (buildId 59052989568257053) | iPad Pro M5, iPadOS 27 | Developer service | Experimental software-memory mode completes all 6,540 initializers, main, GOG initialization, archives, scripts and shader caches, creates the game window, and visibly renders the opening cinematic with a Space-to-continue prompt. | Menu content and gameplay unverified. Early presentation samples are about 5 FPS, then settle near 1 FPS in the cinematic, with long pauses. Manual Space presses reach the adapter queue but have not visibly continued the game; routing 4 GiB pools to software passes the earlier Foundation allocation failure and reaches further loading. Loader and call-wrapper unwind support clears the GOG rich-presence abort on the iPad: the call reports its service error and returns, and loading continues. The merged-main run logs a main-menu presence state; visual menu and gameplay validation remain pending. Tests use a 3600-second watchdog timeout and a two-CPU query cap. See [VM investigation](docs/CYBERPUNK_VM.md) and [software-memory experiment](docs/SOFTWARE_MEMORY.md). | [`cyberpunk-2077`](profiles/cyberpunk-2077) |
 | MegaBonk (Steam, Windows x86-64) | 1.0.69 | iPad Pro M5, iPadOS 27 | Developer service | Visible main menu, imported Steam progress, user-confirmed playable run. Native Steam Cloud pulled three saves, uploaded both saves changed by that run, and passed independent byte-for-byte verification. Final clean-exit Cloud sync passes through an original physical Wine fixture. Saved Developer service mode startup passes after correcting the old Local signing choice. | Physical unplugged regular-library confirmation pending. User reported erratic camera mouse movement; confinement/recentering fix passes UIKit fixtures and physical Wine pointer-lock, exact recentering and release checks; manual camera feel validation pending. A run froze after about 8 minutes when FEX code buffers filled the 256 MiB code pool; the profile now uses 496 MiB (the Developer service caps the arena at 512 MiB) with 128 MiB buffers, long-session confirmation pending. Menus stepping down by themselves stopped with the game's VSync setting on (user-confirmed); no input reached Wine. Natural scrolling user-confirmed. Performance unmeasured. Simulator GPU lacks required D3D capabilities. | [Windows notes](docs/WINDOWS.md) |
 
+
+
+## Steam client experiment (2026-10-14)
+
+Windows Steam build 1788652215 renders its sign-in screen with readable labels
+on iPad Pro M5 / iPadOS 27.0.1 using Developer service and the opt-in software
+memory mode. Portable Wine Tahoma files and missing-family replacements were
+required; the copied Mac font registry was unusable for DirectWrite. The QR
+area remained loading in that run. After adding native-trust-filtered certificate
+enumeration and DER export, the physical WinHTTP probe passed verified HTTPS;
+Steam itself then downloaded and installed its 112,630 KB client update to
+1791918634. Its automatic relaunch failed to allocate the second process
+address-space window; a fresh updated-client launch subsequently connected and visibly reached
+the sign-in screen with a populated QR code. The user subsequently authenticated successfully; Steam received LogOnResponse
+OK and downloaded library metadata, but the visible account-loading screen
+has not yet progressed to the library. A game download through Steam and
+launching that download are **not verified**. No performance
+claim follows from the sign-in screen. See [investigation](docs/SOFTWARE_MEMORY.md).
+
+## Two-app Wine diagnostic (2026-10-14)
+
+On iPad Pro M5 / iPadOS 27.0.1 using Developer service, the owned
+`remote_handover_probe` passed a Windows child launch across two Tolkara apps,
+64 MiB checksum computation, inherited-pipe result and exit-status verification.
+Both runtimes detached before entry; the receiver used one finite UIKit
+background allowance. This is not Steam startup, download, game launch or
+sustained background execution. See [handover evidence](docs/MULTIPROCESS.md).
+
 ## GPUs without BC textures
 
 macOS games use BC ("DXT") compressed textures, which only some iOS GPUs
@@ -42,3 +70,151 @@ The experiment and instruction limitations are in
 An entry records what one person observed. It is not a promise that the
 application will keep working, and it says nothing about whether its publisher
 permits it: read "Online games and account risk" in the [README](README.md).
+
+
+Steam iPad follow-up (2026-10-14, 12:54): implementing AppKit relative window
+ordering made the authenticated Steam desktop visibly appear on the physical
+iPad. Adapter simulator regressions pass. Store content remained black at
+observation; Library interaction, game download and game launch remain
+unverified. This result does not establish sustained two-app execution or game
+performance.
+
+Steam iPad follow-up (2026-10-14, 15:39): Library game names and artwork are
+visibly rendered, but selecting Vampire Survivors and typing in search did not
+respond. Device Hub successfully operates Tolkara's native Diagnostics menu.
+Input routing or guest responsiveness remains unresolved; no game download or
+launch is claimed. The unresponsive test instance was stopped, preserving its
+log, while a separate CoreDevice file-service failure is investigated.
+
+2026-10-14 physical Steam input follow-up: opt-in `--frontmost-guest-input` let Device Hub close Friends, open Library, select Vampire Survivors, open Downloads and navigate back. Downloads showed an empty queue and 0 bps. Vampire Survivors details remained at a loading indicator for several minutes; no download or game launch verified. CoreDevice app-container log copy still timed out; allowlisted live input console remained available.
+
+
+2026-10-15 physical multiprocess follow-up (iPad Pro M5, Developer service):
+Steam launches Vampire Survivors, but the game has not rendered successfully.
+An owned two-process fixture reproduced a failure when the child called a
+Wine builtin export address obtained in the parent. With the experimental
+`WINEBUILTINCODEALIAS=1` metadata resolver, the same fixture returned the correct
+child process ID and completed with exit 0. This establishes the narrow runtime
+case only; successful game startup and performance remain unverified.
+A separate active-stack teardown guard keeps Tolkara/Steam alive after the
+game access violation by retaining the exiting slot's reservation and code pool
+until host restart. Full safe reclamation after all threads stop remains work.
+See [MULTIPROCESS](docs/MULTIPROCESS.md) for reproduction details.
+
+The next physical Steam run with the builtin-address resolver passed the
+previous foreign-kernel32 failure, loaded Vampire Survivors' Unity runtime,
+and created a MoltenVK Vulkan instance. Unity then displayed “Failed to
+initialize graphics”; game rendering is still unverified. A follow-up fix
+propagates the per-process WINE_D3D_CONFIG into the child's Windows environment
+so Wine DXGI can select Vulkan instead of unavailable OpenGL.
+
+The graphics-environment propagation was verified on the iPad: Wine selected
+Vulkan and DXVK initialized D3D_FEATURE_LEVEL_11_0. The game then exhausted its
+4 GiB virtual range (3992 MiB of views; largest gap 92 MiB) and exited after a
+roughly 512 MiB reservation failed. An 8 GiB game range with a nonoverlapping
+browser range is under test. A rendered game menu is not yet verified.
+
+2026-10-15 physical milestone: Vampire Survivors (Steam AppID 1794680,
+BuildID 25016043), downloaded through Steam, now reaches its interactive main
+menu through Steam in the single Tolkara app. Device Hub startup taps advanced
+the warning and title screen. Required the experimental builtin code-address
+resolver, child graphics-environment propagation, rebuilt Vulkan-capable
+winemac helper, and Unity `-systemallocator -job-worker-count 2`. The allocator
+option is debug-only. Display remains cropped; gameplay, performance and
+long-run stability are not verified. No original game binary was modified.
+The 8 GiB game/48 GiB browser experiment failed; this run restores the original
+4 GiB game/52 GiB browser layout. See docs/MULTIPROCESS.md for evidence and
+local reproduction bundle.
+
+### Normal launch verified on the physical iPad
+
+Opened Tolkara from its dock icon and selected the existing Steam (Windows)
+library row, with no launch arguments or Mac launch script. Local Developer
+service prepared 1020 MiB in 308.227 seconds. Steam connected, started Vampire
+Survivors, and the game displayed its title and interactive main menu. A startup
+tap advanced to the menu. This run fills the iPad display with letterboxing;
+all main-menu buttons are visible, unlike the earlier windowed capture.
+Evidence: /private/tmp/codex-steam-icon-after.log and Device Hub observations.
+App is left running. Gameplay/performance remain untested.
+
+User flow: open Tolkara, tap Steam (Windows), keep Tolkara foreground during
+preparation, then Vampire Survivors starts automatically through Steam. Existing
+iPad Developer-service setup is still required; no Mac script is needed. For a
+fresh session, close Tolkara in the app switcher and reopen it.
+
+2026-10-15 user gameplay follow-up: Vampire Survivors remains at Loading after
+starting a stage. Runtime logs show stack-overflow exceptions and subsequent
+access violations; underlying cause unconfirmed. Menu compatibility is proven,
+playability is not. Steam profile auto-start was removed; game-specific launch
+options now apply only when the user selects Vampire Survivors.
+
+2026-10-15 Steam download follow-up: with opt-in Wine builtin retention under
+WINEJITPOOLNOREUSE=1, Meccha Chameleon (4704690) finished its base installation
+and Workshop update on the physical iPad. Steam's content log reported Fully
+Installed and scheduler result No Error at 19:11:04. The original recording
+shows a separate black background behind the Store dropdown. Adapter window
+transparency handling now passes simulator tests and builds for iPad; physical
+verification remains pending. Vampire Survivors stage-loading stack overflow
+is still unresolved; menu entry is not gameplay validation.
+
+
+2026-10-15 Steam/Vampire Survivors follow-up: normal catalog launch works, but
+Steam menu blackout persists after the background/opacity adapter change.
+Meccha Chameleon base and Workshop downloads completed with No Error. Vampire
+Survivors stage loading reproduced an execute-fault recursion followed by stack
+overflow. Used prepared code pages were returned after helper exit and reused
+by the game despite permanent loss of execute permission on some pages. The
+runtime now retires used pools until app exit; focused lifecycle tests pass.
+Physical gameplay validation of this change is pending; see docs/MULTIPROCESS.md.
+
+2026-10-16 follow-up: the physical retest with retired process pools no longer
+showed the execute-fault recursion or stack overflow, but stage loading exhausted
+the game's 200 MiB executable pool. A 300 MiB game allocation is installed but
+has not reached a stage retest: current normal Steam launches stall during
+startup. Low arena placement and Wine wait diagnostics are under investigation.
+Vampire Survivors is not yet validated as playable.
+
+
+### 2026-10-16 recovery status
+
+An assistant cache-reset operation unexpectedly cleared Tolkara's app data container. Steam runtime/configuration recovery from local snapshots is partial and unverified. Previously recorded installed games are no longer present on the device; device-only saves have not been recovered. Vampire Survivors gameplay remains unverified. See docs/MULTIPROCESS.md for incident and recovery details.
+
+2026-10-16 recovery and physical stage retest: local copies of Megabonk, Heroes III, Process Probe, both WoW profiles and Cyberpunk were copied back; six entry executables matched source SHA-256. This does not verify all assets, app launches or recovery of device-only saves. Fresh authenticated normal Steam launch completed a Vampire Survivors download. v1.16.111 entered Mad Forest and ran for 12 seconds to normal Game Over (stationary Gennaro, 10 enemies defeated). No stack-overflow, code-pool exhaustion or unhandled-exception entries in that runtime log; game live code views reached 182 MiB within its 300 MiB slice. Movement, sustained play and performance await user verification. Steam popup blackout and roughly five-minute preparation remain.
+
+2026-10-16 user verification: user reports Vampire Survivors gameplay works great. On quitting, game exits with code 0 but Tolkara displays a white viewport instead of restoring Steam. A fresh local SaveData was verified and backed up; post-game Steam Cloud upload is unconfirmed. Return-to-Steam behavior remains open.
+
+October 17 Steam/VS save verification: fresh save reloaded with 2155 coins; Steam cloud log confirms SaveData upload OK at 00:05:27. White viewport on game exit remains unresolved; Wine final-thread pipe cleanup now covers both normal and immediate exit paths, awaiting physical verification.
+
+October 17 00:17: Wine exit pipe cleanup verified physically: game process disappears from server and Steam runs exit sync, uploading SaveData successfully immediately after quit. White viewport persists as a separate window lifecycle limitation. Game save reload verified with 2155 coins.
+
+October 17 01:48: normal Vampire Survivors Quit now returns to Steam Library. Runtime confirms exit0 and game window70 retired for process3; Terraria Library page opened afterward, proving browsing remains responsive. Save reloaded with2155coins. Verified with original4GiB game range,950MiB code pool,4slots and native MoltenVK. Second-game launch in the same session is still unresolved. Evidence: /private/tmp/window-owner-normal-quit.log.
+
+October 17, later second-launch investigation: the game briefly reached its
+menu on relaunch, then native allocation failures froze the visible Steam
+window. This is not a successful relaunch/playability result. Diagnostics
+identified rapid host allocation growth while Steam was idle and repeated
+process-info calls from the native Bluetooth HAL plugin. The opt-in
+`TOLKARA_SESSION_AUDIO_ONLY=1` adapter avoids desktop HAL initialization and
+uses the AVAudioSession output identity consistently with RemoteIO. In a
+physical startup-only comparison, native heap usage settled near51MB and
+198k blocks over16 ten-second samples, replacing growth of150–225k blocks
+per sample. Per-call autorelease lifetime and session-device identity tests
+pass in the simulator. Full game/audio and same-session relaunch validation
+with this candidate are pending; startup-only stability does not prove them.
+
+October 17 ~21:41 physical candidate follow-up: with session-only audio enabled,
+Vampire Survivors reached its main menu, quit normally to Steam (Cloud Up to
+date), and reopened in the same Tolkara process. Steam browsing was checked
+by opening Terraria's Library page between launches. The second VS instance
+opened Options and returned to its main menu; both launches produced nonzero
+audio render buffers without callback errors. Save shows2155coins. User stage
+play and audible output confirmation are pending. This six-slot configuration
+supports the tested second launch; retained code pools do not establish
+unlimited successive launches.
+
+October17 ~21:43: user entered a stage in the second instance. Device Hub
+observations show the timer advancing from00:08 to00:46 and level1 tolevel2,
+with active rendering. No gameplay input was supplied by the agent. Current
+log /private/tmp/reclaim-session-second-stage.log contains no stack-overflow
+or native allocation exception. Subjective movement/performance/sound report
+and longer-run stability remain pending.

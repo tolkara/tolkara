@@ -5,10 +5,13 @@
 
 // Private owning-app/provider messages. Fixed-size network-order encoding; no
 // keys or game bytes. Addresses/challenges must never be logged or persisted.
-#define TKAC_SIZE 96
+#define TKAC_SIZE 112
+#define TKAC_MAX_ARENA_BYTES (2048ull * 1024u * 1024u)
+#define TKAC_MAX_TIMEOUT_SECONDS 1850
 typedef struct {
     uint32_t pid, uid;
     uint64_t address, size, challenge_address, deadline_ms;
+    uint64_t second_address, second_size; // Optional second region, same transaction.
     uint8_t challenge[32], identifier[16];
 } TKACRequest;
 typedef enum { TKAC_PREPARED = 1, TKAC_REJECTED = 2,

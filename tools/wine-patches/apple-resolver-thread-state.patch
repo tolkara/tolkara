@@ -1,0 +1,14 @@
+--- a/dlls/dnsapi/libresolv.c
++++ b/dlls/dnsapi/libresolv.c
+@@ -39,6 +39,11 @@
+ #endif
+ #ifdef HAVE_RESOLV_H
+ # include <resolv.h>
++# ifdef __APPLE__
++/* Use the resolver state associated with res_init/res_query on this thread. */
++#  undef _res
++#  define _res (*__res_state())
++# endif
+ #endif
+ #ifdef HAVE_NETDB_H
+ # include <netdb.h>

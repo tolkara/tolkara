@@ -1,0 +1,47 @@
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -1578,9 +1578,23 @@
+  *
+  * Close server socket and exit process normally.
+  */
++void server_disconnect_process(void)
++{
++    /* Tolkara may implement process exit as pthread_exit while other Wine
++     * instances remain alive. Do not rely on host process teardown to close
++     * this final thread's server pipes: its request pipe keeps the Windows
++     * process alive in wineserver even after fd_socket is closed. Match the
++     * normal pthread_exit_wrapper cleanup, touching only this thread's fds. */
++    close( ntdll_get_thread_data()->wait_fd[0] );
++    close( ntdll_get_thread_data()->wait_fd[1] );
++    close( ntdll_get_thread_data()->reply_fd );
++    close( ntdll_get_thread_data()->request_fd );
++    close( fd_socket );
++}
++
+ void process_exit_wrapper( int status )
+ {
+-    close( fd_socket );
++    server_disconnect_process();
+     exit( status );
+ }
+ 
+--- a/dlls/ntdll/unix/thread.c
++++ b/dlls/ntdll/unix/thread.c
+@@ -1470,6 +1470,7 @@
+  */
+ void abort_process( int status )
+ {
++    server_disconnect_process();
+     _exit( get_unix_exit_code( status ));
+ }
+ 
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -260,6 +260,7 @@
+                                int *needs_close, enum server_fd_type *type, unsigned int *options );
+ extern void wine_server_send_fd( int fd );
+ extern void process_exit_wrapper( int status ) DECLSPEC_NORETURN;
++extern void server_disconnect_process(void);
+ extern size_t server_init_process(void);
+ extern void server_init_process_done(void);
+ extern void server_init_thread( void *entry_point, BOOL *suspend );

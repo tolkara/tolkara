@@ -1,0 +1,21 @@
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -3340,12 +3340,18 @@
+         CGRect frame, void* hwnd, macdrv_event_queue queue)
+ {
+     __block WineWindow* window;
++    /* Capture ownership on the originating thread, before Cocoa dispatch.
++     * Objective-C classes are shared by embedded Wine process instances. */
++    size_t (*current_process_slot)(void) = dlsym(RTLD_DEFAULT, "tolkara_current_process_slot");
++    void (*set_window_process)(id, size_t) = dlsym(RTLD_DEFAULT, "AKSetWindowProcess");
++    size_t process_slot = current_process_slot ? current_process_slot() : 0;
+ 
+     OnMainThread(^{
+         window = [[WineWindow createWindowWithFeatures:wf
+                                            windowFrame:NSRectFromCGRect(cgrect_mac_from_win(frame))
+                                                   hwnd:hwnd
+                                                  queue:(WineEventQueue*)queue] retain];
++        if (current_process_slot && set_window_process) set_window_process(window, process_slot);
+     });
+ 
+     return (macdrv_window)window;

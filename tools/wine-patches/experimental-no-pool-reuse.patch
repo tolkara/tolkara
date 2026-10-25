@@ -1,0 +1,41 @@
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -1983,9 +1983,24 @@
+ static void *find_jit_pool_area( size_t size, int top_down, size_t align_mask )
+ {
+     void *base = jit_pool_base, *end = jit_pool_end;
+-    struct wine_rb_entry *first = find_view_inside_range( &base, &end, top_down );
++    struct wine_rb_entry *first;
+     char *start;
+-
++    static char *next_low, *next_high;
++    BOOL no_reuse = is_jit_pool_aliased( base ) && getenv( "WINEJITPOOLNOREUSE" ) &&
++                    !strcmp( getenv( "WINEJITPOOLNOREUSE" ), "1" );
++
++    /* Diagnostic: pages demoted to writable data cannot be made executable
++     * again on the prepared iPad pool. Do not recycle any range in this mode.
++     * Keep opposite allocation directions, bounded by the same pool. */
++    if (no_reuse)
++    {
++        if (!next_low) { next_low = base; next_high = end; }
++        base = next_low;
++        end = next_high;
++        if (size > (size_t)((char *)end - (char *)base)) return NULL;
++    }
++
++    first = find_view_inside_range( &base, &end, top_down );
+     if (top_down)
+     {
+         start = ROUND_ADDR( (char *)end - size, align_mask );
+@@ -2009,6 +2024,11 @@
+             first = rb_next( first );
+         }
+         if (start < (char *)base || start + size > (char *)end) return NULL;
++    }
++    if (no_reuse)
++    {
++        if (top_down) next_high = start;
++        else next_low = start + size;
+     }
+     return start;
+ }

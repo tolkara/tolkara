@@ -35,3 +35,20 @@ void AKCursorUnhide(void);
 bool AKMouseIsCaptured(void);
 void AKMouseSetCaptured(bool captured);
 void AKMouseSetConfined(bool confined);
+
+// Native callbacks can outlive the guest pthread that registered them. The
+// runtime supplies ownership; adapters gate entry and count callbacks already
+// executing. Retirement is permanent for a process slot in this host session.
+void AKConfigureProcessCallbacks(size_t count, size_t (*owner)(uintptr_t));
+size_t AKCallbackProcess(uintptr_t address);
+bool AKEnterProcessCallback(size_t slot);
+void AKLeaveProcessCallback(size_t slot);
+void AKRetireProcessCallbacks(size_t slot);
+bool AKProcessCallbacksDrained(size_t slot);
+
+#ifdef __OBJC__
+// mode: 0 async, 1 sync, 2 after. Retired blocks remain retained so their
+// captured guest objects cannot run destructors after private memory retires.
+void AKDispatchProcessBlock(size_t slot, unsigned mode, dispatch_queue_t queue,
+                            dispatch_time_t when, dispatch_block_t block);
+#endif

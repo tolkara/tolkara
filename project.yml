@@ -9,6 +9,9 @@ settings:
     DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
     TOLKARA_BUNDLE_ID: ${TOLKARA_BUNDLE_ID}
     TOLKARA_KEYCHAIN_GROUP: ${TOLKARA_KEYCHAIN_GROUP}
+    # The App Group a second build of Tolkara shares with the first (a separate app
+    # for one Windows process, docs/MULTIPROCESS.md): named after the first app's ID.
+    TOLKARA_GROUP_BASE: ${TOLKARA_GROUP_BASE}
     # Optional execution-mode preselection (developer-service or local-signing;
     # tools/package_ipa.sh passes external-jit), read once into Info.plist.
     # Empty: the app asks on first launch.
@@ -35,6 +38,16 @@ schemes:
       shared: true
       isShown: true
       orderHint: 0
+  # Side-by-side scheduling test of the two probe apps, driven by XCUITest.
+  ProcessProbeUITests:
+    build:
+      targets:
+        ProcessProbe: all
+        ProcessProbePeer: all
+        ProcessProbeUITests: [test]
+    test:
+      config: Debug
+      targets: [ProcessProbeUITests]
 targetTemplates:
   AppBase:
     type: application
@@ -96,6 +109,7 @@ targets:
         com.apple.developer.kernel.extended-virtual-addressing: true
         com.apple.developer.networking.networkextension: [packet-tunnel-provider]
         keychain-access-groups: ["$(AppIdentifierPrefix)$(TOLKARA_KEYCHAIN_GROUP)"]
+        com.apple.security.application-groups: ["group.$(TOLKARA_GROUP_BASE).shared"]
     dependencies:
       - sdk: NetworkExtension.framework
       - target: LocalAuthorizationTunnel
@@ -146,3 +160,131 @@ targets:
         keychain-access-groups: ["$(STORAGE_PROBE_GROUP)"]
     dependencies:
       - sdk: Security.framework
+
+  # ProcessProbe: separate worker processes through app-defined extension points
+  # (ExtensionFoundation, iOS 26), each reporting its own limits (docs/MULTIPROCESS.md).
+  ProcessProbe:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.2"
+    sources: [tools/ProcessProbe/Host, tools/ProcessProbe/Shared]
+    info:
+      path: tools/ProcessProbe/Host/Info.plist
+      properties:
+        ProbeAppGroup: group.$(TOLKARA_BUNDLE_ID).processprobe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID).processprobe
+        SWIFT_OBJC_BRIDGING_HEADER: tools/ProcessProbe/Shared/ProbeShm.h
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        EX_ENABLE_EXTENSION_POINT_GENERATION: YES
+        SWIFT_VERSION: "5.0"
+    entitlements:
+      path: tools/ProcessProbe/Probe.entitlements
+      properties:
+        com.apple.developer.kernel.extended-virtual-addressing: true
+        com.apple.developer.kernel.increased-memory-limit: true
+        com.apple.security.application-groups: [group.$(TOLKARA_BUNDLE_ID).processprobe]
+    dependencies:
+      - target: ProcessProbeWorkerA
+        embed: true
+      - target: ProcessProbeWorkerB
+        embed: true
+  ProcessProbeWorkerA:
+    type: extensionkit-extension
+    platform: iOS
+    deploymentTarget: "26.2"
+    sources: [tools/ProcessProbe/Worker, tools/ProcessProbe/Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID).processprobe.workera
+        SWIFT_OBJC_BRIDGING_HEADER: tools/ProcessProbe/Shared/ProbeShm.h
+        PROCESS_PROBE_HOST_ID: $(TOLKARA_BUNDLE_ID).processprobe
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: tools/ProcessProbe/Worker/Info.plist
+        SKIP_INSTALL: YES
+        SWIFT_VERSION: "5.0"
+    # Apple does not grant extended addressing or the increased memory limit to app
+    # extensions ("could not be included in profile"); the debugging memory limit
+    # also makes XNU give a process the jumbo address space.
+    entitlements:
+      path: tools/ProcessProbe/Worker/Worker.entitlements
+      properties:
+        com.apple.developer.kernel.increased-debugging-memory-limit: true
+  ProcessProbeWorkerB:
+    type: extensionkit-extension
+    platform: iOS
+    deploymentTarget: "26.2"
+    sources: [tools/ProcessProbe/Worker, tools/ProcessProbe/Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID).processprobe.workerb
+        SWIFT_OBJC_BRIDGING_HEADER: tools/ProcessProbe/Shared/ProbeShm.h
+        PROCESS_PROBE_HOST_ID: $(TOLKARA_BUNDLE_ID).processprobe
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: tools/ProcessProbe/Worker/Info.plist
+        SKIP_INSTALL: YES
+        SWIFT_VERSION: "5.0"
+    # Apple does not grant extended addressing or the increased memory limit to app
+    # extensions ("could not be included in profile"); the debugging memory limit
+    # also makes XNU give a process the jumbo address space.
+    entitlements:
+      path: tools/ProcessProbe/Worker/Worker.entitlements
+      properties:
+        com.apple.developer.kernel.increased-debugging-memory-limit: true
+  # ProcessProbePeer: a second app of the same team, for what a separate app process
+  # adds over an extension (its own app limits) and how the two apps talk.
+  ProcessProbePeer:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.2"
+    sources: [tools/ProcessProbe/Peer, tools/ProcessProbe/Shared]
+    info:
+      path: tools/ProcessProbe/Peer/Info.plist
+      properties:
+        ProbeAppGroup: group.$(TOLKARA_BUNDLE_ID).processprobe
+        BGTaskSchedulerPermittedIdentifiers: [$(TOLKARA_BUNDLE_ID).processprobe.peer.validation]
+        UIBackgroundModes: [processing]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID).processprobe.peer
+        SWIFT_OBJC_BRIDGING_HEADER: tools/ProcessProbe/Shared/ProbeShm.h
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        SWIFT_VERSION: "5.0"
+    entitlements:
+      path: tools/ProcessProbe/Peer/Peer.entitlements
+      properties:
+        com.apple.developer.kernel.extended-virtual-addressing: true
+        com.apple.developer.kernel.increased-memory-limit: true
+        com.apple.security.application-groups: [group.$(TOLKARA_BUNDLE_ID).processprobe]
+  # Drives the two probe apps on the device (side-by-side scheduling test).
+  ProcessProbeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "26.2"
+    sources: [tools/ProcessProbe/UITests]
+    info:
+      path: tools/ProcessProbe/UITests/Info.plist
+      properties:
+        ProbeHostID: $(TOLKARA_BUNDLE_ID).processprobe
+        ProbePeerID: $(TOLKARA_BUNDLE_ID).processprobe.peer
+        TolkaraFirstID: $(TOLKARA_BUNDLE_ID)
+        TolkaraSecondID: $(TOLKARA_BUNDLE_ID).browser
+        TwoAppProfile: $(TWO_APP_PROFILE)
+        TwoAppFirstEnv: $(TWO_APP_FIRST_ENV)
+        TwoAppSecondEnv: $(TWO_APP_SECOND_ENV)
+        TwoAppSecondWait: $(TWO_APP_SECOND_WAIT)
+        TwoAppMinutes: $(TWO_APP_MINUTES)
+        TwoAppFirstArguments: $(TWO_APP_FIRST_ARGUMENTS)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID).processprobe.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        TEST_TARGET_NAME: ProcessProbe
+    dependencies:
+      - target: ProcessProbe

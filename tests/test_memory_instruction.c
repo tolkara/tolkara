@@ -142,7 +142,52 @@ static void native_fixture_reference(void) {
         for (unsigned i = 0; i < 4; ++i) assert(vectors[i] == seed);
     }
 }
+
+static void unaligned_ordered_compatibility(void) {
+    GMSparseMemory m = {0};
+    assert(gm_sparse_init(&m, base, 2 * GM_PAGE_SIZE, 2 * GM_PAGE_SIZE) == GM_OK);
+    assert(gm_sparse_map(&m, base, 2 * GM_PAGE_SIZE, 3, 3, false) == GM_OK);
+    for (unsigned scale = 1; scale <= 3; ++scale) {
+        unsigned width = 1u << scale;
+        for (unsigned skew = 1; skew < width; ++skew) {
+            uint64_t address = base + GM_PAGE_SIZE - width + skew;
+            unsigned char zero[8] = {0}, bytes[8];
+            GMMemoryRegisters r = {0}; GMResult fault;
+            r.pc = 0x4000; r.x[1] = address; r.x[0] = UINT64_C(0x8877665544332211);
+            GMMemoryRegisters before = r;
+            uint32_t store = (scale << 30) | 0x089ffc20;
+            assert(gm_sparse_write(&m, address, zero, width) == GM_OK);
+            assert(gm_memory_step(&m, store, &r, &fault) == GM_STEP_FAULT && fault == GM_INVALID);
+            assert(!memcmp(&r, &before, sizeof r));
+            assert(gm_memory_step_x86_ordered(&m, store, &r, &fault) == GM_STEP_OK);
+            assert(r.pc == 0x4004);
+            assert(gm_sparse_read(&m, address, bytes, width) == GM_OK);
+            for (unsigned i = 0; i < width; ++i) assert(bytes[i] == 0x11 * (i + 1));
+            const uint32_t loads[] = {(scale << 30) | 0x08dffc20, (scale << 30) | 0x38bfc020};
+            for (unsigned i = 0; i < 2; ++i) {
+                r.x[0] = 0;
+                assert(gm_memory_step_x86_ordered(&m, loads[i], &r, &fault) == GM_STEP_OK);
+                uint64_t mask = width == 8 ? UINT64_MAX : (UINT64_C(1) << (width * 8)) - 1;
+                assert(r.x[0] == (UINT64_C(0x8877665544332211) & mask));
+            }
+            assert(gm_sparse_protect(&m, base + GM_PAGE_SIZE, GM_PAGE_SIZE, GM_READ) == GM_OK);
+            r.x[0] = 0; before = r;
+            assert(gm_memory_step_x86_ordered(&m, store, &r, &fault) == GM_STEP_FAULT && fault == GM_PROTECTION);
+            assert(!memcmp(&r, &before, sizeof r));
+            assert(gm_sparse_read(&m, address, bytes, width) == GM_OK);
+            for (unsigned i = 0; i < width; ++i) assert(bytes[i] == 0x11 * (i + 1));
+            assert(gm_sparse_protect(&m, base + GM_PAGE_SIZE, GM_PAGE_SIZE, 0) == GM_OK);
+            assert(gm_memory_step_x86_ordered(&m, loads[0], &r, &fault) == GM_STEP_FAULT && fault == GM_PROTECTION);
+            assert(!memcmp(&r, &before, sizeof r));
+            assert(gm_sparse_protect(&m, base + GM_PAGE_SIZE, GM_PAGE_SIZE, 3) == GM_OK);
+        }
+    }
+    gm_sparse_destroy(&m);
+    puts("PASS: opt-in unaligned ordered accesses, cross-page protection and strict default");
+}
+
 int main(void) {
+    unaligned_ordered_compatibility();
     scalar_and_vector(); native_fixture_reference(); native_atomic_comparison(); native_structure_comparison();
     assert(guest_sparse_memory_probe(stdout));
     puts("PASS: memory-instruction semantics, failure atomicity and native fault/resume fixture");

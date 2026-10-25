@@ -1,0 +1,83 @@
+diff --git a/dlls/ntdll/unix/signal_arm64.c b/dlls/ntdll/unix/signal_arm64.c
+index 3d09a3c..33d8977 100644
+--- a/dlls/ntdll/unix/signal_arm64.c
++++ b/dlls/ntdll/unix/signal_arm64.c
+@@ -63,12 +63,19 @@
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(seh);
+ 
++/* Bounded exception metadata only: never read guest instructions or stack contents. */
++static BOOL exception_metadata_enabled;
++
++
+ #define NTDLL_DWARF_H_NO_UNWINDER
+ #include "dwarf.h"
+ 
+ struct arm64_thread_data
+ {
+     BOOL suspend_pending;
++    unsigned int exception_metadata_count;
++    ULONG_PTR exception_metadata_sp;
++    unsigned int raised_metadata_count;
+ };
+ 
+ C_ASSERT( sizeof(struct arm64_thread_data) <= sizeof(((struct ntdll_thread_data *)0)->cpu_data) );
+@@ -795,6 +802,22 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
+     CONTEXT context;
+ 
+     rec->ExceptionAddress = (void *)PC_sig(sigcontext);
++    if (exception_metadata_enabled)
++    {
++        struct arm64_thread_data *data = arm64_thread_data();
++        ULONG_PTR sp = SP_sig(sigcontext);
++        if (rec->ExceptionCode == STATUS_STACK_OVERFLOW ||
++            (sp != data->exception_metadata_sp && data->exception_metadata_count < 32))
++        {
++            data->exception_metadata_sp = sp;
++            data->exception_metadata_count++;
++            ERR( "forwarded stack transition %u code %08x pc %p sp %p access %p address %p\n",
++                 data->exception_metadata_count, (UINT)rec->ExceptionCode,
++                 rec->ExceptionAddress, (void *)sp,
++                 (void *)(rec->NumberParameters > 0 ? rec->ExceptionInformation[0] : 0),
++                 (void *)(rec->NumberParameters > 1 ? rec->ExceptionInformation[1] : 0) );
++        }
++    }
+     save_context( &context, sigcontext );
+     setup_raise_exception( sigcontext, rec, &context );
+ }
+@@ -899,6 +922,16 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
+ 
+     TRACE( "code=%x addr=%p pc=%p sp=%p\n", rec->ExceptionCode, rec->ExceptionAddress, (void *)context->Pc, (void *)context->Sp );
+     if (status) return status;
++    if (exception_metadata_enabled)
++    {
++        unsigned int count = ++arm64_thread_data()->raised_metadata_count;
++        /* Bounded exception metadata only; never inspect application memory. */
++        if (count <= 16 || !(count & (count - 1)))
++            ERR( "raised transition %u code %08x pc %p sp %p access %p address %p\n", count,
++                 (UINT)rec->ExceptionCode, (void *)context->Pc, (void *)context->Sp,
++                 (void *)(rec->NumberParameters > 0 ? rec->ExceptionInformation[0] : 0),
++                 (void *)(rec->NumberParameters > 1 ? rec->ExceptionInformation[1] : 0) );
++    }
+     stack = (struct exc_stack_layout *)(context->Sp & ~15) - 1;
+     memmove( &stack->context, context, sizeof(*context) );
+     memmove( &stack->rec, rec, sizeof(*rec) );
+@@ -1533,7 +1566,9 @@ void signal_init_process(void)
+     struct sigaction sig_act;
+     struct ntdll_thread_data *thread_data = ntdll_get_thread_data();
+     void *kernel_stack = (char *)thread_data->kernel_stack + kernel_stack_size;
++    const char *metadata = getenv( "WINEEXCEPTIONMETADATA" );
+ 
++    exception_metadata_enabled = metadata && !strcmp( metadata, "1" );
+     thread_data->syscall_frame = (struct syscall_frame *)kernel_stack - 1;
+ 
+     sig_act.sa_mask = server_block_set;
+@@ -1595,7 +1630,7 @@ void init_syscall_frame( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend,
+ #endif
+     ARM_CONTEXT *arm_context;
+ 
+-    ((struct arm64_thread_data *)(thread_data->cpu_data))->suspend_pending = FALSE;
++    memset( thread_data->cpu_data, 0, sizeof(struct arm64_thread_data) );
+ 
+     context.X0  = (DWORD64)entry;
+     context.X1  = (DWORD64)arg;

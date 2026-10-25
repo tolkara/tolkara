@@ -1,0 +1,14 @@
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -2713,6 +2713,11 @@
+     int i;
+ 
+     while (period * 2 <= size && period < ((size_t)1 << 36)) period *= 2;
++    if (getenv( "WINEPACKHINTS" ) && atoi( getenv( "WINEPACKHINTS" ) ) && !(size & (size - 1)))
++    {
++        size_t hint_alignment = (ULONG_PTR)*base & -(ULONG_PTR)*base;
++        if (hint_alignment >= 0x10000 && hint_alignment < period) period = hint_alignment;
++    }
+     offset = (ULONG_PTR)*base & (period - 1);
+     for (i = 0; i < 2; i++)
+     {

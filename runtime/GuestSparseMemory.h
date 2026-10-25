@@ -30,6 +30,10 @@ GMResult gm_sparse_init(GMSparseMemory *memory, uint64_t base, uint64_t size,
 GMResult gm_sparse_init_blocks(GMSparseMemory *memory, uint64_t base, uint64_t size,
                                size_t backing_bytes);
 void gm_sparse_destroy(GMSparseMemory *memory);
+// Finds a free page-aligned range whose address modulo alignment equals offset.
+// Like find_free, callers must map without replacement and retry GM_OVERLAP.
+GMResult gm_sparse_find_aligned(GMSparseMemory *memory, uint64_t size, uint64_t alignment,
+                                uint64_t offset, uint64_t *address);
 GMResult gm_sparse_find_free(GMSparseMemory *memory, uint64_t size, uint64_t *address);
 GMResult gm_sparse_map(GMSparseMemory *memory, uint64_t address, uint64_t size,
                        unsigned prot, unsigned maxprot, bool replace);

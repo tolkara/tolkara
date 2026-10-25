@@ -13,7 +13,8 @@ typedef struct {
 } NGUnwindSections;
 typedef int (*NGUnwindFinder)(uintptr_t, NGUnwindSections *);
 typedef int (*NGUnwindRegistration)(NGUnwindFinder);
-enum { NG_UNWIND_IMAGES = 65 };
+// The executable and up to 64 carried libraries in each of 8 process slots.
+enum { NG_UNWIND_IMAGES = 1 + 64 * 8 };
 static struct {
     NGUnwindSections sections;
     struct { uintptr_t start, size; } code[GI_MAX_SEGMENTS];

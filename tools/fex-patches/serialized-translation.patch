@@ -1,0 +1,38 @@
+--- a/FEXCore/Source/Interface/Context/Context.h
++++ b/FEXCore/Source/Interface/Context/Context.h
+@@ -392,6 +392,9 @@
+   bool HostRNGAvailable {};
+ 
+   FEXCore::Utils::WritePriorityMutex::Mutex CodeInvalidationMutex {};
++#ifdef FEX_TEB_TSD_OFFSET
++  std::mutex CompileSerializationMutex;
++#endif
+ 
+   uint32_t StrictSplitLockMutex {};
+ 
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -868,6 +868,11 @@
+ 
+   // Invalidate might take a unique lock on this, to guarantee that during invalidation no code gets compiled
+   auto lk = GuardSignalDeferringSection<std::shared_lock>(CodeInvalidationMutex, Thread);
++#ifdef FEX_TEB_TSD_OFFSET
++  // Reuse translation scratch storage across threads on bounded hosts.
++  // Acquire after the invalidation guard so waiting also defers signals.
++  std::unique_lock compile_lock(CompileSerializationMutex);
++#endif
+ 
+   // Is the code in the cache?
+   // The backends only check L1 and L2, not L3
+@@ -1031,6 +1036,11 @@
+ 
+   // Invalidate might take a unique lock on this, to guarantee that during invalidation no code gets compiled
+   auto lk = GuardSignalDeferringSection<std::shared_lock>(CodeInvalidationMutex, Thread);
++#ifdef FEX_TEB_TSD_OFFSET
++  // Reuse translation scratch storage across threads on bounded hosts.
++  // Acquire after the invalidation guard so waiting also defers signals.
++  std::unique_lock compile_lock(CompileSerializationMutex);
++#endif
+ 
+   Thread->FrontendDecoder->SetupDecodeInstructionsAtEntry(Thread, GuestRIP, 1);
+   auto [CompiledCode, DebugData, StartAddr, Length, _] = CompileCode(Thread, GuestRIP, 1);

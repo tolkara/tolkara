@@ -1,0 +1,42 @@
+--- a/External/rpmalloc/rpmalloc/rpmalloc.c
++++ b/External/rpmalloc/rpmalloc/rpmalloc.c
+@@ -169,7 +169,7 @@
+ #define SMALL_BLOCK_SIZE_LIMIT (4 * 1024)
+ #define MEDIUM_BLOCK_SIZE_LIMIT (256 * 1024)
+ #if RPMALLOC_COMPACT_SPANS
+-#define LARGE_BLOCK_SIZE_LIMIT (512 * 1024)
++#define LARGE_BLOCK_SIZE_LIMIT (448 * 1024)
+ #else
+ #define LARGE_BLOCK_SIZE_LIMIT (8 * 1024 * 1024)
+ #endif
+@@ -177,7 +177,7 @@
+ #define SMALL_SIZE_CLASS_COUNT 73
+ #define MEDIUM_SIZE_CLASS_COUNT 24
+ #if RPMALLOC_COMPACT_SPANS
+-#define LARGE_SIZE_CLASS_COUNT 4
++#define LARGE_SIZE_CLASS_COUNT 3
+ #else
+ #define LARGE_SIZE_CLASS_COUNT 20
+ #endif
+@@ -584,8 +584,9 @@
+     MCLASS(640),    MCLASS(768),    MCLASS(896),    MCLASS(1024),   MCLASS(1280),   MCLASS(1536),   MCLASS(1792),
+     MCLASS(2048),   MCLASS(2560),   MCLASS(3072),   MCLASS(3584),   MCLASS(4096),   MCLASS(5120),   MCLASS(6144),
+     MCLASS(7168),   MCLASS(8192),   MCLASS(10240),  MCLASS(12288),  MCLASS(14336),  MCLASS(16384),  LCLASS(20480),
+-    LCLASS(24576),  LCLASS(28672),  LCLASS(32768),
++    LCLASS(24576),  LCLASS(28672),
+ #if !RPMALLOC_COMPACT_SPANS
++    LCLASS(32768),
+     LCLASS(40960),  LCLASS(49152),  LCLASS(57344),  LCLASS(65536),
+     LCLASS(81920),  LCLASS(98304),  LCLASS(114688), LCLASS(131072),
+     LCLASS(163840), LCLASS(196608), LCLASS(229376), LCLASS(262144), LCLASS(327680),
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -359,7 +359,7 @@
+     target_compile_options(rpmalloc PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/Source/Windows/include/TEBFromTSD.h)
+     # Every thread's heap reserves address space a span at a time; a WoW64 process's
+     # threads would otherwise reserve 256 MiB each, more than a bounded host can give.
+-    target_compile_definitions(rpmalloc PRIVATE "SPAN_SIZE=(1 * 1024 * 1024)" "LARGE_PAGE_SIZE_SHIFT=20" "RPMALLOC_COMPACT_SPANS=1")
++    target_compile_definitions(rpmalloc PRIVATE "SPAN_SIZE=(512 * 1024)" "LARGE_PAGE_SIZE_SHIFT=19" "RPMALLOC_COMPACT_SPANS=1")
+   endif()
+ elseif (NOT MINGW)
+   message (STATUS

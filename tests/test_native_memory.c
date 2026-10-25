@@ -56,6 +56,7 @@ int main(void) {
     assert(!memory.executable && !memory.writable && !memory.size);
     assert(nc_create(&memory, 2 * page, accept_zeroed_pages, &calls));
     assert(calls == 1 && memory.executable != memory.writable);
+    assert((uintptr_t)memory.executable + memory.size <= ((uintptr_t)1 << 36));
     assert(!(protection(memory.executable)&VM_PROT_WRITE) && (protection(memory.writable)&VM_PROT_WRITE));
     assert(!nc_create(&memory, page, accept_zeroed_pages, &calls));
     unsigned char data[16]; memset(data, 0x53, sizeof data);
@@ -101,6 +102,19 @@ int main(void) {
     // Adopted, the region is ours: teardown unmaps it with the alias.
     assert(!mapped(foreign) && !mapped(alias));
 
+    // An incompatible address layout must fail before the service attaches or
+    // spends time preparing pages. Owners remain empty and retryable.
+    NativeCodeMemory bounded={0}, bounded_quarantine={0};
+    unsigned before_bounded=calls;
+    assert(!nc_create_managed_below(&bounded,page,page,uncertain_pages,&calls,&bounded_quarantine));
+    assert(errno==ENOSPC && calls==before_bounded);
+    assert(!bounded.executable && !bounded.writable && !bounded.size);
+    assert(!bounded_quarantine.executable && !bounded_quarantine.quarantined);
+    assert(nc_create_managed_below(&bounded,page,((uintptr_t)1<<36),
+                                   accept_without_reading,NULL,&bounded_quarantine));
+    assert((uintptr_t)bounded.executable+bounded.size<=((uintptr_t)1<<36));
+    nc_destroy(&bounded);
+
     unsigned old_calls=calls;
     assert(!nc_create_managed(&memory,page,uncertain_pages,&calls,&quarantine) && errno==EINVAL);
     assert(calls==old_calls); // No second helper attempt or allocation.
@@ -115,6 +129,7 @@ int main(void) {
     if(big<=nc_launch_limit()) {
         assert(nc_create_managed(&large,big,accept_without_reading,NULL,&spare));
         assert(large.size==big && large.published);
+        assert((uintptr_t)large.executable + large.size <= ((uintptr_t)1 << 36));
         nc_destroy(&large);
     }
     assert(!nc_create_managed(&large,(size_t)NC_MAX_ARENA+page,accept_without_reading,NULL,&spare) && errno==EINVAL);

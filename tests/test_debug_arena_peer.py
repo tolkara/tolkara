@@ -41,6 +41,7 @@ class Driver:
     def __enter__(self):
         self.p = subprocess.Popen([str(ROOT/'build/probe_debug_arena')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
         self.now = 0
+        self.step = .001
         return self
     def __exit__(self,*args):
         self.p.stdin.close(); self.p.wait(timeout=3); assert self.p.returncode == 0
@@ -50,7 +51,7 @@ class Driver:
         result = json.loads(self.p.stdout.readline()); assert 'error' not in result,result
         return result
     def send(self,wire):
-        self.now += .001
+        self.now += self.step
         return self.call(data=base64.b64encode(wire).decode())
 
 def emitted(result):
@@ -63,7 +64,7 @@ def emitted(result):
         else: terminal.append(event)
     return commands,terminal,controls
 
-def exchange(mode='success',packet_size='1000',fragment=False):
+def exchange(mode='success',packet_size='1000',fragment=False,time_step=.001):
     read_next={base:0 for base in REGIONS}; writes=[]; readback=[]; batches=[]
     state={'noack':False,'process_queries':0,'challenge_reads':0,'detach':False}
     def region(address): return next(base for base,size in REGIONS.items() if base<=address<base+size)
@@ -117,6 +118,7 @@ def exchange(mode='success',packet_size='1000',fragment=False):
             state['detach']=True; return 'E01' if mode=='detach_error' else 'OK'
         raise AssertionError(text)
     with Driver() as driver:
+        driver.step=time_step
         commands,terminal,_ = emitted(driver.call(begin=True))
         while commands:
             # Acknowledged commands go one at a time; detaching goes alone.
@@ -158,6 +160,8 @@ def exchange(mode='success',packet_size='1000',fragment=False):
             if mode in ('detach_error','detach_trailing'):
                 assert result['detached'] is False
             if mode=='detach_trailing': assert result['failure']=='protocolFailure' and state['detach']
+        if time_step==.25: assert 900 < driver.now < 1800,driver.now
+        if mode=='total_deadline': assert driver.now>=1800 and result['failure']=='timedOut'
         assert driver.call(tick=True)['events']==[]
         return result
 
@@ -167,6 +171,10 @@ def main():
                  'attach_error','unsupported_no_ack','unsupported_detach_policy','ack_without_ack_mode']:
         exchange(mode,fragment=mode=='success')
     exchange(packet_size='8000'); exchange(packet_size='100')
+    # Simulated time: sustained valid work beyond the former deadline succeeds,
+    # but the new absolute bound still terminates progress. No wall-clock wait.
+    exchange(packet_size='100',time_step=.25)
+    exchange(mode='total_deadline',packet_size='100',time_step=.5)
     assert exchange('no_ack_checksums').get('success') is True
     for mode in ('checksum','nack','deadline','disconnect','cancel','coalesced','response_without_ack'):
         with Driver() as d:

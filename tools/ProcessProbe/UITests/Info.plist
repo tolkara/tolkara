@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>ProbeHostID</key>
+	<string>$(TOLKARA_BUNDLE_ID).processprobe</string>
+	<key>ProbePeerID</key>
+	<string>$(TOLKARA_BUNDLE_ID).processprobe.peer</string>
+	<key>TolkaraFirstID</key>
+	<string>$(TOLKARA_BUNDLE_ID)</string>
+	<key>TolkaraSecondID</key>
+	<string>$(TOLKARA_BUNDLE_ID).browser</string>
+	<key>TwoAppFirstArguments</key>
+	<string>$(TWO_APP_FIRST_ARGUMENTS)</string>
+	<key>TwoAppFirstEnv</key>
+	<string>$(TWO_APP_FIRST_ENV)</string>
+	<key>TwoAppMinutes</key>
+	<string>$(TWO_APP_MINUTES)</string>
+	<key>TwoAppProfile</key>
+	<string>$(TWO_APP_PROFILE)</string>
+	<key>TwoAppSecondEnv</key>
+	<string>$(TWO_APP_SECOND_ENV)</string>
+	<key>TwoAppSecondWait</key>
+	<string>$(TWO_APP_SECOND_WAIT)</string>
+</dict>
+</plist>

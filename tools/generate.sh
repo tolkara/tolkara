@@ -7,6 +7,8 @@ cd "$(dirname "$0")/.."
 export DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM:-}
 export TOLKARA_BUNDLE_ID=${TOLKARA_BUNDLE_ID:-local.tolkara.app}
 export TOLKARA_KEYCHAIN_GROUP=${TOLKARA_KEYCHAIN_GROUP:-local.tolkara.authorization}
+# A second build (another bundle ID) shares the first one's App Group.
+export TOLKARA_GROUP_BASE=${TOLKARA_GROUP_BASE:-$TOLKARA_BUNDLE_ID}
 # Optional execution-mode preselection; empty means the app asks on first launch.
 export TOLKARA_MODE=${TOLKARA_MODE:-}
 case "$TOLKARA_MODE" in

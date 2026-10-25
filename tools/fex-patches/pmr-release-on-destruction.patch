@@ -1,0 +1,13 @@
+--- a/FEXCore/include/FEXCore/fextl/memory_resource.h
++++ b/FEXCore/include/FEXCore/fextl/memory_resource.h
+@@ -37,6 +37,10 @@
+   public:
+     explicit named_monotonic_page_buffer_resource(const char* Name)
+       : Name {Name} {}
++
++    ~named_monotonic_page_buffer_resource() override {
++      release();
++    }
+ 
+     void release() noexcept {
+       for (auto& Iter : Buffers) {

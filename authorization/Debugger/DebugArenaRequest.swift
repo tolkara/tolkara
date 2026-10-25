@@ -16,11 +16,11 @@ struct DebugArenaRequest {
         var total: UInt64 = 0
         for (index,region) in regions.enumerated() {
             guard region.address >= 16384, region.address % 16384 == 0, region.size > 0,
-                  region.size <= 512*1024*1024, region.size % 16384 == 0,
+                  region.size <= 2048*1024*1024, region.size % 16384 == 0,
                   region.address <= 0x0000ffffffffffff-region.size,
                   region.address+region.size <= challengeAddress || challengeAddress+32 <= region.address else { throw PairingError.malformed }
             total += region.size
-            guard total <= 512*1024*1024 else { throw PairingError.oversized }
+            guard total <= 2048*1024*1024 else { throw PairingError.oversized }
             for other in regions.prefix(index) {
                 guard region.address+region.size <= other.address || other.address+other.size <= region.address else { throw PairingError.malformed }
             }

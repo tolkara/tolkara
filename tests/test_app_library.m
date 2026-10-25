@@ -50,7 +50,7 @@ int main(int argc, const char **argv) {
         write_text(@"{\"id\":\"l\",\"name\":\"Out\",\"workingDirectory\":\"L\",\"runtime\":\"R\",\"executable\":\"run\",\"libraries\":[\"../core.so\"]}",[profiles stringByAppendingPathComponent:@"l.json"]);
         // A code pool only with a runtime, and in range.
         write_text(@"{\"id\":\"m\",\"name\":\"Pool\",\"workingDirectory\":\"M\",\"executable\":\"run\",\"codePool\":64}",[profiles stringByAppendingPathComponent:@"m.json"]);
-        write_text(@"{\"id\":\"n\",\"name\":\"Huge\",\"workingDirectory\":\"N\",\"runtime\":\"R\",\"executable\":\"run\",\"codePool\":2048}",[profiles stringByAppendingPathComponent:@"n.json"]);
+        write_text(@"{\"id\":\"n\",\"name\":\"Huge\",\"workingDirectory\":\"N\",\"runtime\":\"R\",\"executable\":\"run\",\"codePool\":2049}",[profiles stringByAppendingPathComponent:@"n.json"]);
         write_text(@"{\"id\":\"o\",\"name\":\"Flag\",\"workingDirectory\":\"O\",\"runtime\":\"R\",\"executable\":\"run\",\"codePool\":true}",[profiles stringByAppendingPathComponent:@"o.json"]);
         NSArray *known=[TKAppLibrary profilesInDirectory:profiles];
         assert(known.count==2 && [known[0][@"name"] isEqual:@"Profiled"] && [known[1][@"name"] isEqual:@"Layered"]);

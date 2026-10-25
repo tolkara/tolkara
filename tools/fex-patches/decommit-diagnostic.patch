@@ -1,0 +1,38 @@
+--- a/Source/Windows/Common/CRT/CRT.cpp
++++ b/Source/Windows/Common/CRT/CRT.cpp
+@@ -1,5 +1,6 @@
+ // SPDX-License-Identifier: MIT
+ #include <iterator>
++#include <cstdio>
+ #include <windef.h>
+ #include <windows.h>
+ #include <winternl.h>
+@@ -63,9 +64,28 @@
+ }
+ 
+ void DecommitAllocatorPages(void* Address, size_t Size) {
++  // Temporary bounded diagnostic: query allocation metadata, never guest data.
++  static LONG Reports;
++  const bool Report = InterlockedIncrement(&Reports) <= 16;
++  const auto Header = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(Address) & ~uintptr_t(0xffff));
++  MEMORY_BASIC_INFORMATION Before {}, After {};
++  const auto BeforeStatus = NtQueryVirtualMemory(NtCurrentProcess(), Header, MemoryBasicInformation, &Before, sizeof(Before), nullptr);
+   SIZE_T AllocationSize = Size;
++  const auto OriginalAddress = Address;
+   if (NtFreeVirtualMemory(NtCurrentProcess(), &Address, &AllocationSize, MEM_DECOMMIT)) {
+     __fastfail(7);
++  }
++  const auto AfterStatus = NtQueryVirtualMemory(NtCurrentProcess(), Header, MemoryBasicInformation, &After, sizeof(After), nullptr);
++  // Keep logging bounded during normal operation, but do not lose the first
++  // metadata change merely because it happens after the startup samples.
++  static LONG Anomalies;
++  const bool Changed = BeforeStatus || AfterStatus || Before.State != After.State || Before.Protect != After.Protect;
++  if (Report || (Changed && InterlockedIncrement(&Anomalies) <= 8)) {
++    char Message[384];
++    snprintf(Message, sizeof(Message), "FEX allocator decommit address=%p size=%llx adjusted=%p/%llx header=%p state=%lx->%lx protect=%lx->%lx query=%lx/%lx\n",
++             OriginalAddress, static_cast<unsigned long long>(Size), Address, static_cast<unsigned long long>(AllocationSize),
++             Header, Before.State, After.State, Before.Protect, After.Protect, BeforeStatus, AfterStatus);
++    __wine_dbg_output(Message);
+   }
+ }
+ 

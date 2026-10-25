@@ -1,0 +1,18 @@
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -2729,7 +2729,14 @@
+          * aligned ones, and they pack without gaps. */
+         for (addr = offset ? first : last; addr >= first && addr <= last; addr = offset ? addr + period : addr - period)
+         {
+-            if (in_small_range( addr, size ) || map_fixed_area( addr, size, unix_prot )) continue;
++            if (in_small_range( addr, size ))
++            {
++                /* The small range also contains Wine-owned reservations. Use its
++                 * free-area allocator rather than overwriting it with a fixed map. */
++                if (addr < small_range_base || addr + size > small_range_end ||
++                    !map_reserved_area( addr, addr + size, size, 0, unix_prot, host_page_mask )) continue;
++            }
++            else if (map_fixed_area( addr, size, unix_prot )) continue;
+             TRACE( "reservation asked at %p made at %p\n", *base, addr );
+             *base = addr;
+             return STATUS_SUCCESS;

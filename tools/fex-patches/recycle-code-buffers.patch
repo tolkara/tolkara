@@ -1,0 +1,119 @@
+diff --git a/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp b/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp
+index 156a16a..c4b0f0f 100644
+--- a/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp
++++ b/FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp
+@@ -8,6 +8,8 @@
+ #include <FEXCore/Utils/MathUtils.h>
+ 
+ #include <algorithm>
++#include <iterator>
++#include <mutex>
+ 
+ #ifndef _WIN32
+ #include <FEXCore/Utils/PrctlUtils.h>
+@@ -18,10 +20,75 @@ static constexpr size_t INITIAL_CODE_SIZE = 1024 * 1024 * 16;
+ // We don't want to move above 128MB atm because that means we will have to encode longer jumps
+ static constexpr size_t MAX_CODE_SIZE = 1024 * 1024 * 128;
+ 
++#ifdef _WIN32
++// Tolkara: a retired code buffer is kept for the next one of the same size
++// instead of being released. The iPad's prepared code pool does not hand out a
++// released range again (Wine's WINEJITPOOLNOREUSE: its pages may have lost
++// execute permission for good), so releasing and allocating each new
++// generation used up the pool, and a process whose code cache filled a few
++// times could no longer allocate one. A kept buffer's pages keep the
++// protections FEX gave them, guard page included.
++namespace {
++  std::mutex RetiredLock;
++  struct {
++    void* Ptr;
++    size_t Size;
++  } Retired[32];
++  size_t RetiredCount;
++
++  void* TakeRetired(size_t Size) {
++    std::scoped_lock lk {RetiredLock};
++    for (size_t i = 0; i < RetiredCount; ++i) {
++      if (Retired[i].Size == Size) {
++        void* Ptr = Retired[i].Ptr;
++        Retired[i] = Retired[--RetiredCount];
++        return Ptr;
++      }
++    }
++    return nullptr;
++  }
++
++  bool KeepRetired(void* Ptr, size_t Size) {
++    std::scoped_lock lk {RetiredLock};
++    if (RetiredCount == std::size(Retired)) {
++      return false;
++    }
++    Retired[RetiredCount++] = {Ptr, Size};
++    return true;
++  }
++} // namespace
++#endif
++
+ CodeBuffer::CodeBuffer(size_t Size, bool ShouldBeNamed)
+   : AllocatedSize(Size) {
++#ifdef _WIN32
++  Ptr = static_cast<uint8_t*>(TakeRetired(Size));
++  bool Recycled = Ptr != nullptr;
++  // With no room for a new buffer, wait until another thread retires one. A
++  // failed allocation used to leave an empty buffer that the JIT's allocation
++  // loop cleared and replaced again at once, forever.
++  for (uint64_t Waited = 0; !Ptr; ++Waited) {
++    Ptr = static_cast<uint8_t*>(FEXCore::Allocator::VirtualAlloc(Size, true));
++    if (Ptr) {
++      break;
++    }
++    if (Waited % 6000 == 0) {
++      LogMan::Msg::EFmt("No room for a {} MiB code buffer; waiting for a retired one ({} s so far)", Size >> 20, Waited / 100);
++    }
++    ::Sleep(10);
++    Ptr = static_cast<uint8_t*>(TakeRetired(Size));
++    Recycled = Ptr != nullptr;
++  }
++  if (Recycled) {
++    LookupCache = fextl::make_unique<GuestToHostMap>();
++    CodeBufferEnd = Ptr + UsableSize();
++    CodeBufferOffset = Ptr;
++    return;
++  }
++#else
+   Ptr = static_cast<uint8_t*>(FEXCore::Allocator::VirtualAlloc(Size, true));
+   LOGMAN_THROW_A_FMT(!!Ptr, "Couldn't allocate code buffer");
++#endif
+ 
+   // Protect the tail of the allocated buffer to trigger SIGSEGV on write access
+   uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Ptr) + Size - 1, FEXCore::Utils::FEX_GUARD_SIZE);
+@@ -44,6 +111,11 @@ CodeBuffer::CodeBuffer(size_t Size, bool ShouldBeNamed)
+ }
+ 
+ CodeBuffer::~CodeBuffer() {
++#ifdef _WIN32
++  if (KeepRetired(Ptr, AllocatedSize)) {
++    return;
++  }
++#endif
+   FEXCore::Allocator::VirtualFree(Ptr, AllocatedSize);
+ }
+ 
+@@ -59,6 +131,8 @@ SharedCodeBufferManager::SharedCodeBufferManager() {
+ 
+   FEX_CONFIG_OPT(MaxCodeBufferSize, MAXCODEBUFFERSIZE);
+   MaxCodeSize = std::clamp<size_t>(MaxCodeBufferSize, INITIAL_CODE_SIZE >> 20, MAX_CODE_SIZE >> 20) << 20;
++  FEX_CONFIG_OPT(InitialCodeBufferSize, INITIALCODEBUFFERSIZE);
++  InitialCodeSize = std::clamp<size_t>(size_t(InitialCodeBufferSize) << 20, INITIAL_CODE_SIZE, MaxCodeSize);
+ }
+ 
+ fextl::shared_ptr<CodeBuffer> SharedCodeBufferManager::AllocateNew(size_t Size) {
+@@ -95,7 +169,7 @@ fextl::shared_ptr<CodeBuffer> SharedCodeBufferManager::AllocateNew(size_t Size)
+ 
+ fextl::shared_ptr<CodeBuffer> SharedCodeBufferManager::GetLatest() {
+   if (!Latest) {
+-    AllocateNew(INITIAL_CODE_SIZE);
++    AllocateNew(InitialCodeSize);
+   }
+   return Latest;
+ }

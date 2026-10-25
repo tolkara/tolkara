@@ -138,7 +138,8 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 @property NSInteger level;
 @property(weak) NSWindow *parentWindow;
 @property NSSize contentMinSize, contentMaxSize, contentAspectRatio, contentResizeIncrements;
-@property(strong) id backgroundColor;
+@property(nonatomic, strong) id backgroundColor;
+@property(nonatomic, getter=isOpaque) BOOL opaque;
 @property(readonly, getter=isMiniaturized) BOOL miniaturized;
 - (void)setContentSize:(NSSize)size;
 - (void)invalidateCursorRectsForView:(NSView *)view;
@@ -167,6 +168,7 @@ typedef NS_OPTIONS(NSUInteger, NSEventModifierFlags) {
 + (NSRect)contentRectForFrameRect:(NSRect)rect styleMask:(NSUInteger)style;
 - (void)makeKeyAndOrderFront:(id)sender;
 - (void)orderFront:(id)sender;
+- (void)orderWindow:(NSInteger)mode relativeTo:(NSInteger)number;
 - (void)makeKeyWindow;
 - (void)setIsVisible:(BOOL)visible;
 - (void)orderOut:(id)sender;

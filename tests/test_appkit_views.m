@@ -3,13 +3,24 @@
 // so windows are never put on screen here.
 #import "AppKit.h"
 #import "TouchControls.h"
+#import "Drawing.h"
 #include <assert.h>
+extern void AKGuestProcessDidExit(size_t slot);
+extern void AKSetWindowProcess(NSWindow *window,size_t slot);
+
+// Exercise the ordering model without requiring a UIKit scene.
+@interface NSWindow (OrderingTest)
+- (void)ak_order:(NSInteger)mode relativeTo:(NSInteger)number;
+@end
 
 // Draws by updating its layer, as Wine's Mac driver does.
 @interface LayerView : NSView
 @property int updates;
+@property int notifications;
+- (void)fixtureNotification:(NSNotification *)note;
 @end
 @implementation LayerView
+- (void)fixtureNotification:(NSNotification *)note { (void)note; self.notifications++; }
 - (BOOL)wantsUpdateLayer { return YES; }
 - (void)updateLayer { self.updates++; self.layer.position = CGPointMake(5, 6); }
 // One pixel a point, whatever the screen's scale.
@@ -69,6 +80,23 @@ static NSEvent *next_input(void) {
 }
 
 int main(void) { @autoreleasepool {
+    // A transparent desktop popup must not acquire an opaque black UIKit
+    // backing. Exercise both properties against the actual host surfaces.
+    NSWindow *popup=[[NSWindow alloc] initWithContentRect:CGRectMake(0,0,80,100) styleMask:0 backing:0 defer:NO];
+    UIView *popupHost=[UIView new];
+    UIWindow *popupUI=[UIWindow new];
+    [popup setValue:popupHost forKey:@"host"];
+    [popup setValue:popupUI forKey:@"uiWindow"];
+    popup.backgroundColor=NSColor.clearColor;
+    popup.opaque=NO;
+    assert(!popupHost.opaque && !popupUI.opaque);
+    assert(CGColorGetAlpha(popupHost.backgroundColor.CGColor)==0);
+    assert(CGColorGetAlpha(popupUI.backgroundColor.CGColor)==0);
+    popup.backgroundColor=NSColor.whiteColor;
+    popup.opaque=YES;
+    assert(popupHost.opaque && popupUI.opaque);
+    assert(CGColorGetAlpha(popupHost.backgroundColor.CGColor)==1);
+
     // Marking for display coalesces into one updateLayer on the main queue;
     // a view that does not want updateLayer gets none.
     LayerView *view = [[LayerView alloc] initWithFrame:CGRectMake(0, 0, 100, 50)];
@@ -274,6 +302,65 @@ int main(void) { @autoreleasepool {
     // Windows are numbered once each; with none on screen, none is found.
     assert(window.windowNumber > 0 && other.windowNumber != window.windowNumber && panel.windowNumber != other.windowNumber);
     assert([NSWindow windowNumbersWithOptions:0].count == 0 && [NSWindow windowNumberAtPoint:CGPointMake(1, 1) belowWindowWithWindowNumber:0] == 0);
+    [window ak_order:1 relativeTo:0];
+    [other ak_order:1 relativeTo:window.windowNumber];
+    [panel ak_order:-1 relativeTo:other.windowNumber];
+    assert(([NSApp.windows isEqualToArray:@[window,panel,other]]));
+    [window ak_order:1 relativeTo:other.windowNumber];
+    assert(([NSApp.windows isEqualToArray:@[panel,other,window]]));
+    [window ak_order:-1 relativeTo:0];
+    assert(([NSApp.windows isEqualToArray:@[window,panel,other]]));
+    [window ak_order:1 relativeTo:window.windowNumber];
+    assert(([NSApp.windows isEqualToArray:@[window,panel,other]]));
+    assert(NSApp.keyWindow==nil && NSApp.mainWindow==nil);
+    [window close]; [panel close]; [other close];
+    assert(NSApp.windows.count==0);
+    // Retiring a game removes only its windows, leaving Steam's ordering intact.
+    NSWindow *steam=[[NSWindow alloc] initWithContentRect:CGRectZero styleMask:0 backing:0 defer:NO];
+    NSWindow *game=[[NSWindow alloc] initWithContentRect:CGRectZero styleMask:0 backing:0 defer:NO];
+    AKSetWindowProcess(steam,1); AKSetWindowProcess(game,3);
+    [steam ak_order:1 relativeTo:0]; [game ak_order:1 relativeTo:0];
+    LayerView *retiredView=[[LayerView alloc] initWithFrame:CGRectZero];
+    game.contentView=retiredView;
+    LayerView *retiredChild=[LayerView new], *survivingObserver=[LayerView new];
+    [retiredView addSubview:retiredChild];
+    for (LayerView *view in @[retiredView,retiredChild,survivingObserver])
+        [NSNotificationCenter.defaultCenter addObserver:view selector:@selector(fixtureNotification:) name:@"fixture-screen-change" object:nil];
+    [NSNotificationCenter.defaultCenter postNotificationName:@"fixture-screen-change" object:nil];
+    assert(retiredView.notifications==1 && retiredChild.notifications==1 && survivingObserver.notifications==1);
+    retiredView.needsDisplay=YES; // work queued before retirement
+    FixtureKeyResponder *retiredResponder=[FixtureKeyResponder new];
+    assert([game makeFirstResponder:retiredResponder]);
+    NSEvent *lateKey=[NSEvent new]; lateKey.type=NSEventTypeKeyDown; lateKey.window=game;
+    [app sendEvent:lateKey]; assert(retiredResponder.downs==1);
+    extern bool AKProcessRetirementComplete(size_t);
+    AKConfigureProcessCallbacks(4,NULL);
+    assert(!AKProcessRetirementComplete(3));
+    assert(AKEnterProcessCallback(3));
+    AKGuestProcessDidExit(3);
+    assert(!AKProcessRetirementComplete(3));
+    AKLeaveProcessCallback(3);
+    assert(AKProcessRetirementComplete(3));
+    [NSNotificationCenter.defaultCenter postNotificationName:@"fixture-screen-change" object:nil];
+    assert(retiredView.notifications==1 && retiredChild.notifications==1 && survivingObserver.notifications==2);
+    [NSNotificationCenter.defaultCenter removeObserver:survivingObserver];
+    [app sendEvent:lateKey]; [game sendEvent:lateKey];
+    assert(retiredResponder.downs==1);
+    CGRect retiredFrame=retiredView.frame;
+    [game ak_hostBoundsChanged:CGRectMake(0,0,321,123)];
+    assert(CGRectEqualToRect(retiredView.frame,retiredFrame));
+    [retiredView displayIfNeeded];
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.01,false);
+    assert(retiredView.updates==0);
+    // The surviving process still receives events.
+    assert([steam makeFirstResponder:retiredResponder]); lateKey.window=steam;
+    [app sendEvent:lateKey]; assert(retiredResponder.downs==2);
+    assert(([NSApp.windows isEqualToArray:@[steam]]));
+    [game orderFront:nil];
+    assert(([NSApp.windows isEqualToArray:@[steam]]));
+    AKGuestProcessDidExit(3); // duplicate exit is harmless
+    assert(NSApp.windows.count==1);
+    [steam close];
     // Modifier keys: a key's press and release set and clear it, left and right
     // apart (device bits); the flag stays while either side is held.
     const NSEventModifierFlags LeftOption = 0x20, RightOption = 0x40, LeftCommand = 0x08, LeftShift = 0x02;

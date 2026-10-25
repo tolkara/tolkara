@@ -15,6 +15,8 @@ NGStartupStep ng_startup_step(void);
 // Command-line arguments after the executable path (argv[1..]), for a
 // compatibility runtime started from a profile. Copied; at most 64 of 4096
 // bytes. Call before ng_initialize; default: none.
+// Profile identity for restricted, opt-in runtime experiments.
+void ng_set_profile_identifier(const char *identifier);
 void ng_set_arguments(const char *const *arguments, size_t count);
 // Host-only cleanup before a guest exits; never reads application memory.
 // Install before guest entry. A nonzero exit remains an error exit.
@@ -30,6 +32,12 @@ void ng_set_libraries(const char *root, const char *const *paths, size_t count);
 // ${CodePool} in the environment's values stands for it, as
 // 0x<start>-0x<end>@0x<writable alias>. Call before ng_initialize; default: none.
 void ng_set_code_pool(size_t size);
+// Processes of a compatibility runtime that may run at once in this one
+// (docs/MULTIPROCESS.md), 1 to 8: each beyond the first gets its own placed
+// copy of the runtime's libraries and a share of the code pool, and starts
+// when the runtime spawns its own executable. Call before ng_initialize;
+// default: 1, as before.
+void ng_set_process_slots(size_t count);
 // Developer service: select our integrated helper before the process's one
 // permitted startup. Fails if Local signing was already selected.
 bool ng_use_local_authorization(void);

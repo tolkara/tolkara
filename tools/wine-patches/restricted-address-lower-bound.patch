@@ -1,0 +1,46 @@
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -213,6 +213,7 @@
+  * (WINELARGERESERVE=start-end): with several Windows processes in one host
+  * process the free address space can be too fragmented for one large block. */
+ static char *large_reserve_base, *large_reserve_end;
++static BOOL address_space_limited; /* explicit test window must survive child preload hints */
+ static char *small_range_base, *small_range_end;  /* WINESMALLRANGE, inside the large reserve */
+ 
+ static inline BOOL in_small_range( const char *start, size_t size )
+@@ -2799,13 +2800,16 @@
+ 
+     if (base)
+     {
+-        if (is_beyond_limit( base, size, address_space_limit ))
++        if ((address_space_limited && (char *)base < (char *)address_space_start) ||
++            is_beyond_limit( base, size, address_space_limit ))
+         {
+             size_t pool = size - 0x10000;
+ 
+             /* only a base the host cannot reach at all; never placeholders, write watches,
+              * images or requests with address limits */
+-            if (!relocate_hints || (char *)base < (char *)address_space_limit || limit_low || limit_high ||
++            if (!relocate_hints ||
++                ((char *)base >= (char *)address_space_start && (char *)base < (char *)address_space_limit) ||
++                limit_low || limit_high ||
+                 size < ((size_t)256 << 20) || (vprot & (SEC_IMAGE | VPROT_WRITEWATCH)) ||
+                 (alloc_type & (MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER)))
+                 return STATUS_WORKING_SET_LIMIT_RANGE;
+@@ -4452,6 +4456,7 @@
+         if (end > start && start >= (char *)address_space_start && end <= (char *)host_addr_space_limit)
+         {
+             address_space_start = start;
++            address_space_limited = TRUE;
+             address_space_limit = user_space_limit = working_set_limit = end;
+             /* above the range, so views are searched for inside it rather than left to the host */
+             host_addr_space_limit = end + 0x10000;
+@@ -4509,7 +4514,7 @@
+             preload_reserve_start = ROUND_ADDR( start, host_page_mask );
+             preload_reserve_end = (void *)ROUND_SIZE( 0, end, host_page_mask );
+             /* some apps start inside the DOS area */
+-            if (preload_reserve_start)
++            if (preload_reserve_start && !address_space_limited)
+                 address_space_start = min( address_space_start, preload_reserve_start );
+         }
+     }

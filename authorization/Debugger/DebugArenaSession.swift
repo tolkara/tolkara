@@ -35,7 +35,7 @@ final class DebugArenaSession {
     }
     func begin(now: TimeInterval) throws -> [Event] {
         guard phase == .idle else { throw Reason.protocolFailure }
-        try time(now); totalDeadline = now + 900
+        try time(now); totalDeadline = now + 1800
         return try command("qSupported",phase:.supported,now:now)
     }
     private func command(_ text: String, phase: Phase, now: TimeInterval) throws -> [Event] {

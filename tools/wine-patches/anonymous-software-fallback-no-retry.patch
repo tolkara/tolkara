@@ -1,0 +1,18 @@
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3004,6 +3004,15 @@
+                      strerror(errno), (void *)view_size, unix_prot );
+                 return status;
+             }
++            /* Ordinary anonymous allocations retain the native address limit.
++             * The host may fall back to software backing on native exhaustion;
++             * retrying that same reservation would loop forever. Only the
++             * explicit software-pool path accepts such out-of-range addresses. */
++            if (is_software_range( ptr, view_size ))
++            {
++                munmap( ptr, view_size );
++                return STATUS_NO_MEMORY;
++            }
+             TRACE( "got mem with anon mmap %p-%p\n", ptr, (char *)ptr + size );
+             /* if we got something beyond the user limit, unmap it and retry */
+             if (!is_beyond_limit( ptr, view_size, user_space_limit )) break;

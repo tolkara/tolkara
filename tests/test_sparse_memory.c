@@ -31,6 +31,34 @@ static void write_statistics(void) {
     assert(gm_sparse_stats(&m).write_operations==0);
 }
 
+static void aligned_reservations(void) {
+    GMSparseMemory m = {0};
+    assert(initialize(&m, base, 256 * GIB, 16 * PAGE) == GM_OK);
+    const uint64_t pool = 16 * GIB, guard = 0x10000;
+    uint64_t addresses[4];
+    for (unsigned i = 0; i < 4; ++i) {
+        uint64_t size = pool + (i & 1 ? guard : 0), offset = i & 1 ? pool - guard : 0;
+        assert(gm_sparse_find_aligned(&m, size, pool, offset, &addresses[i]) == GM_OK);
+        assert((addresses[i] & (pool - 1)) == offset);
+        assert(gm_sparse_map(&m, addresses[i], size, 0, 3, false) == GM_OK);
+        uint64_t at = addresses[i] + (i & 1 ? guard : 0), value = i + 23, result = 0;
+        assert(gm_sparse_protect(&m, at, PAGE, 3) == GM_OK);
+        assert(gm_sparse_write(&m, at, &value, sizeof value) == GM_OK);
+        assert(gm_sparse_read(&m, at, &result, sizeof result) == GM_OK && result == value);
+        if (i & 1) assert(gm_sparse_read(&m, addresses[i], &result, sizeof result) == GM_PROTECTION);
+    }
+    uint64_t untouched = 42;
+    assert(gm_sparse_find_aligned(&m, PAGE, 3 * PAGE, 0, &untouched) == GM_INVALID);
+    assert(gm_sparse_find_aligned(&m, PAGE, pool, 1, &untouched) == GM_INVALID);
+    assert(gm_sparse_find_aligned(&m, PAGE, pool, pool, &untouched) == GM_INVALID);
+    assert(gm_sparse_find_aligned(&m, 256 * GIB, pool, 0, &untouched) == GM_NOMEM);
+    assert(untouched == 42);
+    assert(gm_sparse_unmap(&m, addresses[1], pool + guard) == GM_OK);
+    assert(gm_sparse_find_aligned(&m, pool + guard, pool, pool - guard, &untouched) == GM_OK);
+    assert(untouched == addresses[1]);
+    gm_sparse_destroy(&m);
+}
+
 static void large_reservations(void) {
     GMSparseMemory m = {0};
     assert(initialize(&m, base, 256 * GIB, 16 * PAGE) == GM_OK);
@@ -316,7 +344,8 @@ int main(void) {
     for(unsigned layout=0;layout<2;layout++) {
         initialize=layout?gm_sparse_init_blocks:gm_sparse_init;
         write_statistics();
-        large_reservations(); exhaustion_and_recycling(); reference_comparison();
+        aligned_reservations();
+    large_reservations(); exhaustion_and_recycling(); reference_comparison();
         concurrent_pages(); atomic_operations(); exclusive_page_isolation(); concurrent_atomics(); malformed_and_limits();
     }
     puts("PASS: 112 GiB sparse reservations, independent reference comparison, atomic failures, recycling and concurrent pages");

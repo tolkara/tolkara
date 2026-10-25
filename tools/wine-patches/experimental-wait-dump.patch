@@ -1,0 +1,177 @@
+diff --git a/server/main.c b/server/main.c
+index 3187c0d..5387204 100644
+--- a/server/main.c
++++ b/server/main.c
+@@ -248,6 +248,7 @@ int main( int argc, char *argv[] )
+     init_directories( load_intl_file() );
+     init_threading();
+     init_registry();
++    start_wait_dump_watch();
+     main_loop();
+     return 0;
+ }
+diff --git a/server/thread.c b/server/thread.c
+index 3003c4b..722e8a8 100644
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -45,6 +45,9 @@
+ #include <mach/mach_time.h>
+ #include <mach/mach_port.h>
+ #include <mach/thread_act.h>
++#include <mach/task.h>
++#include <mach/vm_map.h>
++#include <mach/mach_vm.h>
+ #endif
+ 
+ #include "ntstatus.h"
+@@ -1065,6 +1068,138 @@ static unsigned int end_wait( struct thread *thread, unsigned int status )
+ }
+ 
+ /* build the thread wait structure */
++/* Tolkara diagnostic: what every thread waits for, on request. With
++ * WINEWAITDUMP=<path>, the server looks for that file every five seconds;
++ * when it appears, the file is removed and each thread's current wait is
++ * logged with the objects it waits on (a mutex names its owner thread by
++ * address, which the thread lines give). Owned bookkeeping only: no guest
++ * memory is read. A thread that is "not waiting in the server" is running
++ * or blocked in host code. */
++static const char *wait_dump_path;
++
++/* the scheduler's view of a thread of this host process: CPU use in tenths of
++ * a percent, run state and CPU time; no thread memory is read */
++static const char *host_thread_state( int port )
++{
++#ifdef __APPLE__
++    static char text[96];
++    thread_basic_info_data_t info;
++    mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
++    static const char *const states[] = { "?", "running", "stopped", "waiting", "uninterruptible", "halted" };
++
++    if (port <= 0 || thread_info( port, THREAD_BASIC_INFO, (thread_info_t)&info, &count )) return "";
++    snprintf( text, sizeof(text), " | cpu %d.%d%% %s, %d.%02d s user %d.%02d s system",
++              info.cpu_usage / 10, info.cpu_usage % 10,
++              info.run_state < 6 ? states[info.run_state] : "?",
++              info.user_time.seconds, info.user_time.microseconds / 10000,
++              info.system_time.seconds, info.system_time.microseconds / 10000 );
++    return text;
++#else
++    return "";
++#endif
++}
++
++static void dump_thread_waits(void)
++{
++    struct thread *thread;
++    int i;
++
++    fprintf( stderr, "wait dump: begin\n" );
++    LIST_FOR_EACH_ENTRY( thread, &thread_list, struct thread, entry )
++    {
++        struct thread_wait *wait = thread->wait;
++        unsigned int description_index, description_count = thread->desc_len / sizeof(WCHAR);
++
++        fprintf( stderr, "wait dump: thread %04x description ", thread->id );
++        for (description_index = 0; description_index < description_count && description_index < 96; description_index++)
++        {
++            WCHAR c = thread->desc[description_index];
++            fputc( c >= 32 && c < 127 ? c : '?', stderr );
++        }
++        fputc( '\n', stderr );
++
++        fprintf( stderr, "wait dump: process %04x thread %04x (%p) unix tid %d state %d suspend %d last request %d%s",
++                 thread->process->id, thread->id, thread, thread->unix_tid, thread->state, thread->suspend,
++                 (int)thread->req.request_header.req, host_thread_state( thread->unix_tid ) );
++        if (!wait)
++        {
++            fprintf( stderr, ": not waiting in the server\n" );
++            continue;
++        }
++        fprintf( stderr, ": waits for %s of %d%s\n", wait->select == SELECT_WAIT_ALL ? "all" : "any",
++                 wait->count, wait->when == TIMEOUT_INFINITE ? "" : " with a timeout" );
++        for (i = 0; i < wait->count; i++)
++        {
++            struct object *obj = wait->queues[i].obj;
++            fprintf( stderr, "wait dump:     %p ", obj );
++            obj->ops->dump( obj, 0 );
++        }
++    }
++#ifdef __APPLE__
++    {
++        /* threads of this host process that are no Windows thread: the main
++         * thread, the server's own, FEX's and the system's */
++        thread_act_array_t threads;
++        mach_msg_type_number_t count, j;
++
++        if (!task_threads( mach_task_self(), &threads, &count ))
++        {
++            for (j = 0; j < count; j++)
++            {
++                struct thread *owner = NULL, *candidate;
++                LIST_FOR_EACH_ENTRY( candidate, &thread_list, struct thread, entry )
++                    if (candidate->unix_tid == (int)threads[j]) { owner = candidate; break; }
++                if (!owner) fprintf( stderr, "wait dump: host thread %u%s\n", threads[j], host_thread_state( threads[j] ) );
++                mach_port_deallocate( mach_task_self(), threads[j] );
++            }
++            vm_deallocate( mach_task_self(), (vm_address_t)threads, count * sizeof(*threads) );
++        }
++    }
++    {
++        /* the host's map of the high 64 GB that Windows processes share, with its gaps */
++        mach_vm_address_t address = 0x7000000000ull, previous_end = 0x7000000000ull;
++        while (address < 0x8000000000ull)
++        {
++            mach_vm_size_t size = 0;
++            vm_region_basic_info_data_64_t info;
++            mach_msg_type_number_t info_count = VM_REGION_BASIC_INFO_COUNT_64;
++            mach_port_t object = MACH_PORT_NULL;
++
++            if (mach_vm_region( mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64,
++                                (vm_region_info_t)&info, &info_count, &object ) || address >= 0x8000000000ull) break;
++            if (address > previous_end)
++                fprintf( stderr, "wait dump: host map %llx-%llx free (%llu MiB)\n", (unsigned long long)previous_end,
++                         (unsigned long long)address, (unsigned long long)((address - previous_end) >> 20) );
++            fprintf( stderr, "wait dump: host map %llx-%llx prot %d/%d (%llu MiB)\n", (unsigned long long)address,
++                     (unsigned long long)(address + size), info.protection, info.max_protection,
++                     (unsigned long long)(size >> 20) );
++            previous_end = address + size;
++            address += size;
++        }
++        if (previous_end < 0x8000000000ull)
++            fprintf( stderr, "wait dump: host map %llx-8000000000 free\n", (unsigned long long)previous_end );
++    }
++#endif
++    fprintf( stderr, "wait dump: end\n" );
++}
++
++static void check_wait_dump( void *private )
++{
++    if (!access( wait_dump_path, F_OK ))
++    {
++        unlink( wait_dump_path );
++        dump_thread_waits();
++    }
++    add_timeout_user( -5 * (timeout_t)TICKS_PER_SEC, check_wait_dump, NULL );
++}
++
++void start_wait_dump_watch(void)
++{
++    if (!(wait_dump_path = getenv( "WINEWAITDUMP" ))) return;
++    fprintf( stderr, "wait dump: watching %s\n", wait_dump_path );
++    add_timeout_user( -5 * (timeout_t)TICKS_PER_SEC, check_wait_dump, NULL );
++}
++
+ static int wait_on( const union select_op *select_op, unsigned int count, struct object *objects[],
+                     int flags, abstime_t when )
+ {
+diff --git a/server/thread.h b/server/thread.h
+index b33a00d..5ecdbab 100644
+--- a/server/thread.h
++++ b/server/thread.h
+@@ -119,6 +119,7 @@ extern int wake_thread( struct thread *thread );
+ extern int wake_thread_queue_entry( struct wait_queue_entry *entry );
+ extern int add_queue( struct object *obj, struct wait_queue_entry *entry );
+ extern void remove_queue( struct object *obj, struct wait_queue_entry *entry );
++extern void start_wait_dump_watch(void);
+ extern void kill_thread( struct thread *thread, int violent_death );
+ extern void wake_up( struct object *obj, int max );
+ extern int thread_queue_apc( struct process *process, struct thread *thread, struct object *owner, const union apc_call *call_data );

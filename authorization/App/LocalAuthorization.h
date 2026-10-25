@@ -26,3 +26,5 @@ FOUNDATION_EXPORT NSNotificationName const TKLocalArenaDidPrepare;
 // Opt-in development loader only. No route is started or consent requested here.
 // An unavailable/unconfigured helper rejects before any debugger attachment.
 NCPreparation TKPrepareLocalArena(void *address,size_t size,void *context);
+
+NCPreparation TKPrepareLocalArenaPair(void *address,size_t size,void *second,size_t secondSize,void *context);

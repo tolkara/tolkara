@@ -150,10 +150,25 @@ int main(int argc, char **argv) {
     assert(gsv_fetch_instruction(synthetic_pc+4,&fetched) && fetched==code_words[1]);
     assert(!gsv_fetch_instruction(synthetic_pc+1,&fetched));
     assert(!gsv_fetch_instruction(synthetic_pc+8,&fetched));
+    uint32_t second_words[2]={0xd503201f,0x91000800};
+    const uintptr_t second_pc=0x2000;
+    assert(gsv_code_alias((void *)second_pc,second_words,sizeof second_words));
+    assert(!gsv_code_alias((void *)(synthetic_pc+4),second_words,sizeof second_words));
+    assert(!gsv_code_alias((void *)(UINTPTR_MAX-3),second_words,sizeof second_words));
+    assert(gsv_fetch_instruction(second_pc+4,&fetched) && fetched==second_words[1]);
+    assert(!gsv_fetch_instruction(second_pc+8,&fetched));
     gsv_forget_code_alias((void *)(synthetic_pc+8),4);
     assert(gsv_fetch_instruction(synthetic_pc,&fetched));
     gsv_forget_code_alias((void *)(synthetic_pc-4),8);
     assert(!gsv_fetch_instruction(synthetic_pc,&fetched));
+    assert(gsv_fetch_instruction(second_pc,&fetched) && fetched==second_words[0]);
+    assert(!gsv_code_alias((void *)synthetic_pc,code_words,sizeof code_words));
+    gsv_forget_code_alias((void *)(second_pc+4),4);
+    assert(!gsv_fetch_instruction(second_pc,&fetched));
+    // Retired entries count toward the bound and cannot be recycled unsafely.
+    for(uintptr_t i=2;i<16;i++)
+        assert(gsv_code_alias((void *)(0x3000+i*16),code_words,sizeof code_words));
+    assert(!gsv_code_alias((void *)0x5000,code_words,sizeof code_words));
     gsv_stop();
     assert(start(32*GM_PAGE_SIZE,0,-1));
     gsv_prefer_native_pool(64u<<20);
@@ -190,6 +205,28 @@ int main(int argc, char **argv) {
     assert(!sigaction(SIGSEGV, &action, &prior));
     assert(start(32 * GM_PAGE_SIZE, 1, STDERR_FILENO));
     assert(gsv_enabled());
+    const size_t alignment = (size_t)16 << 30, guard_size = 0x10000;
+    void *guarded = gsv_reserve_aligned(alignment + guard_size, alignment,
+                                      alignment - guard_size, PROT_NONE);
+    assert(guarded != MAP_FAILED && gsv_address(guarded));
+    assert(((uintptr_t)guarded & (alignment - 1)) == alignment - guard_size);
+    void *committed = (char *)guarded + guard_size;
+    assert(!gsv_protect(committed, GM_PAGE_SIZE, PROT_READ | PROT_WRITE));
+    uint64_t aligned_output[4];
+    assert(gm_sparse_probe_program(committed, 7, aligned_output) == 49);
+    gsv_x86_ordered(true);
+    unsigned expected_ordered = 0x12345678, actual_ordered;
+    void *unaligned = (char *)committed + 33;
+    uint64_t before_ordered = gsv_fault_count();
+    __asm__ volatile("stlr %w0, [%1]" :: "r"(expected_ordered), "r"(unaligned) : "memory");
+    __asm__ volatile("ldar %w0, [%1]" : "=r"(actual_ordered) : "r"(unaligned) : "memory");
+    assert(actual_ordered == expected_ordered && gsv_fault_count() == before_ordered + 2);
+    gsv_x86_ordered(false);
+    assert(gsv_protect(committed, GM_PAGE_SIZE, PROT_EXEC) == -1 && errno == EINVAL);
+    assert(!gsv_unmap(guarded, alignment + guard_size));
+    // Subsequent legacy counters start from a clean runtime instance.
+    gsv_stop();
+    assert(start(32 * GM_PAGE_SIZE, 1, STDERR_FILENO));
     const size_t gib = (size_t)1 << 30;
     void *ranges[3]; size_t lengths[] = {16 * gib, 64 * gib, 32 * gib};
     for (unsigned i = 0; i < 3; ++i) {

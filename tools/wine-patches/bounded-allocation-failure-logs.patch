@@ -1,0 +1,45 @@
+--- a/dlls/ntdll/unix/virtual.c	2026-10-14 18:25:13
++++ b/dlls/ntdll/unix/virtual.c	2026-10-14 18:25:13
+@@ -1946,7 +1946,16 @@
+ 
+     return start;
+ }
++
+ 
++/* A failing allocation is often retried in a loop: log the first few failures
++ * of a kind and then one in 4096, so a retry loop cannot fill the device's
++ * storage with the same report (a Steam run once wrote 20 GB). */
++static BOOL failure_worth_logging( LONG *failures )
++{
++    LONG count = InterlockedIncrement( failures );
++    return count <= 16 || !(count % 4096);
++}
+ 
+ #ifdef HAVE_JIT_POOL
+ /***********************************************************************
+@@ -2935,8 +2944,11 @@
+             }
+             if (jit_pool_write_offset)
+             {
++                static LONG failures;
+                 /* nothing else can execute on such a host */
+-                ERR( "JIT pool %p-%p has no room for %p bytes\n", jit_pool_base, jit_pool_end, (void *)size );
++                if (failure_worth_logging( &failures ))
++                    ERR( "JIT pool %p-%p has no room for %p bytes (failure %d)\n", jit_pool_base, jit_pool_end,
++                         (void *)size, (int)failures );
+                 return STATUS_NO_MEMORY;
+             }
+             WARN( "JIT pool %p-%p has no room for %p bytes; the memory will not execute\n",
+@@ -6211,8 +6223,10 @@
+         ERR( "reservation refused %#x, base %p size %08lx type %#x protect %#x\n", status, base, size, type, protect );
+     else if (status == STATUS_NO_MEMORY)
+     {
+-        ERR( "out of memory for allocation, base %p size %08lx type %#x protect %#x low %#lx high %#lx align %#lx attributes %#x\n",
+-             base, size, type, protect, limit_low, limit_high, align, attributes );
++        static LONG failures;
++        if (!failure_worth_logging( &failures )) return status;
++        ERR( "out of memory for allocation %d, base %p size %08lx type %#x protect %#x low %#lx high %#lx align %#lx attributes %#x\n",
++             (int)failures, base, size, type, protect, limit_low, limit_high, align, attributes );
+         report_wow64_window_use();
+ #ifdef __APPLE__
+         if (size >= ((SIZE_T)16 << 20)) report_host_layout();

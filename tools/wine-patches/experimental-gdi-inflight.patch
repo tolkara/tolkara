@@ -1,0 +1,56 @@
+--- a/dlls/win32u/dc.c
++++ b/dlls/win32u/dc.c
+@@ -701,7 +701,7 @@
+ /***********************************************************************
+  *           NtGdiOpenDCW    (win32u.@)
+  */
+-HDC WINAPI NtGdiOpenDCW( UNICODE_STRING *device, const DEVMODEW *devmode, UNICODE_STRING *output,
++static HDC NtGdiOpenDCW_impl( UNICODE_STRING *device, const DEVMODEW *devmode, UNICODE_STRING *output,
+                          ULONG type, BOOL is_display, HANDLE hspool, DRIVER_INFO_2W *driver_info,
+                          void *pdev )
+ {
+@@ -1516,3 +1516,16 @@
+     release_dc_ptr(dc);
+     return ret;
+ }
++
++/* Bounded runtime entry/exit counts; no caller or application memory inspection. */
++HDC WINAPI NtGdiOpenDCW( UNICODE_STRING *device, const DEVMODEW *devmode, UNICODE_STRING *output, ULONG type, BOOL is_display, HANDLE hspool, DRIVER_INFO_2W *driver_info, void *pdev )
++{
++    static LONG inflight, reported;
++    LONG count = InterlockedIncrement( &inflight );
++    HDC result;
++    if (count >= 16 && !(count & (count - 1)) && InterlockedIncrement( &reported ) <= 16)
++        ERR( "GDI inflight NtGdiOpenDCW %d\n", count );
++    result = NtGdiOpenDCW_impl( device, devmode, output, type, is_display, hspool, driver_info, pdev );
++    InterlockedDecrement( &inflight );
++    return result;
++}
+--- a/dlls/win32u/font.c
++++ b/dlls/win32u/font.c
+@@ -5053,7 +5053,7 @@
+ /***********************************************************************
+  *           NtGdiSelectFont (win32u.@)
+  */
+-HGDIOBJ WINAPI NtGdiSelectFont( HDC hdc, HGDIOBJ handle )
++static HGDIOBJ NtGdiSelectFont_impl( HDC hdc, HGDIOBJ handle )
+ {
+     HGDIOBJ ret = 0;
+     DC *dc = get_dc_ptr( hdc );
+@@ -7045,3 +7045,16 @@
+     free( params );
+     return ret;
+ }
++
++/* Bounded runtime entry/exit counts; no caller or application memory inspection. */
++HGDIOBJ WINAPI NtGdiSelectFont( HDC hdc, HGDIOBJ handle )
++{
++    static LONG inflight, reported;
++    LONG count = InterlockedIncrement( &inflight );
++    HGDIOBJ result;
++    if (count >= 16 && !(count & (count - 1)) && InterlockedIncrement( &reported ) <= 16)
++        ERR( "GDI inflight NtGdiSelectFont %d\n", count );
++    result = NtGdiSelectFont_impl( hdc, handle );
++    InterlockedDecrement( &inflight );
++    return result;
++}

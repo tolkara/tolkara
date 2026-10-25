@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 REQUIRED = ('id', 'name', 'workingDirectory', 'executable')
-OPTIONAL = ('notes', 'tested', 'caseAliases', 'runtime', 'arguments', 'environment', 'libraries', 'codePool', 'setup')
+OPTIONAL = ('notes', 'tested', 'caseAliases', 'runtime', 'arguments', 'environment', 'libraries', 'codePool', 'processes', 'setup')
 ENVIRONMENT_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 INSTALLER = re.compile(r'[A-Za-z0-9_-]+\.py')
 # setup is read by the Tolkara Management app on the Mac (management/), never by
@@ -138,8 +138,14 @@ def check(path):
         # Prepared executable memory the runtime writes its own code into, in megabytes.
         size = profile['codePool']
         if 'runtime' not in profile: raise ValueError('codePool needs a runtime')
-        if not isinstance(size, int) or isinstance(size, bool) or not 1 <= size <= 1024:
-            raise ValueError('codePool must be a number of megabytes from 1 to 1024')
+        if not isinstance(size, int) or isinstance(size, bool) or not 1 <= size <= 2048:
+            raise ValueError('codePool must be a number of megabytes from 1 to 2048')
+    if 'processes' in profile:
+        # How many of the runtime's processes may run at once (docs/MULTIPROCESS.md).
+        count = profile['processes']
+        if 'runtime' not in profile: raise ValueError('processes needs a runtime')
+        if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 8:
+            raise ValueError('processes must be a whole number from 1 to 8')
     check_command_line(profile)
     if 'setup' in profile: check_setup(profile)
     if 'installer' in profile.get('setup', {}) and not (Path(path).parent / profile['setup']['installer']).is_file():

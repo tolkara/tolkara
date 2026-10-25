@@ -18,6 +18,8 @@ typedef struct {
     bool alias_execute, alias_rewrite;       // written through the RW alias, run from the RX view
     bool direct_rewrite;                     // the RX view made RW, written, made RX again, run
     bool alias_after_direct;                 // then the alias again
+    bool remap_execute;                      // the same pages mapped a second time elsewhere, run there
+    int remap_errno;                         // vm_remap or mprotect error of that stage (0 if it ran)
     int direct_errno, rwx_errno;             // mprotect errors of the direct stage and of RWX (0 if allowed)
 } HPArenaResult;
 // Opt-in diagnostic on one spare page of a prepared arena (offset, page

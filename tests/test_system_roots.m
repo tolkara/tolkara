@@ -14,6 +14,26 @@ int main(int argc,const char **argv){@autoreleasepool{
     assert(CFGetTypeID(result)==CFArrayGetTypeID() && CFArrayGetCount(result)>20);
     SecPolicyRef rootPolicy=SecPolicyCreateBasicX509();
     for(id certificate in (__bridge NSArray *)result){SecTrustRef trust=NULL;assert(SecTrustCreateWithCertificates((__bridge CFTypeRef)certificate,rootPolicy,&trust)==0);SecTrustSetNetworkFetchAllowed(trust,false);assert(SecTrustEvaluateWithError(trust,NULL));CFRelease(trust);}
+    assert(kSecTrustSettingsDomainSystem==2 && kSecFormatX509Cert==9);
+    CFArrayRef roots=(void *)1;
+    assert(AKCopyTrustSettingsCertificates(0,&roots)==errSecItemNotFound && !roots);
+    assert(AKCopyTrustSettingsCertificates(1,&roots)==errSecItemNotFound && !roots);
+    assert(AKCopyTrustSettingsCertificates(3,&roots)==errSecParam && !roots);
+    assert(AKCopyTrustSettingsCertificates(2,NULL)==errSecParam);
+    assert(AKCopyTrustSettingsCertificates(2,&roots)==0 && roots);
+    assert(CFEqual(roots,result));
+    CFTypeRef certificate=CFArrayGetValueAtIndex(roots,0);
+    CFDataRef der=NULL,nativeDER=NULL;
+    assert(AKExportPublicCertificate(certificate,9,0,NULL,&der)==0 && der);
+    assert(SecItemExport(certificate,kSecFormatX509Cert,0,NULL,&nativeDER)==0 && CFEqual(der,nativeDER));
+    SecCertificateRef roundtrip=SecCertificateCreateWithData(NULL,der);
+    assert(roundtrip && CFEqual(roundtrip,certificate));
+    CFRelease(roundtrip);CFRelease(nativeDER);CFRelease(der);der=(void *)1;
+    assert(AKExportPublicCertificate(CFSTR("not a certificate"),9,0,NULL,&der)==errSecParam && !der);
+    assert(AKExportPublicCertificate(certificate,0,0,NULL,&der)==errSecUnimplemented && !der);
+    assert(AKExportPublicCertificate(certificate,9,1,NULL,&der)==errSecUnimplemented && !der);
+    assert(AKExportPublicCertificate(certificate,9,0,&roots,&der)==errSecUnimplemented && !der);
+    CFRelease(roots);
     CFRelease(rootPolicy);CFRelease(result);result=NULL;
     NSMutableDictionary *bad=[query mutableCopy];bad[(__bridge id)kSecReturnData]=@YES;
     assert(AKCopySystemCertificates((__bridge CFDictionaryRef)bad,&result,&handled)!=0 && handled && !result);

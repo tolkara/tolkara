@@ -44,13 +44,15 @@ class ProfileTests(unittest.TestCase):
                 'arguments': ['game.exe', '--windowed'], 'environment': {'PREFIX': '${Documents}/W/prefix', '_X1': ''},
                 'libraries': ['lib/core.so'], 'codePool': 64}
         check(self.write(good))
+        check(self.write({**good, 'codePool': 1550}))
+        check(self.write({**good, 'codePool': 2048}))
         for change in ({'runtime': '../R'}, {'runtime': '/R'}, {'runtime': 'R/'}, {'runtime': ''}, {'runtime': 'R/./bin'},
                        {'arguments': 'game.exe'}, {'arguments': [1]}, {'arguments': ['x'] * 65}, {'arguments': ['y' * 4097]},
                        {'environment': ['A=1']}, {'environment': {'1X': 'a'}}, {'environment': {'A B': 'a'}},
                        {'environment': {'A': 1}}, {'environment': {'A': 'y' * 4097}}, {'environment': {f'V{i}': '' for i in range(65)}},
                        {'libraries': 'lib/core.so'}, {'libraries': ['../core.so']}, {'libraries': ['/lib/core.so']},
                        {'libraries': ['lib/./core.so']}, {'libraries': [1]}, {'libraries': [f'l{i}.so' for i in range(65)]},
-                       {'codePool': 0}, {'codePool': 1025}, {'codePool': '64'}, {'codePool': 1.5}, {'codePool': True}):
+                       {'codePool': 0}, {'codePool': 2049}, {'codePool': '64'}, {'codePool': 1.5}, {'codePool': True}):
             with self.assertRaises(ValueError): check(self.write({**good, **change}))
         # A runtime's libraries only come with a runtime.
         without = {k: v for k, v in good.items() if k != 'runtime'}

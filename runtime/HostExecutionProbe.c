@@ -89,6 +89,26 @@ HPArenaResult arena_execution_probe(void *executable, void *writable, size_t siz
     sys_dcache_flush(writable, sizeof sample);
     result.alias_rewrite = call_sample(executable, sizeof sample, log, "alias rewrite", 1337) == 1337;
     if (!result.alias_rewrite) goto done;
+    {
+        // Several processes in one (docs/MULTIPROCESS.md) could share code pages if
+        // prepared pages also run where they are mapped a second time.
+        vm_address_t second = 0;
+        vm_prot_t current = 0, maximum = 0;
+        fprintf(log, "[arena-probe] remap: the RX view's page mapped again elsewhere\n"); fflush(log);
+        kern_return_t kr = vm_remap(mach_task_self(), &second, size, 0, VM_FLAGS_ANYWHERE, mach_task_self(),
+                                    (vm_address_t)executable, FALSE, &current, &maximum, VM_INHERIT_NONE);
+        if (kr != KERN_SUCCESS) result.remap_errno = kr;
+        else if (mprotect((void *)second, size, PROT_READ | PROT_EXEC)) result.remap_errno = errno;
+        else {
+            fprintf(log, "[arena-probe] remap: second mapping %p protection %#x/%#x\n", (void *)second, current, maximum); fflush(log);
+            sample[0] = 0x528006e0; // mov w0, #55
+            memcpy(writable, sample, sizeof sample);
+            sys_dcache_flush(writable, sizeof sample);
+            result.remap_execute = call_sample((void *)second, sizeof sample, log, "remapped", 55) == 55;
+        }
+        if (kr == KERN_SUCCESS) vm_deallocate(mach_task_self(), second, size);
+        fprintf(log, "[arena-probe] remap: %s error=%d\n", result.remap_execute ? "PASS" : "FAIL", result.remap_errno); fflush(log);
+    }
     fprintf(log, "[arena-probe] direct: RX view to RW\n"); fflush(log);
     if (mprotect(executable, size, PROT_READ | PROT_WRITE)) { result.direct_errno = errno; goto rwx; }
     sample[0] = 0x528000e0; // mov w0, #7

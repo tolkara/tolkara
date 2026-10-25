@@ -1,0 +1,21 @@
+--- a/dlls/win32u/font.c
++++ b/dlls/win32u/font.c
+@@ -7073,6 +7073,18 @@
+     if (count >= 16 && !(count & (count - 1)) && InterlockedIncrement( &reported ) <= 16)
+         ERR( "GDI inflight NtGdiSelectFont %d\n", count );
+     result = NtGdiSelectFont_impl( hdc, handle );
++    {
++        static LONG selections;
++        LONG sample = InterlockedIncrement( &selections );
++        if (sample <= 8 || (sample <= 65536 && !(sample & (sample - 1))))
++        {
++            FONTOBJ *font = GDI_GetObjPtr( handle, NTGDI_OBJ_FONT );
++            ERR( "GDI select result %d ok %u requested height %d face %s\n",
++                 sample, !!result, font ? font->logfont.lfHeight : 0,
++                 font ? debugstr_w(font->logfont.lfFaceName) : "invalid" );
++            if (font) GDI_ReleaseObj( handle );
++        }
++    }
+     InterlockedDecrement( &inflight );
+     return result;
+ }

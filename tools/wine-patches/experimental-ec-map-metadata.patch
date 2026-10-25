@@ -1,0 +1,10 @@
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -3563,2 +3563,6 @@
+     peb->EcCodeBitMap = arm64ec_view->base;
++    if (getenv( "WINEEXCEPTIONMETADATA" ) && !strcmp( getenv( "WINEEXCEPTIONMETADATA" ), "1" ))
++        ERR( "ARM64EC lookup map %p size %lx address limit %p software end %lx\n",
++             arm64ec_view->base, (unsigned long)size, address_space_limit,
++             (unsigned long)software_address_end );
+ }

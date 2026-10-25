@@ -58,9 +58,10 @@ static NSMutableDictionary<NSString *,id> *observers;
 static NSString *callbackKey(DisplayCallback callback,void *context) { return [NSString stringWithFormat:@"%p:%p",callback,context]; }
 CGError CGDisplayRegisterReconfigurationCallback(DisplayCallback callback,void *context) {
     if(!callback) return kCGErrorIllegalArgument;
+    size_t processSlot=AKCallbackProcess((uintptr_t)callback);
     @synchronized(UIScreen.class) {
         if(!observers) observers=[NSMutableDictionary new]; NSString *key=callbackKey(callback,context);
-        if(!observers[key]) observers[key]=[NSNotificationCenter.defaultCenter addObserverForName:UIScreenModeDidChangeNotification object:UIScreen.mainScreen queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; callback(1,1<<4,context); }];
+        if(!observers[key]) observers[key]=[NSNotificationCenter.defaultCenter addObserverForName:UIScreenModeDidChangeNotification object:UIScreen.mainScreen queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; if (AKEnterProcessCallback(processSlot)) { callback(1,1<<4,context); AKLeaveProcessCallback(processSlot); } }];
     }
     return kCGErrorSuccess;
 }

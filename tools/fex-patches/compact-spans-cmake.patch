@@ -1,0 +1,11 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -359,7 +359,7 @@
+     target_compile_options(rpmalloc PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/Source/Windows/include/TEBFromTSD.h)
+     # Every thread's heap reserves address space a span at a time; a WoW64 process's
+     # threads would otherwise reserve 256 MiB each, more than a bounded host can give.
+-    target_compile_definitions(rpmalloc PRIVATE "SPAN_SIZE=(16 * 1024 * 1024)" "LARGE_PAGE_SIZE_SHIFT=24")
++    target_compile_definitions(rpmalloc PRIVATE "SPAN_SIZE=(1 * 1024 * 1024)" "LARGE_PAGE_SIZE_SHIFT=20" "RPMALLOC_COMPACT_SPANS=1")
+   endif()
+ elseif (NOT MINGW)
+   message (STATUS

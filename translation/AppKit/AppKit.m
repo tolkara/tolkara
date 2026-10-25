@@ -6,8 +6,17 @@
 #import <GameController/GameController.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#include <stdatomic.h>
 
 NSApplication *NSApp;
+
+@interface NSWindow (ProcessLifetime)
++ (BOOL)ak_hasExited:(NSWindow *)window;
+@end
+
+@interface NSView (ProcessLifetime)
++ (void)ak_retireObservers:(NSView *)view;
+@end
 
 #pragma mark - NSResponder
 
@@ -92,6 +101,11 @@ static NSPoint mouseScreenLocation;
 @end
 
 @implementation NSView { NSMutableArray<NSView *> *_subviews; NSMutableArray<NSDictionary *> *_cursorRects; NSMutableArray<NSTrackingArea *> *_trackingAreas; __weak NSView *_superview; }
++ (void)ak_retireObservers:(NSView *)view {
+    if (!view) return;
+    [NSNotificationCenter.defaultCenter removeObserver:view];
+    for (NSView *child in view->_subviews) [NSView ak_retireObservers:child];
+}
 - (instancetype)init { return [self initWithFrame:CGRectZero]; }
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super init])) { _frame = frame; _bounds = (CGRect){CGPointZero, frame.size}; _subviews = [NSMutableArray new]; _cursorRects=[NSMutableArray new]; _trackingAreas=[NSMutableArray new]; _autoresizesSubviews=YES; }
@@ -179,12 +193,15 @@ static NSPoint mouseScreenLocation;
     if (_needsDisplay) return;
     _needsDisplay = YES;
     // One pass per turn of the main run loop, however often it is asked for.
-    dispatch_async(dispatch_get_main_queue(), ^{ [self displayIfNeeded]; });
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (![NSWindow ak_hasExited:self->_window]) [self displayIfNeeded];
+    });
 }
 - (void)setNeedsDisplayInRect:(NSRect)rect { (void)rect; self.needsDisplay = YES; }
 - (void)displayIfNeeded { if (_needsDisplay) [self display]; }
 - (void)display {
     _needsDisplay = NO;
+    if ([NSWindow ak_hasExited:_window]) return;
     if (!self.wantsUpdateLayer) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     [self updateLayer];
@@ -275,6 +292,22 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
     return AKHeldFlags(held);
 }
 
+static BOOL AKWindowInputDiagnostics(void) {
+    static BOOL enabled; static dispatch_once_t once;
+    dispatch_once(&once, ^{ enabled=[NSProcessInfo.processInfo.arguments containsObject:@"--window-input-diagnostics"]; });
+    return enabled;
+}
+@interface AKGuestUIWindow : UIWindow
+@end
+@implementation AKGuestUIWindow
+- (void)sendEvent:(UIEvent *)event {
+    static unsigned reports;
+    if(AKWindowInputDiagnostics() && reports++<24)
+        AKLog(@"UIKit event type=%ld touches=%lu key=%d hidden=%d level=%g",(long)event.type,(unsigned long)event.allTouches.count,self.keyWindow,self.hidden,self.windowLevel);
+    [super sendEvent:event];
+}
+@end
+
 @interface AKHostView : UIView <UIPointerInteractionDelegate, AKTouchControlsDelegate>
 @property (nonatomic, weak) NSWindow *nsWindow;
 @end
@@ -326,6 +359,13 @@ NSEventModifierFlags AKModifiersReconciled(NSEventModifierFlags held, NSEventMod
         [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
     ]];
     [self touchTrackpadChanged:_touchControls.trackpadEnabled];
+}
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *target=[super hitTest:point withEvent:event];
+    static unsigned reports;
+    if(AKWindowInputDiagnostics() && reports++<24)
+        AKLog(@"host hit-test target=%@ enabled=%d hidden=%d bounds=%@",NSStringFromClass(target.class),self.userInteractionEnabled,self.hidden,NSStringFromCGRect(self.bounds));
+    return target;
 }
 - (BOOL)canBecomeFirstResponder { return YES; }
 - (void)setNsWindow:(NSWindow *)window {
@@ -665,10 +705,14 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
 // hidden here are shown again, once no guest window is visible. Not yet
 // validated on a device.
 static NSHashTable<UIWindow *> *guestUIWindows, *coveredWindows;
+static BOOL guestWindowOption(NSString *argument, const char *name) {
+    const char *value=getenv(name);
+    return [NSProcessInfo.processInfo.arguments containsObject:argument] || (value && !strcmp(value,"1"));
+}
 static BOOL coversLauncher(void) {
     static BOOL enabled; static dispatch_once_t once;
     dispatch_once(&once, ^{
-        enabled=[NSProcessInfo.processInfo.arguments containsObject:@"--guest-window-covers-launcher"];
+        enabled=guestWindowOption(@"--guest-window-covers-launcher","TOLKARA_GUEST_WINDOW_COVERS_LAUNCHER");
         guestUIWindows=[NSHashTable weakObjectsHashTable]; coveredWindows=[NSHashTable weakObjectsHashTable];
     });
     return enabled;
@@ -692,11 +736,45 @@ static void logLayer(CALayer *layer,unsigned depth) {
     AKLog(@"layer depth=%u ptr=%p class=%@ frame=%@ bounds=%@ hidden=%d opacity=%g super=%p",depth,layer,NSStringFromClass(layer.class),NSStringFromCGRect(layer.frame),NSStringFromCGRect(layer.bounds),layer.hidden,layer.opacity,layer.superlayer);
     for(CALayer *child in layer.sublayers) logLayer(child,depth+1);
 }
-@implementation NSWindow { UIWindow *_uiWindow; AKHostView *_host; NSRect _contentRect; NSResponder *_firstResponder; NSUInteger _collectionBehavior; }
+@implementation NSWindow { UIWindow *_uiWindow; AKHostView *_host; NSRect _contentRect; NSResponder *_firstResponder; NSUInteger _collectionBehavior; id _backgroundColor; BOOL _opaque; size_t _processSlot; BOOL _processExited; }
 - (instancetype)initWithContentRect:(NSRect)r styleMask:(NSUInteger)m backing:(NSUInteger)b defer:(BOOL)d {
     static _Atomic NSInteger numbers;
-    if ((self = [super init])) { _contentRect = r; _styleMask=m; self.nextResponder = NSApp; _windowNumber = ++numbers; }
+    if ((self = [super init])) { _contentRect = r; _styleMask=m; _opaque=YES; self.nextResponder = NSApp; _windowNumber = ++numbers;
+        _processSlot=SIZE_MAX;
+    }
     return self;
+}
++ (BOOL)ak_hasExited:(NSWindow *)window { return window && window->_processExited; }
++ (void)ak_setProcess:(size_t)slot forWindow:(NSWindow *)window {
+    window->_processSlot=slot;
+    AKLog(@"window owner number=%ld process=%zu",(long)window->_windowNumber,slot);
+}
+// Do not call guest overrides, delegates, or destructors after process exit.
+// Retain retired objects until host exit; their guest code/data is retired too.
++ (void)ak_retireProcess:(size_t)slot {
+    static NSMutableArray<NSWindow *> *retired;
+    if (!retired) retired=[NSMutableArray new];
+    NSMutableArray *windows=(NSMutableArray *)NSApp.windows;
+    for (NSWindow *window in windows.copy) {
+        if (window->_processSlot!=slot) continue;
+        window->_processExited=YES;
+        window->_uiWindow.hidden=YES;
+        if (!CGRectIsEmpty(window->_mouseConfinementRect)) {
+            window->_mouseConfinementRect=CGRectZero;
+            AKMouseSetConfined(NO);
+        }
+        [retired addObject:window];
+        [NSNotificationCenter.defaultCenter removeObserver:window];
+        [NSView ak_retireObservers:window->_contentView];
+        [windows removeObjectIdenticalTo:window];
+        AKLog(@"window retired number=%ld process=%zu",(long)window->_windowNumber,slot);
+    }
+    for (NSWindow *window in windows.reverseObjectEnumerator)
+        if (window->_uiWindow && !window->_uiWindow.hidden) {
+            [window->_uiWindow makeKeyWindow];
+            break;
+        }
+    uncoverLauncher();
 }
 // Visible windows, frontmost first: the window shown last is in front.
 + (NSArray<NSNumber *> *)windowNumbersWithOptions:(NSUInteger)options {
@@ -716,6 +794,21 @@ static void logLayer(CALayer *layer,unsigned depth) {
 - (instancetype)initWithContentRect:(NSRect)r styleMask:(NSUInteger)m backing:(NSUInteger)b defer:(BOOL)d screen:(id)s {
     return [self initWithContentRect:r styleMask:m backing:b defer:d];
 }
+- (void)ak_applyWindowAppearance {
+    UIColor *color=UIColor.blackColor;
+    if ([_backgroundColor respondsToSelector:@selector(CGColor)]) {
+        CGColorRef cgColor=((CGColorRef (*)(id, SEL))objc_msgSend)(_backgroundColor,@selector(CGColor));
+        if (cgColor) color=[UIColor colorWithCGColor:cgColor];
+    }
+    _host.backgroundColor=color;
+    _host.opaque=_opaque;
+    _uiWindow.backgroundColor=color;
+    _uiWindow.opaque=_opaque;
+}
+- (id)backgroundColor { return _backgroundColor; }
+- (void)setBackgroundColor:(id)color { _backgroundColor=color; [self ak_applyWindowAppearance]; }
+- (BOOL)isOpaque { return _opaque; }
+- (void)setOpaque:(BOOL)opaque { _opaque=opaque; [self ak_applyWindowAppearance]; }
 - (id)screen { return NSScreen.mainScreen; }
 - (BOOL)isMiniaturized { return NO; }
 - (void)invalidateCursorRectsForView:(NSView *)view { [view discardCursorRects]; [view resetCursorRects]; }
@@ -775,7 +868,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
     [self ak_hostBoundsChanged:_host.bounds];
 }
 - (void)ak_hostBoundsChanged:(CGRect)b {
-    if (CGSizeEqualToSize(b.size, CGSizeZero)) return;
+    if (_processExited || CGSizeEqualToSize(b.size, CGSizeZero)) return;
     // As AppKit: the view may keep its own scale, as Wine's does when it draws
     // one pixel a point.
     CALayer *layer = _contentView.layer; CGFloat scale = self.backingScaleFactor;
@@ -805,23 +898,55 @@ static void logLayer(CALayer *layer,unsigned depth) {
 // Every way of showing a window ends here, never in a method a guest's window
 // class may override: Wine's makeKeyAndOrderFront: orders with orderFront:.
 - (void)makeKeyAndOrderFront:(id)sender { (void)sender; [self ak_orderFront]; }
-- (void)ak_orderFront {
-    BOOL wasKey=self.keyWindow;
+- (BOOL)ak_prepareWindow {
+    if (_processExited) return NO;
     if (!_uiWindow) {
         UIWindowScene *scene = nil;
         for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
             if ([s isKindOfClass:UIWindowScene.class]) { scene = (UIWindowScene *)s; break; }
-        if (!scene) { AKLog(@"makeKeyAndOrderFront: no UIWindowScene connected"); return; }
-        _uiWindow = [[UIWindow alloc] initWithWindowScene:scene];
+        if (!scene) { AKLog(@"show window: no UIWindowScene connected"); return NO; }
+        _uiWindow = [[AKGuestUIWindow alloc] initWithWindowScene:scene];
         AKHostViewController *vc = [AKHostViewController new];
         _uiWindow.rootViewController = vc;
         _host = (AKHostView *)vc.view; _host.nsWindow = self;
+        [self ak_applyWindowAppearance];
         if (_contentView) [self ak_attach];
+        if(AKWindowInputDiagnostics()) {
+            __weak NSWindow *weakWindow=self;
+            __block unsigned ticks=0;
+            NSTimer *timer=[NSTimer timerWithTimeInterval:15 repeats:YES block:^(NSTimer *timer) {
+                NSWindow *window=weakWindow;
+                if ([NSWindow ak_hasExited:window]) { [timer invalidate]; return; }
+                AKLog(@"window input heartbeat number=%ld visible=%d key=%d",(long)window.windowNumber,window.visible,window.keyWindow);
+                if(window && ticks==0) [window ak_logLayers];
+                if(++ticks>=4 || !window) [timer invalidate];
+            }];
+            [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+        }
     }
+    return YES;
+}
+// Keep the adapter's back-to-front list and UIKit's stacking in agreement.
+// Fractional levels leave guest surfaces below UIKit alerts and system UI.
+- (void)ak_order:(NSInteger)mode relativeTo:(NSInteger)number {
+    NSMutableArray *windows=(NSMutableArray *)NSApp.windows;
+    NSWindow *other=[NSApp windowWithWindowNumber:number];
+    if (other==self) return;
+    [windows removeObjectIdenticalTo:self];
+    NSUInteger index=other ? [windows indexOfObjectIdenticalTo:other] : NSNotFound;
+    if(index==NSNotFound) index=mode<0 ? 0 : windows.count;
+    else if(mode>0) index++;
+    [windows insertObject:self atIndex:index];
+    NSUInteger rank=0;
+    for(NSWindow *window in windows) window->_uiWindow.windowLevel=UIWindowLevelNormal+(CGFloat)(++rank)/(windows.count+1);
+}
+- (void)ak_orderFront {
+    BOOL wasKey=self.keyWindow;
+    if (![self ak_prepareWindow]) return;
+    [self ak_order:1 relativeTo:0];
     [_uiWindow makeKeyAndVisible];
     coverLauncher(_uiWindow);
     [_host cursorChanged:nil];
-    if (![NSApp.windows containsObject:self]) [(NSMutableArray *)NSApp.windows addObject:self];
     if(!wasKey && self.keyWindow) {
         [self ak_notify:@"NSWindowDidBecomeKeyNotification" selector:@selector(windowDidBecomeKey:)];
         [self ak_notify:@"NSWindowDidBecomeMainNotification" selector:@selector(windowDidBecomeMain:)];
@@ -830,6 +955,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
     AKLog(@"window '%@' on screen", self.title);
 }
 - (void)ak_notify:(NSString *)name selector:(SEL)selector {
+    if (_processExited) return;
     NSNotification *notification=[NSNotification notificationWithName:name object:self];
     if([_delegate respondsToSelector:selector]) ((void (*)(id,SEL,id))[_delegate methodForSelector:selector])(_delegate,selector,notification);
     [NSNotificationCenter.defaultCenter postNotification:notification];
@@ -841,12 +967,36 @@ static void logLayer(CALayer *layer,unsigned depth) {
 }
 // One game surface: shown is key.
 - (void)orderFront:(id)sender { (void)sender; [self ak_orderFront]; }
+- (void)orderWindow:(NSInteger)mode relativeTo:(NSInteger)number {
+    if(mode==0) { [self orderOut:nil]; return; }
+    if(mode!=1 && mode!=-1) return;
+    if (![self ak_prepareWindow]) return;
+    [self ak_order:mode relativeTo:number];
+    _uiWindow.hidden=NO;
+    if (guestWindowOption(@"--frontmost-guest-input","TOLKARA_FRONTMOST_GUEST_INPUT") && mode>0)
+        [_uiWindow makeKeyWindow];
+    coverLauncher(_uiWindow);
+    [_host cursorChanged:nil];
+    AKLog(@"window ordered number=%ld mode=%ld relative=%ld visible=%d style=%#lx opaque=%d requested=(%.0f,%.0f %.0fx%.0f) actual=(%.0f,%.0f %.0fx%.0f)",
+          (long)self.windowNumber,(long)mode,(long)number,self.visible,(unsigned long)self.styleMask,self.opaque,
+          _contentRect.origin.x,_contentRect.origin.y,_contentRect.size.width,_contentRect.size.height,
+          self.frame.origin.x,self.frame.origin.y,self.frame.size.width,self.frame.size.height);
+}
 - (void)makeKeyWindow { if (self.visible) [self ak_orderFront]; }
-- (void)orderOut:(id)sender { if(!CGRectIsEmpty(_mouseConfinementRect))self.mouseConfinementRect=CGRectZero; _uiWindow.hidden = YES; uncoverLauncher(); }
+- (void)orderOut:(id)sender {
+    if(!CGRectIsEmpty(_mouseConfinementRect))self.mouseConfinementRect=CGRectZero;
+    BOOL wasKey=_uiWindow.keyWindow;
+    _uiWindow.hidden = YES;
+    if (wasKey && guestWindowOption(@"--frontmost-guest-input","TOLKARA_FRONTMOST_GUEST_INPUT"))
+        for (NSWindow *window in NSApp.windows.reverseObjectEnumerator)
+            if (window.visible) { [window->_uiWindow makeKeyWindow]; break; }
+    uncoverLauncher();
+}
 - (void)setIsVisible:(BOOL)visible { visible ? [self ak_orderFront] : [self orderOut:nil]; }
 - (void)makeMainWindow { }   // single game surface; already key
 - (void)close { [self orderOut:nil]; [(NSMutableArray *)NSApp.windows removeObject:self]; }
 - (void)sendEvent:(NSEvent *)e {
+    if (_processExited) return;
     switch (e.type) {
         case NSEventTypeKeyDown: [self.firstResponder keyDown:e]; break;
         case NSEventTypeKeyUp: [self.firstResponder keyUp:e]; break;
@@ -866,6 +1016,23 @@ static void logLayer(CALayer *layer,unsigned depth) {
     }
 }
 @end
+
+void AKSetWindowProcess(NSWindow *window, size_t slot) {
+    [NSWindow ak_setProcess:slot forWindow:window];
+}
+static atomic_bool retiredProcessUI[64];
+bool AKProcessRetirementComplete(size_t slot) {
+    return slot < 64 && atomic_load(&retiredProcessUI[slot]) && AKProcessCallbacksDrained(slot);
+}
+static void retireProcessUI(size_t slot) {
+    [NSWindow ak_retireProcess:slot];
+    if (slot < 64) atomic_store(&retiredProcessUI[slot],true);
+}
+void AKGuestProcessDidExit(size_t slot) {
+    AKRetireProcessCallbacks(slot);
+    if (NSThread.isMainThread) retireProcessUI(slot);
+    else dispatch_async(dispatch_get_main_queue(), ^{ retireProcessUI(slot); });
+}
 
 #pragma mark - NSWindowController
 
@@ -898,9 +1065,9 @@ static void logLayer(CALayer *layer,unsigned depth) {
 }
 - (NSArray<NSWindow *> *)windows { return _windows; }
 - (NSEvent *)currentEvent { return _currentEvent; }
-- (NSWindow *)keyWindow { return _windows.lastObject; }
+- (NSWindow *)keyWindow { for(NSWindow *window in _windows.reverseObjectEnumerator) if(window.visible && window.keyWindow) return window; return nil; }
 - (NSWindow *)windowWithWindowNumber:(NSInteger)number { for (NSWindow *window in _windows) if (window.windowNumber == number) return window; return nil; }
-- (NSWindow *)mainWindow { return _windows.lastObject; }
+- (NSWindow *)mainWindow { for(NSWindow *window in _windows.reverseObjectEnumerator) if(window.visible) return window; return nil; }
 - (BOOL)setActivationPolicy:(NSInteger)p { return YES; }
 - (BOOL)isActive { return _active; }
 - (void)ak_becameActive:(NSNotification *)notification {
@@ -971,13 +1138,25 @@ static void logLayer(CALayer *layer,unsigned depth) {
         e.deltaX+=last.deltaX;e.deltaY+=last.deltaY;[_queue removeLastObject];
     }
     if (atStart) [_queue insertObject:e atIndex:0]; else [_queue addObject:e];
-    if (_inRun) [self ak_drain];   // guest left the loop to us; deliver right away
+    static unsigned inputReports;
+    if (AKWindowInputDiagnostics() && inputReports++<24)
+        AKLog(@"input dispatch app=%@ window=%@ number=%ld type=%lu inRun=%d pending=%lu responder=%@",
+              NSStringFromClass(self.class),NSStringFromClass(e.window.class),(long)e.window.windowNumber,
+              (unsigned long)e.type,_inRun,(unsigned long)_queue.count,NSStringFromClass(e.window.firstResponder.class));
+    static BOOL deferInput; static dispatch_once_t deferOnce;
+    dispatch_once(&deferOnce, ^{ deferInput=[NSProcessInfo.processInfo.arguments containsObject:@"--defer-appkit-input"]; });
+    // The opt-in trial lets UIKit finish its callback before Wine handles the
+    // translated event. The outer application loop drains the queue next.
+    if (_inRun && !deferInput) [self ak_drain];
+    else if (_inRun) CFRunLoopWakeUp(CFRunLoopGetMain());
 }
 - (void)sendEvent:(NSEvent *)e {
+    if ([NSWindow ak_hasExited:e.window]) return;
     _currentEvent=e;
     e=AKEventMonitorRun(e,e.type);
     if (!e) return;   // a local monitor consumed it
-    [(e.window ?: self.keyWindow) sendEvent:e];
+    NSWindow *target=e.window ?: self.keyWindow;
+    if (![NSWindow ak_hasExited:target]) [target sendEvent:e];
 }
 - (NSEvent *)nextEventMatchingMask:(NSUInteger)mask untilDate:(NSDate *)date inMode:(NSString *)mode dequeue:(BOOL)dq {
     static NSTimeInterval nextDiagnostic; static unsigned diagnostics;

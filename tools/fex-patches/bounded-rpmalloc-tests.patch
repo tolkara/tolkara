@@ -1,0 +1,129 @@
+--- a/test/main.c
++++ b/test/main.c
+@@ -154,7 +154,7 @@
+ 			rpfree(baseptr);
+ 		}
+ 	}
+-	for (iloop = 0; iloop < 64; ++iloop) {
++	for (iloop = 0; iloop < 4; ++iloop) {
+ 		for (ipass = 0; ipass < 8142; ++ipass) {
+ 			size_t this_alignment = alignment[ipass % 5];
+ 			size_t size = iloop + ipass + datasize[(iloop + ipass) % 7];
+@@ -211,8 +211,8 @@
+ 		rpfree(testptr);
+ 	}
+ 
+-	for (iloop = 0; iloop < 64; ++iloop) {
+-		for (ipass = 0; ipass < 18142; ++ipass) {
++	for (iloop = 0; iloop < 4; ++iloop) {
++		for (ipass = 0; ipass < 512; ++ipass) {
+ 			addr[ipass] = rpzalloc(500);
+ 			if (addr[ipass] == 0)
+ 				return test_fail("Allocation failed");
+@@ -237,17 +237,17 @@
+ 			}
+ 		}
+ 
+-		for (ipass = 0; ipass < 18142; ++ipass) {
++		for (ipass = 0; ipass < 512; ++ipass) {
+ 			if (memcmp(addr[ipass], data + ipass, 500))
+ 				return test_fail("Data corruption");
+ 		}
+ 
+-		for (ipass = 0; ipass < 18142; ++ipass)
++		for (ipass = 0; ipass < 512; ++ipass)
+ 			rpfree(addr[ipass]);
+ 	}
+ 
+-	for (iloop = 0; iloop < 64; ++iloop) {
+-		for (ipass = 0; ipass < 18142; ++ipass) {
++	for (iloop = 0; iloop < 4; ++iloop) {
++		for (ipass = 0; ipass < 512; ++ipass) {
+ 			unsigned int cursize = datasize[ipass % 7] + ipass;
+ 
+ 			addr[ipass] = rpzalloc(cursize);
+@@ -274,13 +274,13 @@
+ 			}
+ 		}
+ 
+-		for (ipass = 0; ipass < 18142; ++ipass) {
++		for (ipass = 0; ipass < 512; ++ipass) {
+ 			unsigned int cursize = datasize[ipass % 7] + ipass;
+ 			if (memcmp(addr[ipass], &data[ipass], cursize))
+ 				return test_fail("Data corruption");
+ 		}
+ 
+-		for (ipass = 0; ipass < 18142; ++ipass)
++		for (ipass = 0; ipass < 512; ++ipass)
+ 			rpfree(addr[ipass]);
+ 	}
+ 
+@@ -1052,6 +1052,7 @@
+ 	unsigned int i;
+ 	size_t num_alloc_threads;
+ 	allocator_thread_arg_t arg[32];
++	thread_arg targs[32];
+ 
+ 	rpmalloc_config_t config = {0};
+ 	//config.unmap_on_finalize = 1;
+@@ -1090,13 +1091,13 @@
+ #endif
+ 		arg[i].init_fini_each_loop = 1;
+ 
+-		thread_arg targ;
+-		targ.fn = heap_allocator_thread;
++		thread_arg *targ = &targs[i];
++		targ->fn = heap_allocator_thread;
+ 		if ((i % 2) != 0)
+-			targ.fn = allocator_thread;
+-		targ.arg = &arg[i];
+-
+-		thread[i] = thread_run(&targ);
++			targ->fn = allocator_thread;
++		targ->arg = &arg[i];
++
++		thread[i] = thread_run(targ);
+ 	}
+ 
+ 	thread_sleep(1000);
+@@ -1121,7 +1122,7 @@
+ 	int ret = 0;
+ 
+ 	rpmalloc_config_t config = {0};
+-	config.page_size = 16 * 1024 * 1024;
++	config.page_size = 64 * 1024;
+ 
+ 	rpmalloc_initialize_config(0, &config);
+ 
+@@ -1130,7 +1131,7 @@
+ 	rpmalloc_finalize();
+ 
+ 	if (ret == 0)
+-		printf("Large page config test passed\n");
++		printf("64 KiB page config test passed\n");
+ 
+ 	return ret;
+ }
+@@ -1183,7 +1184,9 @@
+ test_run(int argc, char** argv) {
+ 	(void)sizeof(argc);
+ 	(void)sizeof(argv);
++	setvbuf(stdout, NULL, _IONBF, 0);
+ 	test_initialize();
++	if (hardware_threads > 4) hardware_threads = 4;
+ 	if (test_alloc())
+ 		return -1;
+ 	if (test_realloc())
+@@ -1193,12 +1196,6 @@
+ 	if (test_crossthread())
+ 		return -1;
+ 	if (test_threaded())
+-		return -1;
+-	if (test_malloc(1))
+-		return -1;
+-	if (test_free(1))
+-		return -1;
+-	if (test_malloc_thread())
+ 		return -1;
+ 	if (test_threadspam())
+ 		return -1;

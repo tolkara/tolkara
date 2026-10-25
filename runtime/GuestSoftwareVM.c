@@ -22,12 +22,16 @@ static size_t force_threshold;
 static size_t native_pool_size, forced_pool_size;
 static _Atomic(void *) pending_native_pool;
 static int log_fd = -1;
-static atomic_bool enabled;
+static atomic_bool enabled, x86_ordered;
 static atomic_uint_fast64_t fault_count, alias_fetches, checked_fetches;
 static atomic_uint io_reports;
-static uintptr_t code_base, code_alias;
-static size_t code_size;
-static atomic_bool code_alias_enabled;
+enum { CODE_ALIAS_LIMIT = 16 };
+static struct {
+    uintptr_t base, readable;
+    size_t size;
+    atomic_bool enabled;
+} code_aliases[CODE_ALIAS_LIMIT];
+static atomic_size_t code_alias_count;
 static struct sigaction original[2], actions[ACTION_LIMIT];
 static _Atomic(struct sigaction *) current[2];
 static size_t action_count;
@@ -43,7 +47,9 @@ static bool rounded(size_t size, uint64_t *result) {
 }
 bool gsv_enabled(void) { return atomic_load_explicit(&enabled, memory_order_acquire); }
 
+void gsv_x86_ordered(bool allow) { atomic_store(&x86_ordered, allow); }
 void gsv_force_pool(size_t size) { forced_pool_size=size; }
+uintptr_t gsv_address_end(void) { return gsv_enabled() ? base + span : 0; }
 bool gsv_address(const void *address) {
     uint64_t a = (uintptr_t)address;
     return gsv_enabled() && a >= base && a - base < span;
@@ -69,26 +75,43 @@ void gsv_prefer_native_pool(size_t size) {
 }
 bool gsv_code_alias(const void *executable, const void *readable, size_t size) {
     uintptr_t start=(uintptr_t)executable, alias=(uintptr_t)readable;
-    if(!gsv_enabled() || code_size || !start || !alias || (start&3) || (alias&3) ||
+    size_t count=atomic_load_explicit(&code_alias_count,memory_order_acquire);
+    if(!gsv_enabled() || count==CODE_ALIAS_LIMIT || !start || !alias || (start&3) || (alias&3) ||
        size<4 || (size&3) || size>UINTPTR_MAX-start || size>UINTPTR_MAX-alias ||
        gsv_address(executable) || gsv_address(readable)) return false;
-    code_base=start;code_alias=alias;code_size=size;
-    atomic_store_explicit(&code_alias_enabled,true,memory_order_release);
+    // Registration is serialized by the loader before guest entry. Never reuse
+    // an invalidated record: signal readers may still have observed its index.
+    for(size_t i=0;i<count;i++) {
+        uintptr_t other=code_aliases[i].base;
+        if(start<other ? size>other-start : start-other<code_aliases[i].size) return false;
+    }
+    code_aliases[count].base=start;
+    code_aliases[count].readable=alias;
+    code_aliases[count].size=size;
+    atomic_store_explicit(&code_aliases[count].enabled,true,memory_order_relaxed);
+    atomic_store_explicit(&code_alias_count,count+1,memory_order_release);
     return true;
 }
 void gsv_forget_code_alias(const void *address, size_t size) {
-    if(!atomic_load_explicit(&code_alias_enabled,memory_order_acquire) || !size) return;
+    if(!size) return;
     uintptr_t start=(uintptr_t)address;
-    if(start<=code_base ? size>code_base-start : start-code_base<code_size)
-        atomic_store_explicit(&code_alias_enabled,false,memory_order_release);
+    size_t count=atomic_load_explicit(&code_alias_count,memory_order_acquire);
+    for(size_t i=0;i<count;i++) {
+        uintptr_t other=code_aliases[i].base;
+        if(start<=other ? size>other-start : start-other<code_aliases[i].size)
+            atomic_store_explicit(&code_aliases[i].enabled,false,memory_order_release);
+    }
 }
 bool gsv_fetch_instruction(uint64_t pc,uint32_t *instruction) {
     if(!instruction || (pc&3) || gsv_address((void *)(uintptr_t)pc)) return false;
-    if(atomic_load_explicit(&code_alias_enabled,memory_order_acquire) &&
-       pc>=code_base && pc-code_base<=code_size-4) {
-        atomic_fetch_add_explicit(&alias_fetches,1,memory_order_relaxed);
-        memcpy(instruction,(const void *)(code_alias+(uintptr_t)(pc-code_base)),sizeof *instruction);
-        return true;
+    size_t count=atomic_load_explicit(&code_alias_count,memory_order_acquire);
+    for(size_t i=0;i<count;i++) {
+        if(atomic_load_explicit(&code_aliases[i].enabled,memory_order_acquire) &&
+           pc>=code_aliases[i].base && pc-code_aliases[i].base<=code_aliases[i].size-4) {
+            atomic_fetch_add_explicit(&alias_fetches,1,memory_order_relaxed);
+            memcpy(instruction,(const void *)(code_aliases[i].readable+(uintptr_t)(pc-code_aliases[i].base)),sizeof *instruction);
+            return true;
+        }
     }
     atomic_fetch_add_explicit(&checked_fetches,1,memory_order_relaxed);
     vm_size_t actual=0;
@@ -123,12 +146,16 @@ static bool handle_fault(siginfo_t *info, void *context) {
         GMExclusiveDiagnostic diagnostic={0};
         result=gm_exclusive_sequence(&memory,instruction,&state,fetch_instruction,NULL,&fault,&diagnostic);
         if(result!=GM_STEP_OK && diagnostic.reason) {
+            uint32_t word=0;
             report(diagnostic.reason,diagnostic.pc);
+            if(fetch_instruction(diagnostic.pc,&word,NULL)) report("[software-vm] instruction word ",word);
         }
         if(result==GM_STEP_OK) {
             memcpy(r.x,state.x,sizeof r.x);r.sp=state.sp;r.pc=state.pc;nzcv=state.nzcv;
         }
-    } else result = gm_memory_step(&memory, instruction, &r, &fault);
+    } else result = atomic_load(&x86_ordered) ?
+        gm_memory_step_x86_ordered(&memory, instruction, &r, &fault) :
+        gm_memory_step(&memory, instruction, &r, &fault);
     if (result != GM_STEP_OK) {
         if (result == GM_STEP_UNSUPPORTED) {
             const char *family = "[software-vm] unsupported memory encoding at ";
@@ -148,6 +175,14 @@ static bool handle_fault(siginfo_t *info, void *context) {
         }
         report(result == GM_STEP_UNSUPPORTED ? "[software-vm] unsupported memory instruction at " :
                "[software-vm] failed memory access at ", pc);
+        if (fault == GM_INVALID && ((instruction & 0x3f9ffc00) == 0x089ffc00 ||
+                                   (instruction & 0x3ffffc00) == 0x38bfc000)) {
+            unsigned rn = (instruction >> 5) & 31;
+            size_t width = (size_t)1 << (instruction >> 30);
+            uintptr_t address = rn == 31 ? r.sp : r.x[rn];
+            report("[software-vm] ordered-access width ", width);
+            report("[software-vm] ordered-access alignment remainder ", address % width);
+        }
         report("[software-vm] memory result ", fault);
         report("[software-vm] handled faults ", atomic_load(&fault_count));
         report("[software-vm] backing pages ", gm_sparse_stats(&memory).resident_pages);
@@ -162,9 +197,16 @@ static bool handle_fault(siginfo_t *info, void *context) {
     if (!(count & (count - 1))) report("[software-vm] handled faults ", count);
     return true;
 }
+bool gsv_handle_signal(int number, siginfo_t *info, void *context) {
+    int saved_errno = errno;
+    bool handled = gsv_enabled() && context &&
+                   (number == SIGSEGV || number == SIGBUS) && handle_fault(info, context);
+    errno = saved_errno;
+    return handled;
+}
 static void dispatch_signal(int number, siginfo_t *info, void *context) {
     int saved_errno = errno;
-    if (handle_fault(info, context)) { errno = saved_errno; return; }
+    if (gsv_handle_signal(number, info, context)) return;
     unsigned index = number == SIGBUS;
     struct sigaction *selected = atomic_load_explicit(&current[index], memory_order_acquire);
     struct sigaction action = *selected;
@@ -230,9 +272,10 @@ static bool start(size_t backing_bytes, size_t force, int fd, bool small_blocks)
     }
     log_fd = fd; force_threshold = force; native_pool_size=forced_pool_size=0; atomic_store(&fault_count, 0);
     atomic_store(&io_reports,0);
+    atomic_store(&x86_ordered,false);
     atomic_store(&pending_native_pool,NULL);
     atomic_store(&alias_fetches,0);atomic_store(&checked_fetches,0);
-    code_base=code_alias=code_size=0;atomic_store(&code_alias_enabled,false);
+    atomic_store(&code_alias_count,0);
     atomic_store_explicit(&enabled, true, memory_order_release);
     report("[software-vm] base ", base); report("[software-vm] backing bytes ", backing_bytes);
     return true;
@@ -246,11 +289,25 @@ bool gsv_start_blocks(size_t backing_bytes, size_t force, int fd) {
 void gsv_stop(void) {
     if (!gsv_enabled()) return;
     atomic_store(&enabled, false);
-    atomic_store(&code_alias_enabled,false);
+    atomic_store(&code_alias_count,0);
     sigaction(SIGSEGV, &original[0], NULL); sigaction(SIGBUS, &original[1], NULL);
     void *pending=atomic_exchange(&pending_native_pool,NULL);
     if(pending)munmap(pending,native_pool_size);
     gm_sparse_destroy(&memory); if (guard != MAP_FAILED) munmap(guard, span);
+}
+void *gsv_reserve_aligned(size_t size, size_t alignment, size_t offset, int prot) {
+    uint64_t length, at;
+    if (!gsv_enabled() || !rounded(size, &length) || (prot & ~(PROT_READ | PROT_WRITE))) {
+        errno = EINVAL; return MAP_FAILED;
+    }
+    GMResult result;
+    do {
+        result = gm_sparse_find_aligned(&memory, length, alignment, offset, &at);
+        if (result == GM_OK) result = gm_sparse_map(&memory, at, length, (unsigned)prot, 3, false);
+    } while (result == GM_OVERLAP);
+    if (result != GM_OK) { errno = error_code(result); return MAP_FAILED; }
+    report("[software-vm] aligned reservation bytes ", length);
+    return (void *)(uintptr_t)at;
 }
 void *gsv_map(void *address, size_t size, int prot, int flags, int fd, off_t offset) {
     if(flags&MAP_FIXED)gsv_forget_code_alias(address,size);
@@ -459,6 +516,13 @@ GMResult gsv_fill(void *destination, int value, size_t size) {
 }
 static ssize_t io_result(int fd, size_t size, ssize_t result, bool software) {
     int saved=errno;
+    // Native nonblocking reads commonly have no data yet. Logging each retry
+    // floods the guest log and adds synchronous writes to the I/O hot path.
+    // Keep software-buffer failures and unexpected native errors diagnostic.
+    if (!software && result < 0 && (saved == EAGAIN || saved == EWOULDBLOCK)) {
+        errno=saved;
+        return result;
+    }
     if(result<0 || atomic_fetch_add_explicit(&io_reports,1,memory_order_relaxed)<16) {
         report("[software-vm] file I/O fd ",(uint64_t)fd);
         report("[software-vm] file I/O requested bytes ",size);

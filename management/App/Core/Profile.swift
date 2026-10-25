@@ -83,7 +83,7 @@ struct ProfileError: LocalizedError {
 
 enum ProfileParser {
     static let required = ["id", "name", "workingDirectory", "executable"]
-    static let optional = ["notes", "tested", "caseAliases", "runtime", "arguments", "environment", "libraries", "codePool", "setup"]
+    static let optional = ["notes", "tested", "caseAliases", "runtime", "arguments", "environment", "libraries", "codePool", "processes", "setup"]
 
     static func relative(_ value: Any?) -> Bool {
         guard let value = value as? String, !value.isEmpty, !value.hasPrefix("/") else { return false }
@@ -117,6 +117,13 @@ enum ProfileParser {
         }
         let workingDirectory = profile["workingDirectory"] as! String
         let hasRuntime = profile["runtime"] != nil
+        if let pool = profile["codePool"] {
+            guard hasRuntime, let number = pool as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue == Double(number.intValue), (1...2048).contains(number.intValue) else {
+                throw ProfileError(message: "codePool must be a whole number of megabytes from 1 to 2048, with a runtime.")
+            }
+        }
         let setup = profile["setup"]
         var source: String?, installer: String?, getApp: AppProfile.GetApp?, firstRun: AppProfile.FirstRun?, risk: AppProfile.Risk?
         var destination = String(workingDirectory.split(separator: "/").first ?? "")

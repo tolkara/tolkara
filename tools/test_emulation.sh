@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 mkdir -p build/emulation
 CC=(xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror -O1 -g
     -fsanitize=address,undefined -fno-omit-frame-pointer -Iruntime)
+"${CC[@]}" tests/test_guest_remote.c -o build/emulation/test_guest_remote
+build/emulation/test_guest_remote
 "${CC[@]}" -Itranslation/AppKit translation/AppKit/TouchTrackpad.c tests/test_touch_trackpad.c -o build/emulation/test_touch_trackpad
 build/emulation/test_touch_trackpad
 "${CC[@]}" runtime/GuestWaitTrace.c tests/test_wait_trace.c -o build/emulation/test_wait_trace
@@ -20,6 +22,20 @@ build/emulation/test_memory_instruction
 build/emulation/test_software_vm_small_stack
 build/emulation/test_software_vm
 build/emulation/test_software_vm --small-blocks
+"${CC[@]}" runtime/GuestMemory.c runtime/GuestCPU.c runtime/GuestSparseMemory.c runtime/GuestMemoryInstruction.c runtime/GuestExclusive.c runtime/GuestSoftwareVM.c runtime/GuestProcesses.c runtime/SparseMemoryProbeProgram.S tests/test_software_vm_process_signals.c -o build/emulation/test_software_vm_process_signals
+build/emulation/test_software_vm_process_signals
+# Use real pthread stacks: ASan substitutes stack storage and masks this case.
+"${CC[@]}" -fno-sanitize=address,undefined tests/test_guest_process_ranges.c -o build/emulation/test_guest_process_ranges
+build/emulation/test_guest_process_ranges
+"${CC[@]}" -fno-sanitize=address,undefined tests/test_guest_process_exit.c -o build/emulation/test_guest_process_exit
+build/emulation/test_guest_process_exit
+build/emulation/test_guest_process_exit stack-in-range
+"${CC[@]}" tests/test_guest_process_threads.c -o build/emulation/test_guest_process_threads
+build/emulation/test_guest_process_threads
+"${CC[@]}" tests/test_guest_process_native_death.c -o build/emulation/test_guest_process_native_death
+build/emulation/test_guest_process_native_death
+"${CC[@]}" tests/test_guest_process_range_reset.c -o build/emulation/test_guest_process_range_reset
+build/emulation/test_guest_process_range_reset
 "${CC[@]}" runtime/GuestMemory.c runtime/GuestCPU.c runtime/CPUProbe.c runtime/CPUProbeProgram.S tests/test_cpu.c -o build/emulation/test_cpu
 build/emulation/test_cpu
 "${CC[@]}" -Iauthorization authorization/LocalRoute.c tests/test_local_route.c -o build/emulation/test_local_route
@@ -99,6 +115,8 @@ for test in tunnel_manager developer_session; do
     "build/emulation/test_${test}"
 done
 "${CC[@]}" runtime/NativeCodeMemory.c tests/test_native_memory.c -o build/emulation/test_native_memory
+"${CC[@]}" tests/test_native_pair_reservation.c -o build/emulation/test_native_pair_reservation
+build/emulation/test_native_pair_reservation
 build/emulation/test_native_memory
 "${CC[@]}" runtime/HostDiagnostics.c runtime/HostExecutionProbe.c runtime/NativeCodeMemory.c tests/test_host_diagnostics.c -o build/emulation/test_host_diagnostics
 build/emulation/test_host_diagnostics

@@ -37,6 +37,9 @@ typedef NS_ENUM(NSInteger, TKAppSource) {
 // From the profile: megabytes of prepared executable memory the runtime writes
 // its own code into; 0 for none.
 @property(nonatomic, readonly) NSUInteger codePool;
+// From the profile: how many of the runtime's processes may run at once in
+// this one (docs/MULTIPROCESS.md); 1 unless it says more.
+@property(nonatomic, readonly) NSUInteger processes;
 @property(nonatomic, readonly) NSDate *added;
 @property(nonatomic, readonly, nullable) NSDate *lastLaunched;
 @end

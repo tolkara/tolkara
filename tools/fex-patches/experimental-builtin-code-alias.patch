@@ -1,0 +1,72 @@
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -865,6 +865,14 @@
+   FEXCORE_PROFILE_ACCUMULATION(Thread, AccumulatedJITTime);
+ 
+   static_cast<ContextImpl*>(Thread->CTX)->SyscallHandler->PreCompile();
++  // Resolve only runtime-owned image aliases before reading guest instructions.
++  // Re-enter ordinary dispatch so its native-code bitmap/ABI checks still apply.
++  const uint64_t ResolvedRIP = SyscallHandler->ResolveCodeAddress(GuestRIP);
++  if (ResolvedRIP != GuestRIP) {
++    Frame->State.rip = ResolvedRIP;
++    return Dispatcher->GetLoopTopAddress();
++  }
++
+ 
+   // Invalidate might take a unique lock on this, to guarantee that during invalidation no code gets compiled
+   auto lk = GuardSignalDeferringSection<std::shared_lock>(CodeInvalidationMutex, Thread);
+@@ -1033,6 +1041,14 @@
+   auto Thread = Frame->Thread;
+ 
+   static_cast<ContextImpl*>(Thread->CTX)->SyscallHandler->PreCompile();
++  // Resolve only runtime-owned image aliases before reading guest instructions.
++  // Re-enter ordinary dispatch so its native-code bitmap/ABI checks still apply.
++  const uint64_t ResolvedRIP = SyscallHandler->ResolveCodeAddress(GuestRIP);
++  if (ResolvedRIP != GuestRIP) {
++    Frame->State.rip = ResolvedRIP;
++    return Dispatcher->GetLoopTopAddress();
++  }
++
+ 
+   // Invalidate might take a unique lock on this, to guarantee that during invalidation no code gets compiled
+   auto lk = GuardSignalDeferringSection<std::shared_lock>(CodeInvalidationMutex, Thread);
+--- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
++++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.h
+@@ -58,6 +58,8 @@
+   uint64_t GetExitFunctionLinkerAddress() const {
+     return ExitFunctionLinkerAddress;
+   }
++
++  uint64_t GetLoopTopAddress() const { return AbsoluteLoopTopAddress; }
+ 
+   SignalDelegatorConfig MakeSignalDelegatorConfig() const;
+ 
+--- a/FEXCore/include/FEXCore/HLE/SyscallHandler.h
++++ b/FEXCore/include/FEXCore/HLE/SyscallHandler.h
+@@ -40,6 +40,7 @@
+   virtual std::optional<ExecutableFileSectionInfo> LookupExecutableFileSection(Core::InternalThreadState* Thread, uint64_t GuestAddr) = 0;
+ 
+   virtual void PreCompile() {}
++  virtual uint64_t ResolveCodeAddress(uint64_t Address) { return Address; }
+ 
+   virtual SourcecodeResolver* GetSourcecodeResolver() {
+     return nullptr;
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -667,6 +667,16 @@
+     return InvalidationTracker->QueryExecutableRange(Address);
+   }
+ 
++  uint64_t ResolveCodeAddress(uint64_t Address) override {
++    if (ImageTracker->LookupExecutableFileSection(Address)) return Address;
++    ULONG_PTR Alias = Address;
++    // Wine-private query: builtin mapping metadata only, no byte scanning.
++    constexpr auto MemoryWineCodeAlias = static_cast<MEMORY_INFORMATION_CLASS>(2002);
++    if (NtQueryVirtualMemory(NtCurrentProcess(), reinterpret_cast<void*>(Address),
++                             MemoryWineCodeAlias, &Alias, sizeof(Alias), nullptr)) return Address;
++    return Alias;
++  }
++
+   void PreCompile() override {
+     ProcessPendingCrossProcessEmulatorWork();
+   }

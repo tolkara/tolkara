@@ -12,6 +12,8 @@
 	<string>$(GUEST_RUNTIME)</string>
 	<key>TolkaraPreselectedExecutionMode</key>
 	<string>$(TOLKARA_MODE)</string>
+	<key>TolkaraAppGroup</key>
+	<string>group.$(TOLKARA_GROUP_BASE).shared</string>
 	<key>TKPairingKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)$(TOLKARA_KEYCHAIN_GROUP)</string>
 	<key>NSMicrophoneUsageDescription</key>

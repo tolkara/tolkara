@@ -293,7 +293,7 @@ build/pairing-storage-direct-probe.txt. Physical iPad installation is unchanged.
 `authorization/Debugger` now implements a bounded all-stop RSP transaction through
 our managed encrypted transport. `DebugArenaRequest` binds the waiting host's
 PID/UID, a per-launch 32-byte memory challenge, and up to four non-overlapping
-16 KiB-aligned fresh arenas (512 MiB total). It rejects self-attachment, overflow,
+16 KiB-aligned fresh arenas (1 GiB total; bounded by an 1800-second preparation deadline). It rejects self-attachment, overflow,
 challenge overlap and invalid ranges. The host request producer and mapping
 lifetime/IPC gate are not connected to the native loader yet.
 

@@ -1,0 +1,145 @@
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -213,6 +213,20 @@
+  * (WINELARGERESERVE=start-end): with several Windows processes in one host
+  * process the free address space can be too fragmented for one large block. */
+ static char *large_reserve_base, *large_reserve_end;
++/* Optional host-provided software backing, only enabled by WINESOFTWAREPOOLS.
++ * Ordinary allocations retain native limits; only failed guarded-pool reserves
++ * use this path. The host must enforce its separate runtime opt-in. */
++static void *(*software_reserve_aligned)(size_t, size_t, size_t, int);
++static unsigned char (*software_address)(const void *);
++static ULONG_PTR software_address_end;
++static BOOL prefer_software_pools;
++static BOOL is_software_range( const void *address, size_t size )
++{
++    ULONG_PTR start = (ULONG_PTR)address;
++    return software_address && size && start <= ~(ULONG_PTR)0 - (size - 1) &&
++           software_address( address ) && software_address( (const void *)(start + size - 1) );
++}
++
+ static BOOL address_space_limited; /* explicit test window must survive child preload hints */
+ static char *small_range_base, *small_range_end;  /* WINESMALLRANGE, inside the large reserve */
+ 
+@@ -755,6 +769,7 @@
+ {
+     size_t ret = 0;
+ 
++    if (is_software_range( addr, size )) return size;
+     if (addr < user_space_limit)
+     {
+         ret = (char *)user_space_limit - (char *)addr;
+@@ -2725,6 +2740,26 @@
+  * Map a reservation the host cannot place at *base at an address congruent
+  * to it modulo the largest power of two not above its size (WINERELOCATEHINTS).
+  */
++static NTSTATUS map_software_pool( void **base, size_t size, int unix_prot )
++{
++    if (software_reserve_aligned && size >= ((size_t)1 << 30) &&
++        !(unix_prot & ~(PROT_READ | PROT_WRITE)))
++    {
++        size_t pool = size - 0x10000;
++        if (pool && !(pool & (pool - 1)) && ((ULONG_PTR)*base & (pool - 1)) == pool - 0x10000)
++        {
++            void *software = software_reserve_aligned( size, pool, pool - 0x10000, unix_prot );
++            if (software != MAP_FAILED)
++            {
++                *base = software;
++                ERR( "guarded pool reserved with software backing at %p size %zx\n", software, size );
++                return STATUS_SUCCESS;
++            }
++        }
++    }
++    return STATUS_NO_MEMORY;
++}
++
+ static NTSTATUS map_congruent_area( void **base, size_t size, int unix_prot )
+ {
+     size_t period = (size_t)1 << 16, offset;
+@@ -2732,6 +2767,7 @@
+     char *addr;
+     int i;
+ 
++    if (prefer_software_pools && !map_software_pool( base, size, unix_prot )) return STATUS_SUCCESS;
+     while (period * 2 <= size && period < ((size_t)1 << 36)) period *= 2;
+     if (getenv( "WINEPACKHINTS" ) && atoi( getenv( "WINEPACKHINTS" ) ) && !(size & (size - 1)))
+     {
+@@ -2767,7 +2803,7 @@
+             return STATUS_SUCCESS;
+         }
+     }
+-    return STATUS_NO_MEMORY;
++    return map_software_pool( base, size, unix_prot );
+ }
+ 
+ /***********************************************************************
+@@ -4556,7 +4592,23 @@
+ 
+     /* try to find space in a reserved area for the views and pages protection table */
+ #ifdef _WIN64
+-    pages_vprot_size = ((size_t)host_addr_space_limit >> page_shift >> pages_vprot_shift) + 1;
++    if (getenv( "WINESOFTWAREPOOLS" ) && atoi( getenv( "WINESOFTWAREPOOLS" ) ))
++    {
++        prefer_software_pools = atoi( getenv( "WINESOFTWAREPOOLS" ) ) == 2;
++        ULONG_PTR (*get_end)(void) = dlsym( RTLD_DEFAULT, "tolkara_software_address_end" );
++        software_reserve_aligned = dlsym( RTLD_DEFAULT, "tolkara_software_reserve_aligned" );
++        software_address = dlsym( RTLD_DEFAULT, "tolkara_software_address" );
++        if (get_end && software_reserve_aligned && software_address)
++            software_address_end = get_end();
++        if (!software_address_end)
++        {
++            software_reserve_aligned = NULL;
++            software_address = NULL;
++            ERR( "software pools requested but authorized host backing is unavailable\n" );
++        }
++        else ERR( "host software pool backing enabled\n" );
++    }
++    pages_vprot_size = (max( (size_t)host_addr_space_limit, software_address_end ) >> page_shift >> pages_vprot_shift) + 1;
+     size = 2 * view_block_size + pages_vprot_size * sizeof(*pages_vprot);
+ #else
+     size = 2 * view_block_size + (1U << (32 - page_shift));
+@@ -4630,7 +4682,7 @@
+     info->ActiveProcessorsAffinityMask = get_system_affinity_mask();
+     info->NumberOfProcessors      = peb->NumberOfProcessors;
+     if (wow64) info->HighestUserAddress = (char *)get_wow_user_space_limit() - 1;
+-    else info->HighestUserAddress = (char *)user_space_limit - 1;
++    else info->HighestUserAddress = (char *)max( (ULONG_PTR)user_space_limit, software_address_end ) - 1;
+ }
+ 
+ 
+@@ -6028,7 +6080,7 @@
+         /* disallow low 64k, wrap-around and kernel space */
+         if (((char *)base < (char *)0x10000) ||
+             ((char *)base + size < (char *)base) ||
+-            (is_beyond_limit( base, size, address_space_limit ) &&
++            (is_beyond_limit( base, size, address_space_limit ) && !is_software_range( base, size ) &&
+              /* map_view makes it elsewhere (WINERELOCATEHINTS) */
+              !(relocate_hints && (char *)base >= (char *)address_space_limit && (type & MEM_RESERVE) &&
+                !(type & (MEM_COMMIT | MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER | MEM_WRITE_WATCH)) &&
+@@ -6551,7 +6603,7 @@
+ 
+     *fake_reserved = FALSE;
+     *region_start = NULL;
+-    *region_end = working_set_limit;
++    *region_end = is_software_range( base, 1 ) ? (char *)software_address_end : working_set_limit;
+ 
+     ptr = views_tree.root;
+     while (ptr)
+@@ -6627,7 +6679,7 @@
+ 
+     base = ROUND_ADDR( addr, page_mask );
+ 
+-    if (is_beyond_limit( base, 1, working_set_limit )) return STATUS_INVALID_PARAMETER;
++    if (is_beyond_limit( base, 1, working_set_limit ) && !is_software_range( base, 1 )) return STATUS_INVALID_PARAMETER;
+ 
+     /* Find the view containing the address */
+ 
+@@ -6741,7 +6793,7 @@
+ 
+     base = ROUND_ADDR( addr, page_mask );
+ 
+-    if (is_beyond_limit( base, 1, working_set_limit )) return STATUS_INVALID_PARAMETER;
++    if (is_beyond_limit( base, 1, working_set_limit ) && !is_software_range( base, 1 )) return STATUS_INVALID_PARAMETER;
+ 
+     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+ 

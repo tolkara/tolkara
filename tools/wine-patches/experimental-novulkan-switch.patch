@@ -1,0 +1,19 @@
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index 722bdd8..193653c 100644
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -607,6 +607,14 @@ static const struct vulkan_driver_funcs lazydrv_funcs =
+ 
+ static void vulkan_init_once(void)
+ {
++    /* Tolkara: WINENOVULKAN=1 leaves a process without Vulkan, as a build without it would;
++     * Steam's client and browser then probe graphics as before, while a game turns it on */
++    const char *off = getenv( "WINENOVULKAN" );
++    if (off && atoi( off ))
++    {
++        TRACE( "Vulkan disabled by WINENOVULKAN\n" );
++        return;
++    }
+     if (!(vulkan_handle = dlopen( SONAME_LIBVULKAN, RTLD_NOW )))
+     {
+         ERR( "Failed to load %s\n", SONAME_LIBVULKAN );

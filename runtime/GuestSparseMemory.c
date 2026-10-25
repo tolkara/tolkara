@@ -142,19 +142,33 @@ void gm_sparse_destroy(GMSparseMemory *memory) {
     free(s->pages); free(s->free_backing); free(s);
     memory->implementation = NULL;
 }
-GMResult gm_sparse_find_free(GMSparseMemory *memory, uint64_t size, uint64_t *address) {
+GMResult gm_sparse_find_aligned(GMSparseMemory *memory, uint64_t size, uint64_t alignment,
+                                uint64_t offset, uint64_t *address) {
     Space *s = memory ? memory->implementation : NULL;
-    if (!s || !address || !aligned(0, size)) return GM_INVALID;
+    if (!s || !address || !aligned(0, size) || alignment < GM_PAGE_SIZE ||
+        (alignment & (alignment - 1)) || offset >= alignment || (offset & (GM_PAGE_SIZE - 1)))
+        return GM_INVALID;
     lock(s);
-    uint64_t candidate = s->base;
-    for (size_t i = 0; i < s->count; ++i) {
-        if (size <= s->regions[i].start - candidate) break;
-        candidate = s->regions[i].end;
+    uint64_t candidate = s->base, mask = alignment - 1;
+    GMResult result = GM_NOMEM;
+    for (size_t i = 0; i <= s->count; ++i) {
+        uint64_t delta = (offset - (candidate & mask)) & mask;
+        if (candidate > UINT64_MAX - delta) break;
+        candidate += delta;
+        if (candidate > s->end || size > s->end - candidate) break;
+        if (i == s->count || (candidate <= s->regions[i].start &&
+                             size <= s->regions[i].start - candidate)) {
+            *address = candidate;
+            result = GM_OK;
+            break;
+        }
+        if (candidate < s->regions[i].end) candidate = s->regions[i].end;
     }
-    GMResult result = size <= s->end - candidate ? GM_OK : GM_NOMEM;
-    if (result == GM_OK) *address = candidate;
     unlock(s);
     return result;
+}
+GMResult gm_sparse_find_free(GMSparseMemory *memory, uint64_t size, uint64_t *address) {
+    return gm_sparse_find_aligned(memory, size, GM_PAGE_SIZE, 0, address);
 }
 
 enum Operation { MAP, UNMAP, PROTECT };

@@ -56,7 +56,7 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   64. They are loaded with the executable as if it carried them, with what
   they link, and the runtime's `dlopen` of one gets that copy; the whole
   runtime folder then counts as the application's folder. Only with `runtime`.
-- `codePool`: megabytes (1 to 1024) of prepared executable memory after the
+- `codePool`: megabytes (1 to 2048) of prepared executable memory after the
   images, for a runtime that writes its own code (an emulator's JIT, the
   native modules it loads). `${CodePool}` in an `environment` value then
   stands for it as `0x<start>-0x<end>@0x<alias>`: code runs from start to end
@@ -65,6 +65,15 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   memory takes time at every launch (about a minute for 64 MB with Developer
   service), so ask for what the runtime needs. Only with `runtime`; Local
   signing cannot provide it.
+- `processes`: how many runtime process instances are available during one
+  iPad app session (1 to 8, default 1), for a program that starts
+  others, such as a launcher or a client with helper processes. Each process
+  beyond the first gets its own placed copy of the runtime's `libraries` and
+  an equal share of
+  `codePool`; it starts when the runtime spawns its own executable. Finished
+  instances and their used code pools remain retired until Tolkara exits, so
+  sequential game launches need additional slots and prepared memory. See
+  [docs/MULTIPROCESS.md](../docs/MULTIPROCESS.md). Only with `runtime`.
 
 Every profile in `profiles/` is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library

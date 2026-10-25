@@ -9,11 +9,16 @@ static NativeCodeMemory local_quarantine;
 #endif
 #include "GuestFixups.h"
 #include "GuestLink.h"
+#include "GuestProcesses.h"
+#include "GuestRemote.h"
 #include "GuestPaths.h"
 #include "GuestVMBudget.h"
 #include "GuestSoftwareVM.h"
 #include "NativeGuestPolicy.h"
 #include <TargetConditionals.h>
+#if TARGET_OS_IOS
+#import <UIKit/UIKit.h>
+#endif
 #include "GuestStubs.h"
 #include "GuestTLS.h"
 #include "GuestWrap.h"
@@ -23,6 +28,7 @@ static NativeCodeMemory local_quarantine;
 #include "GuestWaitTrace.h"
 #include "SignedImage.h"
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <mach-o/loader.h>
 #import <objc/objc-exception.h>
 #import <objc/runtime.h>
@@ -32,6 +38,7 @@ static NativeCodeMemory local_quarantine;
 #include <sys/mman.h>
 #include <unistd.h>
 #include <mach/mach.h>
+#include <malloc/malloc.h>
 #include <mach/arm/thread_status.h>
 #include <pthread.h>
 #include <signal.h>
@@ -128,9 +135,33 @@ static struct {
 } guest;
 // The libraries the application carries, for the life of the guest.
 static GuestLinkSet carried;
+// Several processes of a runtime in this one (docs/MULTIPROCESS.md): slot 0 is
+// `carried`; each further slot holds its own placed copy of the runtime's
+// libraries. ng_set_process_slots; one slot unless a profile asks for more.
+static size_t process_slots=1;
+static GuestLinkSet *slot_sets[GP_MAX_PROCESSES];
+void ng_set_process_slots(size_t count) { process_slots=count<1?1:count>GP_MAX_PROCESSES?GP_MAX_PROCESSES:count; }
+static GuestLinkSet *slot_set(size_t slot) { return slot<process_slots && slot_sets[slot]?slot_sets[slot]:&carried; }
+// The placed library an address lies in, and its slot; NULL (slot 0) when none.
+static const GuestLibrary *library_in_slots(uint64_t address, size_t *slot) {
+    for (size_t i=0;i<process_slots;i++) {
+        const GuestLibrary *library=gl_library_at(slot_set(i),address);
+        if (library) { if (slot) *slot=i; return library; }
+    }
+    if (slot) *slot=0;
+    return NULL;
+}
+// Which slot a call from a placed image comes from: the image's own, or, from
+// the executable they share, the calling thread's.
+static size_t caller_slot(const void *address) {
+    if (process_slots<2) return 0;
+    int slot=gp_slot_of_address((uintptr_t)address);
+    return slot>0?(size_t)slot:gp_current_slot((uintptr_t)address);
+}
 static NativeCodeMemory external_quarantine;
 // Prepared before the launch, while a debugger was there.
 static NativeCodeMemory reserved_arena;
+static NativeCodeMemory separate_code_pool, separate_pool_quarantine;
 bool ng_arena_reserved(void) { return reserved_arena.published; }
 bool ng_reserve_arena(FILE *log) {
     if (reserved_arena.published) return true;
@@ -157,20 +188,67 @@ void host_debugger_publish_arena(void *address, size_t size, volatile uint64_t *
     __asm__ volatile("" : : "r"(address), "r"(size), "r"(completion) : "memory");
 }
 static objc_exception_preprocessor previous_exception_preprocessor;
+static _Thread_local bool logging_exception;
+// Host allocation counters only: never read guest objects or mapped contents.
+static void log_host_memory(const char *phase, bool heap_statistics) {
+    task_vm_info_data_t vm={0};
+    mach_msg_type_number_t count=TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(),TASK_VM_INFO,(task_info_t)&vm,&count)==KERN_SUCCESS &&
+        count>=TASK_VM_INFO_REV1_COUNT)
+        LOG("[host-memory] %s footprint=%llu resident=%llu virtual=%llu available=%zu\n",phase,
+            (unsigned long long)vm.phys_footprint,(unsigned long long)vm.resident_size,
+            (unsigned long long)vm.virtual_size,nc_available_memory());
+    // Do not take allocator locks while reporting an allocator exception.
+    if (heap_statistics) {
+        malloc_statistics_t heap={0};
+        malloc_zone_statistics(NULL,&heap);
+        LOG("[host-memory] %s heap_in_use=%zu heap_allocated=%zu blocks=%u\n",phase,
+            heap.size_in_use,heap.size_allocated,heap.blocks_in_use);
+    }
+}
+static void schedule_host_memory(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC),
+                   dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        log_host_memory("sample",true);
+        schedule_host_memory();
+    });
+}
 static id log_exception(id exception) {
-    if ([exception isKindOfClass:NSException.class]) {
-        NSException *error=exception;
-        LOG("[native] Objective-C exception %s: %s\n",error.name.UTF8String,error.reason.UTF8String);
-        unsigned index=0;
-        for(NSNumber *frame in NSThread.callStackReturnAddresses) {
-            uintptr_t address=frame.unsignedLongLongValue;
-            uintptr_t base=(uintptr_t)guest.arena.executable;
-            BOOL isGuest=address>=base && address-base<guest.arena.size;
-            Dl_info symbol={0}; dladdr((void *)address,&symbol);
-            LOG("[native] exception frame %u native=%#lx preferred=%#llx symbol=%s\n",index++,address,isGuest?address-guest.slide:0,symbol.dli_sname?:"unknown");
-            if(index>=24) break;
+    // An allocation failure must not create an NSArray/NSNumber stack trace or
+    // a temporary UTF8String container while trying to report the failure.
+    // Keep recursion bounded if Foundation itself throws during diagnostics.
+    if (!logging_exception) {
+        logging_exception=true;
+        @try {
+            if ([exception isKindOfClass:NSException.class]) {
+                NSException *error=exception;
+                char name[128]="<unavailable>", reason[1024]="<unavailable or too long>";
+                if ([error.name isEqualToString:NSMallocException]) {
+                    LOG("[native] Objective-C exception NSMallocException (allocation failed)\n");
+                    log_host_memory("allocation-failure",false);
+                } else {
+                    if (![error.name getCString:name maxLength:sizeof name encoding:NSUTF8StringEncoding])
+                        strcpy(name,"<unavailable or too long>");
+                    if (![error.reason getCString:reason maxLength:sizeof reason encoding:NSUTF8StringEncoding])
+                        strcpy(reason,"<unavailable or too long>");
+                    LOG("[native] Objective-C exception %s: %s\n",name,reason);
+                }
+                void *frames[24];
+                int count=backtrace(frames,24);
+                for (int index=0; index<count; index++) {
+                    uintptr_t address=(uintptr_t)frames[index];
+                    uintptr_t base=(uintptr_t)guest.arena.executable;
+                    BOOL isGuest=address>=base && address-base<guest.arena.size;
+                    Dl_info symbol={0}; dladdr((void *)address,&symbol);
+                    LOG("[native] exception frame %u native=%#lx preferred=%#llx symbol=%s\n",(unsigned)index,address,isGuest?address-guest.slide:0,symbol.dli_sname?:"unknown");
+                }
+            } else LOG("[native] Objective-C exception object class=%s\n",object_getClassName(exception));
+        } @catch (id diagnostic_error) {
+            (void)diagnostic_error;
+            LOG("[native] exception diagnostic failed; preserving original exception\n");
         }
-    } else LOG("[native] Objective-C exception object class=%s\n",object_getClassName(exception));
+        logging_exception=false;
+    }
     return previous_exception_preprocessor ? previous_exception_preprocessor(exception) : exception;
 }
 // Opt-in crash diagnostics use only a preopened fd and raw memory reads in the
@@ -226,6 +304,7 @@ static void diagnostic_signal(int number,siginfo_t *info,void *context) {
     else action.sa_handler(number);
 }
 static int guest_sigaction(int number,const struct sigaction *action,struct sigaction *old) {
+    if (gp_active()) return gp_sigaction(caller_slot(__builtin_return_address(0)),number,action,old);
     if (gsv_enabled() && (number==SIGSEGV || number==SIGBUS)) return gsv_sigaction(number,action,old);
     if(signal_log_fd<0 || number<=0 || number>=NSIG) return sigaction(number,action,old);
     struct sigaction installed={0},replacement;
@@ -258,9 +337,12 @@ static bool publish(void *address, size_t size, void *context) {
     host_debugger_publish_arena(address, size, &completion);
     return completion == 0x49504144434f4445ULL;
 }
+static bool arena_contains(const NativeCodeMemory *arena, const void *address, size_t size) {
+    uintptr_t a=(uintptr_t)address, base=(uintptr_t)arena->executable;
+    return arena->executable && a>=base && a-base<=arena->size && size<=arena->size-(a-base);
+}
 static bool inside(const void *address, size_t size) {
-    uintptr_t a = (uintptr_t)address, base = (uintptr_t)guest.arena.executable;
-    return a >= base && a - base <= guest.arena.size && size <= guest.arena.size - (a - base);
+    return arena_contains(&guest.arena,address,size) || arena_contains(&separate_code_pool,address,size);
 }
 // Progress telemetry reads only runtime counters and kernel thread metadata.
 // In particular, it does not sample registers, stacks or application memory.
@@ -318,7 +400,9 @@ static void sample_all_threads(unsigned number) {
         kern_return_t kr=thread_get_state(threads[i],ARM_THREAD_STATE64,(thread_state_t)&state,&stateCount);
         uintptr_t pc=kr==KERN_SUCCESS?arm_thread_state64_get_pc(state):0;
         char where[512]; describe_caller((void *)pc,where,sizeof where);
-        LOG("[native] thread %u pc=%#lx %s\n",i,(unsigned long)pc,where);
+        thread_extended_info_data_t extended={0}; mach_msg_type_number_t extendedCount=THREAD_EXTENDED_INFO_COUNT;
+        if(thread_info(threads[i],THREAD_EXTENDED_INFO,(thread_info_t)&extended,&extendedCount)!=KERN_SUCCESS) extended.pth_name[0]=0;
+        LOG("[native] thread %u pc=%#lx %s name=%s\n",i,(unsigned long)pc,where,extended.pth_name);
         if(kr!=KERN_SUCCESS) { mach_port_deallocate(mach_task_self(),threads[i]); continue; }
         // Poor-man's stack: guest frames carry no frame pointers, so scan the
         // live stack and log only words that resolve to code, never the data.
@@ -377,6 +461,10 @@ static NSArray<NSString *> *guest_arguments;
 // argv[1..] for a compatibility runtime (profile command line); see ng_set_arguments.
 static char *launch_arguments[64];
 static size_t launch_argument_count;
+static NSString *native_profile_identifier;
+void ng_set_profile_identifier(const char *identifier) {
+    native_profile_identifier=identifier ? [NSString stringWithUTF8String:identifier] : nil;
+}
 void ng_set_arguments(const char *const *arguments, size_t count) {
     for (size_t i=0;i<launch_argument_count;i++) { free(launch_arguments[i]); launch_arguments[i]=NULL; }
     launch_argument_count=0;
@@ -505,7 +593,10 @@ static bool final_image_memset(void *destination, int value, size_t size) {
 static void *write_view(void *destination, size_t size) {
     // Local signing: the mem* hooks shadow or verify writes into __TEXT.
     if (signed_image.active) return destination;
-    if (inside(destination, size)) return (char *)guest.arena.writable + ((uintptr_t)destination - (uintptr_t)guest.arena.executable);
+    if (arena_contains(&guest.arena,destination,size))
+        return (char *)guest.arena.writable + ((uintptr_t)destination - (uintptr_t)guest.arena.executable);
+    if (arena_contains(&separate_code_pool,destination,size))
+        return (char *)separate_code_pool.writable + ((uintptr_t)destination - (uintptr_t)separate_code_pool.executable);
     return destination;
 }
 static void *guest_memcpy(void *destination, const void *source, size_t size) {
@@ -537,6 +628,11 @@ static void *guest_memmove(void *destination, const void *source, size_t size) {
     return destination;
 }
 static void *guest_memset(void *destination, int value, size_t size) {
+    if (size>=64u<<20) {
+        // Rare, and slow on fresh memory: name who asks (docs/MULTIPROCESS.md).
+        char where[256]; describe_caller(__builtin_return_address(0),where,sizeof where);
+        LOG("[native] memset(%p,%d,%zu MiB) from %s\n",destination,value,size>>20,where);
+    }
     if (inside_exec(destination,size)) {
         if (!final_image_memset(destination,value,size)) abort();
         return destination;
@@ -598,7 +694,11 @@ static int guest_mprotect(void *address, size_t size, int prot) {
     // Keep executable backing RX; imported stores/copies use its shared RW view.
     if (inside(address,size) && (prot & PROT_EXEC)) prot &= ~PROT_WRITE;
     int result = gsv_enabled()?gsv_protect(address,size,prot):gv_protect(&vm_budget,address,size,prot);
-    if (result) LOG("[native] mprotect failed errno=%d\n",errno);
+    if (result) {
+        int saved_errno=errno;
+        LOG("[native] mprotect(%p,%#zx,%d) failed errno=%d\n",address,size,prot,saved_errno);
+        errno=saved_errno;
+    }
     return result;
 }
 static int guest_munmap(void *address, size_t size) {
@@ -616,6 +716,10 @@ static int guest_munmap(void *address, size_t size) {
 }
 static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd, off_t offset) {
     if(trace_memory_operations()) LOG("[native] mmap(%p,%#zx,%d,%#x,%d,%lld)\n",address,size,prot,flags,fd,(long long)offset);
+    else if(size>=1u<<30) {
+        char where[256]; describe_caller(__builtin_return_address(0),where,sizeof where);
+        LOG("[native] mmap(%p,%zu MiB,%d,%#x) from %s\n",address,size>>20,prot,flags,where);
+    }
     if (inside_exec(address,size) && (flags & MAP_ANON) && (flags & MAP_PRIVATE) &&
         fd == -1 && offset == 0 && !((uintptr_t)address % GM_PAGE_SIZE) && size && !(size % GM_PAGE_SIZE)) {
         if (inside_shadow(address,size)) {
@@ -636,6 +740,7 @@ static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd,
         return address;
     }
     void *result;
+    static atomic_uint space_reports;
     if (gsv_enabled()) result=gsv_map(address,size,prot,flags,fd,offset);
     else if (gv_counts(&vm_budget,address,size,flags)) {
         size_t granted;
@@ -646,6 +751,38 @@ static void *guest_mmap(void *address, size_t size, int prot, int flags, int fd,
         errno=code;
     } else result=gv_map(&vm_budget,address,size,prot,flags,fd,offset);
     if(trace_memory_operations() || result==MAP_FAILED) LOG("[native] mmap -> %p errno=%d\n",result,result==MAP_FAILED?errno:0);
+    // Out of address space: what the process has, for the first few (several
+    // runtime processes share this one; docs/MULTIPROCESS.md).
+    if (result==MAP_FAILED && errno==ENOMEM && atomic_fetch_add(&space_reports,1)<3) {
+        int code=errno;
+        task_vm_info_data_t info={0}; mach_msg_type_number_t count=TASK_VM_INFO_COUNT;
+        vm_address_t at=0, previous_end=0, largest_start=0; vm_size_t largest=0, mapped=0;
+        struct { vm_address_t start; vm_size_t size; int protection, maximum; } big[5]={{0}};
+        if (task_info(mach_task_self(),TASK_VM_INFO,(task_info_t)&info,&count)==KERN_SUCCESS) {
+            at=info.min_address; previous_end=info.min_address;
+            for (;;) {
+                vm_size_t region_size=0; vm_region_basic_info_data_64_t region; mach_port_t object=MACH_PORT_NULL;
+                mach_msg_type_number_t region_count=VM_REGION_BASIC_INFO_COUNT_64;
+                if (vm_region_64(mach_task_self(),&at,&region_size,VM_REGION_BASIC_INFO_64,(vm_region_info_t)&region,&region_count,&object)!=KERN_SUCCESS) break;
+                if (at>previous_end && at-previous_end>largest) { largest=at-previous_end; largest_start=previous_end; }
+                // The five largest regions, smallest last.
+                for (int i=0;i<5;i++) if (region_size>big[i].size) {
+                    memmove(&big[i+1],&big[i],(4-i)*sizeof big[0]);
+                    big[i].start=at; big[i].size=region_size; big[i].protection=region.protection; big[i].maximum=region.max_protection;
+                    break;
+                }
+                mapped+=region_size; previous_end=at+region_size; at+=region_size;
+            }
+            if (info.max_address>previous_end && info.max_address-previous_end>largest) { largest=info.max_address-previous_end; largest_start=previous_end; }
+            LOG("[native] address space %#llx-%#llx: %llu MiB mapped, largest free %llu MiB at %#llx; %zu MiB asked\n",
+                (unsigned long long)info.min_address,(unsigned long long)info.max_address,(unsigned long long)(mapped>>20),
+                (unsigned long long)(largest>>20),(unsigned long long)largest_start,size>>20);
+            for (int i=0;i<5 && big[i].size;i++)
+                LOG("[native]   region %#lx %lu MiB protection %d/%d%s\n",(unsigned long)big[i].start,(unsigned long)(big[i].size>>20),
+                    big[i].protection,big[i].maximum,inside((void *)big[i].start,1)?" (arena)":"");
+        }
+        errno=code;
+    }
     return result;
 }
 static void guest_jit_protect(int enabled) { LOG("[native] jit write protection=%d (separate RW/RX views)\n",enabled); }
@@ -659,7 +796,7 @@ __attribute__((noinline,used,visibility("default")))
 void host_debugger_guest_complete(bool ok) { __asm__ volatile("" : : "r"(ok) : "memory"); }
 extern void *guest_tlv_bootstrap(const uint64_t descriptor[3]);
 // One registration per image, found by its descriptor range.
-static GTImage guest_tls[1+GL_MAX_LIBRARIES];
+static GTImage guest_tls[1+GL_MAX_LIBRARIES*GP_MAX_PROCESSES];
 static size_t guest_tls_count;
 void *guest_tlv_address(const uint64_t descriptor[3]) {
     const char *owner;
@@ -748,17 +885,22 @@ static int guest_uname(struct utsname *);
 static int guest_gethostname(char *, size_t);
 static char *guest_realpath(const char *, char *);
 static char *guest_realpath_extsn(const char *, char *);
-// Handles to the placed images a guest dlopen yields: the tag, RTLD_FIRST, and
-// the image in the low byte (0 the executable, n carried library n-1).
+// Handles to the placed images a guest dlopen yields: the tag, the process
+// slot, RTLD_FIRST, and the image in the low byte (0 the executable, n carried
+// library n-1).
 #define GUEST_HANDLE_TAG 0x7400000000000000ULL
 #define GUEST_HANDLE_FIRST 0x100ULL
-static bool guest_handle(const void *handle, size_t *index, bool *first) {
+#define GUEST_HANDLE_SLOT_SHIFT 12
+#define GUEST_HANDLE_SLOT_MASK (0xfULL<<GUEST_HANDLE_SLOT_SHIFT)
+static bool guest_handle(const void *handle, size_t *slot, size_t *index, bool *first) {
     uintptr_t value=(uintptr_t)handle;
-    if ((value&~(GUEST_HANDLE_FIRST|0xffULL))!=GUEST_HANDLE_TAG || (value&0xff)>carried.count) return false;
+    if ((value&~(GUEST_HANDLE_FIRST|GUEST_HANDLE_SLOT_MASK|0xffULL))!=GUEST_HANDLE_TAG) return false;
+    *slot=(value&GUEST_HANDLE_SLOT_MASK)>>GUEST_HANDLE_SLOT_SHIFT;
+    if (*slot>=process_slots || (value&0xff)>slot_set(*slot)->count) return false;
     *index=value&0xff; *first=(value&GUEST_HANDLE_FIRST)!=0;
     return true;
 }
-static void *placed_symbol(size_t index, const char *name, bool first);
+static void *placed_symbol(size_t slot, size_t index, const char *name, bool first);
 extern int __ulock_wait(uint32_t,void *,uint64_t,uint32_t);
 static bool (*shader_wait_pending)(void);
 static bool shader_pending(void) { return shader_wait_pending && shader_wait_pending(); }
@@ -805,9 +947,48 @@ static int guest_ulock_wait(uint32_t operation,void *address,uint64_t value,uint
     int code=errno;gwt_end(tid,previous);errno=code;
     pumping=false; return result;
 }
+// Process slots: the environment and threads per slot.
+static char *slot_getenv(const char *name) { return gp_getenv(caller_slot(__builtin_return_address(0)),name); }
+static int slot_setenv(const char *name,const char *value,int overwrite) {
+    return gp_setenv(caller_slot(__builtin_return_address(0)),name,value,overwrite);
+}
+static int slot_unsetenv(const char *name) { return gp_unsetenv(caller_slot(__builtin_return_address(0)),name); }
+static int slot_putenv(char *entry) { return gp_putenv(caller_slot(__builtin_return_address(0)),entry); }
+static char ***slot_environ(void) { return gp_environ(caller_slot(__builtin_return_address(0))); }
+static int slot_pthread_create(pthread_t *thread,const pthread_attr_t *attributes,void *(*start)(void *),void *argument) {
+    return gp_pthread_create(caller_slot(__builtin_return_address(0)),thread,attributes,start,argument);
+}
+static void (*dispatch_process_block)(size_t,unsigned,dispatch_queue_t,dispatch_time_t,dispatch_block_t);
+static void slot_dispatch_async(dispatch_queue_t queue, dispatch_block_t block) {
+    dispatch_process_block(caller_slot(__builtin_return_address(0)),0,queue,0,block);
+}
+static void slot_dispatch_sync(dispatch_queue_t queue, dispatch_block_t block) {
+    dispatch_process_block(caller_slot(__builtin_return_address(0)),1,queue,0,block);
+}
+static void slot_dispatch_after(dispatch_time_t when, dispatch_queue_t queue, dispatch_block_t block) {
+    dispatch_process_block(caller_slot(__builtin_return_address(0)),2,queue,when,block);
+}
+static size_t guest_process_slot(void) {
+    return gp_current_slot((uintptr_t)__builtin_return_address(0));
+}
 static void *hook(const char *name) {
 #define HOOK(n,f) if (!strcmp(name,n)) return (void *)&f
     HOOK("sigaction",guest_sigaction);
+    if (gsv_enabled()) {
+        HOOK("tolkara_software_reserve_aligned",gsv_reserve_aligned);
+        HOOK("tolkara_software_address_end",gsv_address_end);
+        HOOK("tolkara_software_address",gsv_address);
+    }
+    if (gp_active()) {
+        if (dispatch_process_block) {
+            HOOK("dispatch_async",slot_dispatch_async);
+            HOOK("dispatch_sync",slot_dispatch_sync);
+            HOOK("dispatch_after",slot_dispatch_after);
+        }
+        HOOK("tolkara_current_process_slot",guest_process_slot);
+        HOOK("getenv",slot_getenv); HOOK("setenv",slot_setenv); HOOK("unsetenv",slot_unsetenv);
+        HOOK("putenv",slot_putenv); HOOK("_NSGetEnviron",slot_environ); HOOK("pthread_create",slot_pthread_create);
+    }
     HOOK("__ulock_wait",guest_ulock_wait);
     HOOK("CFBundleGetMainBundle",guest_cf_main_bundle);
     HOOK("_NSGetExecutablePath",guest_executable_path);
@@ -863,10 +1044,10 @@ static _Thread_local char guest_dl_error[512];
 static void *guest_dlsym(void *handle, const char *name) {
     guest_dl_error[0]=0;
     void *value = name ? hook(name) : NULL;
-    size_t index; bool first;
-    bool placed=guest_handle(handle,&index,&first);
+    size_t slot, index; bool first;
+    bool placed=guest_handle(handle,&slot,&index,&first);
     if (!value && placed) {
-        value = placed_symbol(index,name,first);
+        value = placed_symbol(slot,index,name,first);
         (void)dlerror();   // a library it links lacking the name is not the guest's error
         if (!value) snprintf(guest_dl_error,sizeof guest_dl_error,"dlsym(%p, %s): symbol not found",handle,name?name:"(null)");
     }
@@ -875,7 +1056,8 @@ static void *guest_dlsym(void *handle, const char *name) {
         // (the executable, then what it carries) come first.
         char symbol[1024]; uint64_t address=0;
         if (name && snprintf(symbol,sizeof symbol,"_%s",name)<(int)sizeof symbol &&
-            gl_lookup(&carried,&guest.image,guest.path,BIND_SPECIAL_DYLIB_FLAT_LOOKUP,symbol,&address,NULL))
+            gl_lookup(slot_set(caller_slot(__builtin_return_address(0))),&guest.image,guest.path,
+                      BIND_SPECIAL_DYLIB_FLAT_LOOKUP,symbol,&address,NULL))
             value=(void *)(uintptr_t)address;
         else value=dlsym(handle,name);
     }
@@ -887,8 +1069,8 @@ static void *guest_dlsym(void *handle, const char *name) {
 }
 // Placed images stay for the life of the guest.
 static int guest_dlclose(void *handle) {
-    size_t index; bool first;
-    return guest_handle(handle,&index,&first) ? 0 : dlclose(handle);
+    size_t slot, index; bool first;
+    return guest_handle(handle,&slot,&index,&first) ? 0 : dlclose(handle);
 }
 static char *guest_dlerror(void) {
     static _Thread_local char reported[sizeof guest_dl_error];
@@ -929,9 +1111,22 @@ static FILE *guest_popen(const char *command, const char *mode) {
     if (!real_popen) real_popen=dlsym(RTLD_DEFAULT,"popen");
     return real_popen?real_popen(command,mode):NULL;
 }
+// The runtime spawning its own executable, with process slots: a free slot
+// runs it in this process instead (docs/MULTIPROCESS.md).
+static bool names_executable(const char *path) {
+    char resolved[PATH_MAX], own[PATH_MAX];
+    return path && realpath(path,resolved) && realpath(guest.path,own) && !strcmp(resolved,own);
+}
 static int guest_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *actions,
                              const posix_spawnattr_t *attributes, char *const argv[], char *const envp[]) {
     char shown[1024]; if (path) loggable_path(path,shown,sizeof shown);
+    if (gp_active() && names_executable(path)) {
+        // One that needs an app of its own goes to the second app (GuestRemote.h).
+        int result=gr_wants_remote(argv)?gr_hand_over(argv,envp):gp_spawn(argv,envp);
+        if (!result && pid) *pid=getpid();
+        LOG("[native] posix_spawn(%s) -> process slot, result %d\n",shown,result);
+        return result;
+    }
     int result=posix_spawn(pid,path,actions,attributes,argv,envp);
     LOG("[native] posix_spawn(%s) -> %d\n",path?shown:"NULL",result);
     return result;
@@ -940,11 +1135,22 @@ static int guest_posix_spawn(pid_t *pid, const char *path, const posix_spawn_fil
 // symbolizing on the Mac; host code is named by dladdr.
 static void describe_caller(const void *address, char *out, size_t size) {
     uintptr_t at=(uintptr_t)address;
-    const GuestLibrary *library=gl_library_at(&carried,at);
+    size_t slot=0;
+    const GuestLibrary *library=library_in_slots(at,&slot);
     const char *path=library?library->path:inside(address,1)?guest.path:NULL;
-    if (path) {
-        const char *leaf=strrchr(path,'/');
-        snprintf(out,size,"%s preferred=%#lx",leaf?leaf+1:path,(unsigned long)(at-(library?library->slide:guest.slide)));
+    if (library || !inside(address,1) || process_slots<2) {
+        if (path) {
+            const char *leaf=strrchr(path,'/');
+            int length=snprintf(out,size,"%s preferred=%#lx",leaf?leaf+1:path,(unsigned long)(at-(library?library->slide:guest.slide)));
+            if (slot && length>0 && (size_t)length<size) snprintf(out+length,size-length," (slot %zu)",slot);
+            return;
+        }
+    }
+    else {
+        // The arena outside the placed images: a slot's share of the code pool.
+        int owner=gp_slot_of_address(at);
+        if (owner>=0) snprintf(out,size,"code pool (slot %d) %p",owner,address);
+        else snprintf(out,size,"code pool %p",address);
         return;
     }
     Dl_info info={0};
@@ -960,10 +1166,14 @@ static void notify_guest_exit(int code) {
     if (guest_exit_observer && !alreadyNotified) guest_exit_observer(code,guest_exit_context);
 }
 static void guest_quick_exit(int code) {
+    size_t slot=gp_active()?gp_current_slot((uintptr_t)__builtin_return_address(0)):0;
+    if (slot) gp_slot_exit(slot,code);
     LOG("[native] _exit(%d) called\n",code);
     notify_guest_exit(code); _exit(code);
 }
 static void guest_exit(int code) {
+    size_t slot=gp_active()?gp_current_slot((uintptr_t)__builtin_return_address(0)):0;
+    if (slot) gp_slot_exit(slot,code);
     char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);
     LOG("[native] exit(%d) called from %s\n",code,caller);
     // exit() would flush these anyway; flushing first lets the observer see
@@ -972,6 +1182,8 @@ static void guest_exit(int code) {
     notify_guest_exit(code); exit(code);
 }
 static void guest_abort(void) {
+    size_t slot=gp_active()?gp_current_slot((uintptr_t)__builtin_return_address(0)):0;
+    if (slot) gp_slot_exit(slot,134);
     char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);
     LOG("[native] abort() called from %s\n",caller); abort();
 }
@@ -1474,8 +1686,10 @@ static NSString *library_path(NSString *install_name, const char *frameworks) {
 }
 // No library map: a generic build, which stubs what nothing provides.
 static bool guest_generic;
-// What each carried library links against outside the application.
+// What each carried library links against outside the application, per
+// process slot (slot 0: carried_hosts).
 static void *carried_hosts[GL_MAX_LIBRARIES][GI_MAX_DYLIBS];
+static void *(*slot_hosts[GP_MAX_PROCESSES])[GI_MAX_DYLIBS]={carried_hosts};
 static const char *const stub_kinds[]={"function","data","class","metaclass"};
 // A map entry with an empty target: the library is absent on this platform
 // (classify.py's 'absent' kind). It is never opened, and its imports never
@@ -1484,11 +1698,11 @@ static char absent_marker;
 #define ABSENT_LIBRARY ((void *)&absent_marker)
 // Opens what an image links against, except the application's own libraries,
 // which are placed, never opened. handles[i] answers the image's dylib i.
-static void open_dependencies(const GuestImage *image, const char *image_path, NSDictionary *mapping,
+static void open_dependencies(const GuestLinkSet *set, const GuestImage *image, const char *image_path, NSDictionary *mapping,
                               const char *frameworks, void **handles) {
     for(size_t i=0;i<image->dylib_count;i++) {
         handles[i]=NULL;
-        if (gl_carried(&carried,image,image_path,image->dylibs[i])) continue;
+        if (gl_carried(set,image,image_path,image->dylibs[i])) continue;
         NSString *original=@(image->dylibs[i]); NSString *target=mapping[original]?:library_path(original,frameworks);
         if (!target.length) {
             handles[i]=ABSENT_LIBRARY; LOG("[native] library %s absent on this platform; not opened\n",original.UTF8String); continue;
@@ -1528,11 +1742,17 @@ static void *guest_dlopen(const char *path, int mode) {
     char shown[1024]; loggable_path(path,shown,sizeof shown);
     // The executable or a carried library, by any name dyld takes, resolved
     // from the calling image (@loader_path, its @rpath).
-    const GuestLibrary *caller=gl_library_at(&carried,(uint64_t)(uintptr_t)__builtin_return_address(0));
+    // A library answers from its own process slot; the executable they share,
+    // from the calling thread's.
+    size_t slot;
+    const GuestLibrary *caller=library_in_slots((uint64_t)(uintptr_t)__builtin_return_address(0),&slot);
+    if (!caller) slot=caller_slot(__builtin_return_address(0));
+    GuestLinkSet *set=slot_set(slot);
     size_t index;
-    if (gl_placed(&carried,caller?&caller->image:&guest.image,caller?caller->path:guest.path,path,&index)) {
-        LOG("[native] dlopen(%s) -> placed %s\n",shown,index?carried.libraries[index-1].install_name:"executable");
-        return (void *)(uintptr_t)(GUEST_HANDLE_TAG|index|((mode&RTLD_FIRST)?GUEST_HANDLE_FIRST:0));
+    if (gl_placed(set,caller?&caller->image:&guest.image,caller?caller->path:guest.path,path,&index)) {
+        LOG("[native] dlopen(%s) -> placed %s%s\n",shown,index?set->libraries[index-1].install_name:"executable",
+            slot?[NSString stringWithFormat:@" (process slot %zu)",slot].UTF8String:"");
+        return (void *)(uintptr_t)(GUEST_HANDLE_TAG|((uint64_t)slot<<GUEST_HANDLE_SLOT_SHIFT)|index|((mode&RTLD_FIRST)?GUEST_HANDLE_FIRST:0));
     }
     // A mapped library never falls back to the real one beside its adapter.
     NSString *target=mapped_library(@(path));
@@ -1544,29 +1764,30 @@ static void *guest_dlopen(const char *path, int mode) {
     }
     // Original code inside the application folder is placed by this loader or
     // not at all: never handed to the host's dyld.
-    if (gl_inside(&carried,path)) return refuse_dlopen(shown,"not a library this application carries; only its placed images open");
+    if (gl_inside(set,path)) return refuse_dlopen(shown,"not a library this application carries; only its placed images open");
     void *handle=dlopen(path,mode);
     LOG("[native] dlopen(%s) -> %p\n",shown,handle);
     return handle;
 }
 // dlsym on a placed image: its own exports, then, unless it was opened
 // RTLD_FIRST, those of the libraries it links, as dyld searches a handle.
-static void *placed_symbol(size_t index, const char *name, bool first) {
-    const GuestImage *image=index?&carried.libraries[index-1].image:&guest.image;
-    const char *path=index?carried.libraries[index-1].path:guest.path;
-    void *const *host=index?carried_hosts[index-1]:guest.libraries;
+static void *placed_symbol(size_t slot, size_t index, const char *name, bool first) {
+    GuestLinkSet *set=slot_set(slot);
+    const GuestImage *image=index?&set->libraries[index-1].image:&guest.image;
+    const char *path=index?set->libraries[index-1].path:guest.path;
+    void *const *host=index?slot_hosts[slot][index-1]:guest.libraries;
     char symbol[1024]; uint64_t address=0;
     if (!name || snprintf(symbol,sizeof symbol,"_%s",name)>=(int)sizeof symbol) return NULL;
-    if (gl_lookup(&carried,image,path,BIND_SPECIAL_DYLIB_SELF,symbol,&address,NULL)) return (void *)(uintptr_t)address;
+    if (gl_lookup(set,image,path,BIND_SPECIAL_DYLIB_SELF,symbol,&address,NULL)) return (void *)(uintptr_t)address;
     for (size_t i=0;!first && i<image->dylib_count;i++) {
-        if (gl_lookup(&carried,image,path,(int)i+1,symbol,&address,NULL)) return (void *)(uintptr_t)address;
+        if (gl_lookup(set,image,path,(int)i+1,symbol,&address,NULL)) return (void *)(uintptr_t)address;
         void *value=host[i] && host[i]!=ABSENT_LIBRARY ? dlsym(host[i],name) : NULL;
         if (value) return value;
     }
     return NULL;
 }
 // The image being fixed up. Ordinals index its own list.
-typedef struct { const GuestImage *image; const char *path; void *const *host; } GuestBinder;
+typedef struct { const GuestLinkSet *set; const GuestImage *image; const char *path; void *const *host; } GuestBinder;
 static bool resolve(const char *symbol, int ordinal, bool weak, bool lazy, uint64_t *value, void *context) {
     const GuestBinder *binder = context;
     const char *name = symbol[0]=='_' ? symbol+1 : symbol;
@@ -1574,7 +1795,7 @@ static bool resolve(const char *symbol, int ordinal, bool weak, bool lazy, uint6
     // The application itself (its executable, or the carried library the ordinal
     // names) answers before the system does.
     uint64_t own_value=0;
-    if (!pointer && binder && gl_lookup(&carried,binder->image,binder->path,ordinal,symbol,&own_value,NULL)) {
+    if (!pointer && binder && gl_lookup(binder->set,binder->image,binder->path,ordinal,symbol,&own_value,NULL)) {
         *value=own_value; return true;
     }
     bool named=binder && ordinal>0 && (size_t)ordinal<=binder->image->dylib_count;
@@ -1603,6 +1824,17 @@ static bool register_objc_image(const char *name, const struct mach_header *head
     map_images(1,names,&header);
     load_image(name,header);
     return true;
+}
+// A process slot starts as the launch did: the executable's main, with the
+// spawned command line. What it opens comes from the slot (guest_dlopen).
+static void start_slot(size_t slot, int argc, char **argv) {
+    char *executable_argument=NULL;
+    asprintf(&executable_argument,"executable_path=%s",guest.path);
+    const char *env[]={NULL}, *apple[]={executable_argument,NULL};
+    LOG("[native] process slot %zu enters main with %d arguments\n",slot,argc);
+    int result=((int (*)(int,const char **,const char **,const char **))(guest.image.entry+guest.slide))(argc,(const char **)argv,env,apple);
+    LOG("[native] process slot %zu: main returned %d\n",slot,result);
+    gp_slot_exit(slot,result);
 }
 // A carried library's own initializers, already relocated.
 static bool run_initializers(const GuestImage *image, uint64_t slide, const char *name,
@@ -1647,6 +1879,54 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         }
     }
     char error[2048]; bool ok=false; GFStats stats;
+    // Reserve required address space before loading libraries or preparing the code arena.
+    if (getenv("TOLKARA_VM_MAP")) {
+        // Diagnostic: the address space as the system laid it out, read only (docs/MULTIPROCESS.md).
+        // Every entry of 64 MiB or more, and all entries in the low range above the shared region
+        // (12-64 GB); submaps are logged and then entered.
+        vm_address_t at=0; natural_t depth=0;
+        for (unsigned n=0;n<100000;n++) {
+            vm_size_t size=0; vm_region_submap_info_data_64_t info; mach_msg_type_number_t count=VM_REGION_SUBMAP_INFO_COUNT_64;
+            vm_address_t found=at;
+            if (vm_region_recurse_64(mach_task_self(),&found,&size,&depth,(vm_region_recurse_info_t)&info,&count)!=KERN_SUCCESS) break;
+            BOOL low=found<(vm_address_t)0x1000000000 && found+size>(vm_address_t)0x300000000;
+            if (size>=((vm_size_t)64<<20) || low || info.is_submap)
+                LOG("[vm-map] %#lx-%#lx %lu MiB prot %d/%d tag %u share %u submap %d object %#x offset %#llx resident %u depth %u\n",
+                    (unsigned long)found,(unsigned long)(found+size),(unsigned long)(size>>20),info.protection,info.max_protection,
+                    info.user_tag,info.share_mode,info.is_submap,info.object_id,(unsigned long long)info.offset,info.pages_resident,depth);
+            if (info.is_submap) { depth++; at=found; continue; }
+            if (found+size<=found) break;
+            at=found+size;
+        }
+    }
+    if (process_slots>1) {
+        // TOLKARA_LARGE_RESERVE_MB: one aligned block at the top of the address space, kept
+        // free from startup for a process that reserves that much at once (Chromium's
+        // allocator wants 32 GiB in one piece; what the system leaves free is fragmented).
+        const char *large_mb=getenv("TOLKARA_LARGE_RESERVE_MB");
+        if (large_mb && *large_mb) {
+            size_t large=(size_t)strtoull(large_mb,NULL,10)<<20, alignment=(size_t)16<<30;
+            task_vm_info_data_t info={0}; mach_msg_type_number_t count=TASK_VM_INFO_COUNT;
+            vm_address_t reserved=0;
+            if (large && task_info(mach_task_self(),TASK_VM_INFO,(task_info_t)&info,&count)==KERN_SUCCESS &&
+                info.max_address>=info.min_address && large<=info.max_address-info.min_address) {
+                if (alignment>large) alignment=large;
+                for (vm_address_t at=(vm_address_t)((info.max_address-large)&~(alignment-1)); at>=info.min_address && !reserved; at-=alignment) {
+                    vm_address_t address=at;
+                    if (vm_allocate(mach_task_self(),&address,large,VM_FLAGS_FIXED)==KERN_SUCCESS) {
+                        vm_protect(mach_task_self(),address,large,TRUE,VM_PROT_NONE);
+                        reserved=address;
+                    }
+                    if (at<alignment) break;
+                }
+            }
+            if (reserved) {
+                gp_set_large_reserve(reserved,reserved+large);
+                LOG("[native] %zu MiB reserved at %#lx for large reservations (TOLKARA_LARGE_RESERVE_MB)\n",large>>20,(unsigned long)reserved);
+            }
+            else { LOG("[native] no room for %zu MiB of required large reservations; guest entry blocked (TOLKARA_LARGE_RESERVE_MB)\n",large>>20); goto done; }
+        }
+    }
     if (!gi_load(path,&guest.image,error,sizeof error)) { LOG("[native] load failed: %s\n",error); goto done; }
     // Carried libraries load as data too, placed beside the executable.
     if (!gl_load(&carried,&guest.image,path,error,sizeof error))
@@ -1659,18 +1939,37 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     // The executable answers for its own exports whatever was carried.
     carried.executable_image=&guest.image;
     gl_report(&carried,log);
+    // Process slots: each further one carries its own copy of the runtime's
+    // libraries (docs/MULTIPROCESS.md). Objective-C classes a copy registers
+    // again are reached through that copy's own class references; lookups by
+    // name find the first copy's.
+    gp_configure(process_slots,log,start_slot);
+    gr_configure(log);
+    slot_sets[0]=&carried;
+    for (size_t k=1;k<process_slots;k++) {
+        GuestLinkSet *set=calloc(1,sizeof *set);
+        if (!set || !gl_load(set,&guest.image,path,error,sizeof error) ||
+            !gl_carry(set,launch_root,(const char *const *)launch_libraries,launch_library_count,error,sizeof error)) {
+            LOG("[native] process slot %zu cannot carry the runtime's libraries: %s\n",k,set?error:"out of memory"); goto done;
+        }
+        set->executable_image=&guest.image;
+        slot_sets[k]=set;
+        LOG("[native] process slot %zu: %zu libraries of its own\n",k,set->count);
+    }
     guest.base=guest.image.header_address;
     uint64_t end=guest.base;
     for(size_t i=0;i<guest.image.segment_count;i++) {
         GISegment *s=&guest.image.segments[i]; if(s->prot && s->address+s->size>end) end=s->address+s->size;
     }
-    // One region for everything: a debugger prepares it once.
-    uint64_t library_offset[GL_MAX_LIBRARIES], library_low[GL_MAX_LIBRARIES];
+    // One region for everything: a debugger prepares it once. Every process
+    // slot's libraries are placed now; nothing can be prepared later.
+    static uint64_t library_offset[GP_MAX_PROCESSES][GL_MAX_LIBRARIES], library_low[GP_MAX_PROCESSES][GL_MAX_LIBRARIES];
     size_t total=(size_t)(end-guest.base);
-    for (size_t i=0;i<carried.count;i++) {
-        library_offset[i]=total;
-        total+=(size_t)gi_extent(&carried.libraries[i].image,&library_low[i]);
-    }
+    for (size_t k=0;k<process_slots;k++)
+        for (size_t i=0;i<slot_set(k)->count;i++) {
+            library_offset[k][i]=total;
+            total+=(size_t)gi_extent(&slot_set(k)->libraries[i].image,&library_low[k][i]);
+        }
     // A runtime's own code pool after the images (ng_set_code_pool).
     size_t page_size=(size_t)getpagesize(), pool_offset=total, pool_size=0;
     if (code_pool_size) {
@@ -1713,6 +2012,9 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             total,limit,available,available?"":", unknown here");
         if (total>limit) { LOG("[native] not enough room for this arena; guest entry blocked\n"); goto done; }
     }
+    const char *split_setting=getenv("TOLKARA_SEPARATE_CODE_POOL");
+    bool split_pool=local && pool_size && !jit_probe && split_setting && !strcmp(split_setting,"1");
+    size_t image_arena_size=split_pool ? pool_offset : total;
     // An arena an enabler provided earlier: taken, refused, or given back first.
     NGReservedChoice reserved=ng_reserved_choice(external,reserved_arena.published,total,reserved_arena.size);
     if (reserved==NG_RESERVED_REFUSE) {
@@ -1729,8 +2031,19 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     if (signed_backend)
         arena_ready=signed_image_prepare(guest.base+total,error,sizeof error);
 #if TOLKARA_INTEGRATED_AUTH
-    else if(local)
-        arena_ready=nc_create_managed(&guest.arena,total,TKPrepareLocalArena,NULL,&local_quarantine);
+    else if(local) {
+        const char *low_only=getenv("TOLKARA_REQUIRE_LOW_ARENA");
+        uintptr_t ceiling=split_pool || (low_only && !strcmp(low_only,"1")) ? ((uintptr_t)1<<36) : UINTPTR_MAX;
+        // One attachment prepares both regions and confirms detachment before
+        // either is published. An uncertain result quarantines both views.
+        if(split_pool)
+            arena_ready=nc_create_pair(&guest.arena,image_arena_size,ceiling,
+                &separate_code_pool,pool_size,TKPrepareLocalArenaPair,NULL,&local_quarantine,&separate_pool_quarantine);
+        else
+            arena_ready=nc_create_managed_below(&guest.arena,total,ceiling,TKPrepareLocalArena,NULL,&local_quarantine);
+        if (!arena_ready && errno==ENOSPC)
+            LOG("[native] no suitable low-address execution region; preparation was not started; restart required\n");
+    }
 #endif
     else if(take_reserved) {
         guest.arena=reserved_arena; reserved_arena=(NativeCodeMemory){0}; arena_ready=true;
@@ -1749,12 +2062,31 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     // Whichever route prepared it: nothing attached, really executable.
     if (external && !da_entry_allowed(&guest.arena,guest.log)) { LOG("[native] guest entry blocked\n"); goto done; }
     guest.slide=(uintptr_t)guest.arena.executable-guest.base;
-    carried.executable_slide=guest.slide;
-    for (size_t i=0;i<carried.count;i++)
-        carried.libraries[i].slide=(uintptr_t)guest.arena.executable+library_offset[i]-library_low[i];
+    for (size_t k=0;k<process_slots;k++) {
+        GuestLinkSet *set=slot_set(k);
+        set->executable_slide=guest.slide;
+        for (size_t i=0;i<set->count;i++)
+            set->libraries[i].slide=(uintptr_t)guest.arena.executable+library_offset[k][i]-library_low[k][i];
+    }
     LOG("[native] arena ready base=%p slide=%#llx\n",guest.arena.executable,(unsigned long long)guest.slide);
-    if (pool_size)
-        expand_code_pool((char *)guest.arena.executable+pool_offset,(char *)guest.arena.writable+pool_offset,pool_size);
+    for (size_t k=0;k<process_slots;k++) gp_set_layout(k,&(GPSlotLayout){.set=slot_set(k)});
+    if (pool_size) {
+        // The process slots share the code pool, each taking a range when it starts
+        // (TOLKARA_PROCESS_POOL rules, else equal shares); one slot takes all of it.
+        uintptr_t pool_start=split_pool ? (uintptr_t)separate_code_pool.executable : (uintptr_t)guest.arena.executable+pool_offset;
+        uintptr_t pool_alias=split_pool ? (uintptr_t)separate_code_pool.writable : (uintptr_t)guest.arena.writable+pool_offset;
+        gp_set_pool(pool_start,pool_start+pool_size,pool_alias,process_slots>1?getenv("TOLKARA_PROCESS_POOL"):NULL);
+        char *command[65]={(char *)guest.path};
+        for (size_t i=0;i<launch_argument_count;i++) command[i+1]=launch_arguments[i];
+        if (process_slots>1) {
+            gp_set_environment_rules(getenv("TOLKARA_PROCESS_ENV"));
+            gp_apply_environment_rules(0,(int)launch_argument_count,command+1);
+        }
+        // The rules see the program, not the runtime's own executable.
+        if (!gp_take_pool(0,(int)launch_argument_count,command+1)) { LOG("[native] no code pool for the first process; guest entry blocked\n"); goto done; }
+        const GPSlotLayout *first=gp_layout(0);
+        expand_code_pool((char *)first->pool_start,(char *)first->pool_alias,first->pool_end-first->pool_start);
+    }
     if (jit_probe) {
         // Diagnostic (docs/WINDOWS.md): now that the helper has prepared the
         // arena and detached, may this process execute memory it maps itself?
@@ -1765,9 +2097,9 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         size_t page=(size_t)getpagesize();
         HPArenaResult arena=arena_execution_probe((char *)guest.arena.executable+probe_offset,
                                                   (char *)guest.arena.writable+probe_offset,page,log);
-        LOG("[jit-probe] arena: alias=%s rewrite=%s direct=%s after-direct=%s direct_errno=%d rwx_errno=%d\n",
-            arena.alias_execute?"PASS":"FAIL",arena.alias_rewrite?"PASS":"FAIL",arena.direct_rewrite?"PASS":"FAIL",
-            arena.alias_after_direct?"PASS":"FAIL",arena.direct_errno,arena.rwx_errno);
+        LOG("[jit-probe] arena: alias=%s rewrite=%s remap=%s(error %d) direct=%s after-direct=%s direct_errno=%d rwx_errno=%d\n",
+            arena.alias_execute?"PASS":"FAIL",arena.alias_rewrite?"PASS":"FAIL",arena.remap_execute?"PASS":"FAIL",arena.remap_errno,
+            arena.direct_rewrite?"PASS":"FAIL",arena.alias_after_direct?"PASS":"FAIL",arena.direct_errno,arena.rwx_errno);
         HPResult wx=host_execution_probe(HP_WRITE_THEN_EXECUTE,log);
         LOG("[jit-probe] write-then-execute: execute=%s rewrite=%s allocation_errno=%d protection_errno=%d\n",
             wx.executable?"PASS":"FAIL",wx.rewrite_executable?"PASS":"FAIL",wx.allocation_errno,wx.protection_errno);
@@ -1796,12 +2128,24 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         }
         NSString *support=[@(frameworks) stringByAppendingPathComponent:@"libAKSupport.dylib"];
         if (!dlopen(support.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL)) { LOG("[native] support load failed: %s\n",dlerror()); goto done; }
-        open_dependencies(&guest.image,guest.path,mapping,frameworks,guest.libraries);
-        // A carried library's own dependencies, which the executable may not link.
-        for (size_t i=0;i<carried.count;i++)
-            open_dependencies(&carried.libraries[i].image,carried.libraries[i].path,mapping,frameworks,carried_hosts[i]);
+        open_dependencies(&carried,&guest.image,guest.path,mapping,frameworks,guest.libraries);
+        // A carried library's own dependencies, which the executable may not link;
+        // each process slot's copies too.
+        for (size_t k=0;k<process_slots;k++) {
+            GuestLinkSet *set=slot_set(k);
+            if (k && !(slot_hosts[k]=calloc(set->count?set->count:1,sizeof *slot_hosts[k]))) { LOG("[native] process slot %zu: out of memory\n",k); goto done; }
+            for (size_t i=0;i<set->count;i++)
+                open_dependencies(set,&set->libraries[i].image,set->libraries[i].path,mapping,frameworks,slot_hosts[k][i]);
+        }
     }
     {
+        dispatch_process_block=dlsym(RTLD_DEFAULT,"AKDispatchProcessBlock");
+        void (*configure_callbacks)(size_t,size_t (*)(uintptr_t))=dlsym(RTLD_DEFAULT,"AKConfigureProcessCallbacks");
+        if (configure_callbacks && process_slots>1) configure_callbacks(process_slots,gp_current_slot);
+        gp_set_exit_callback(dlsym(RTLD_DEFAULT,"AKGuestProcessDidExit"));
+        const char *reclaim=getenv("TOLKARA_PROCESS_RECLAIM_RANGES");
+        if (reclaim && !strcmp(reclaim,"1"))
+            gp_set_retirement_check(dlsym(RTLD_DEFAULT,"AKProcessRetirementComplete"));
         void (*set_nibs)(const char *)=dlsym(RTLD_DEFAULT,"AKSetGuestNibDirectory");
         if(set_nibs) set_nibs([NSHomeDirectory() stringByAppendingPathComponent:@"Documents/GuestCompatibility/Nibs"].fileSystemRepresentation);
     }
@@ -1816,11 +2160,21 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     case_insensitive_files=[NSProcessInfo.processInfo.arguments containsObject:@"--case-insensitive-files"];
     if (case_insensitive_files) LOG("[native] file lookups retried ignoring case (--case-insensitive-files; experimental)\n");
-    bool software_requested=[NSProcessInfo.processInfo.arguments containsObject:@"--cyberpunk-software-vm"];
+    bool cyberpunk_software=[NSProcessInfo.processInfo.arguments containsObject:@"--cyberpunk-software-vm"];
+    const char *steam_option=getenv("TOLKARA_STEAM_SOFTWARE_VM");
+    bool steam_profile=[native_profile_identifier isEqualToString:@"steam-windows"];
+    bool steam_software=[NSProcessInfo.processInfo.arguments containsObject:@"--steam-software-vm"] ||
+        (steam_profile && steam_option && !strcmp(steam_option,"1"));
+    bool software_requested=cyberpunk_software || steam_software;
     if (software_requested) {
-        if (![NSProcessInfo.processInfo.arguments containsObject:@"--app=cyberpunk-2077"] ||
-            ![@(guest.path) hasSuffix:@"Cyberpunk2077.app/Contents/MacOS/Cyberpunk2077"] || signed_image.active) {
-            LOG("[software-vm] refused: this opt-in is restricted to the Cyberpunk native profile\n"); goto done;
+        bool allowed_cyberpunk=cyberpunk_software && !steam_software &&
+            [NSProcessInfo.processInfo.arguments containsObject:@"--app=cyberpunk-2077"] &&
+            [@(guest.path) hasSuffix:@"Cyberpunk2077.app/Contents/MacOS/Cyberpunk2077"];
+        bool allowed_steam=steam_software && !cyberpunk_software &&
+            (steam_profile || [NSProcessInfo.processInfo.arguments containsObject:@"--app=steam-windows"]) &&
+            [@(guest.path) hasSuffix:@"Steam/Wine/lib/wine/aarch64-unix/wine"];
+        if ((!allowed_cyberpunk && !allowed_steam) || signed_image.active) {
+            LOG("[software-vm] refused: opt-in does not match an authorized native profile\n"); goto done;
         }
         const char *backing=getenv("TOLKARA_SOFTWARE_VM_MB"), *force=getenv("TOLKARA_SOFTWARE_VM_FORCE_MB");
         char *rest=NULL; unsigned long long megabytes=4096, forced=0;
@@ -1840,6 +2194,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         if(!started) {
             LOG("[software-vm] initialization failed\n"); goto done;
         }
+        gsv_x86_ordered(allowed_steam);
         const char *native_pool=getenv("TOLKARA_SOFTWARE_VM_NATIVE_POOL_MB");
         if(native_pool && *native_pool) {
             unsigned long long native_mb=strtoull(native_pool,&rest,10);
@@ -1858,7 +2213,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             gsv_force_pool((size_t)forced_mb<<20);
             LOG("[software-vm] force exact pool=%llu MiB to software\n",forced_mb);
         }
-        LOG("[software-vm] Cyberpunk-only runtime emulation enabled, backing=%llu MiB; native mappings attempted first\n",megabytes);
+        LOG("[software-vm] %s runtime emulation enabled, backing=%llu MiB; native mappings attempted first\n",steam_software?"Steam":"Cyberpunk",megabytes);
         const char *cpus=getenv("TOLKARA_SOFTWARE_VM_CPUS");
         if(cpus && *cpus) {
             unsigned long long limit=strtoull(cpus,&rest,10);
@@ -1867,6 +2222,9 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             LOG("[software-vm] experimental guest CPU topology limit=%u\n",software_cpu_limit);
         }
         if(trace_guest) schedule_memory_progress(1,0);
+        if(getenv("TOLKARA_HOST_MEMORY_DIAGNOSTICS")) {
+            schedule_host_memory();
+        }
     }
     const char *budget_mb=getenv("TOLKARA_VM_BUDGET_MB");
     if (!software_requested && budget_mb && *budget_mb) {
@@ -1880,23 +2238,28 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     }
     if([NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"]) signal_log_fd=open([[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/native-signal.log"] fileSystemRepresentation],O_WRONLY|O_CREAT|O_TRUNC,0600);
     shader_wait_pending=dlsym(RTLD_DEFAULT,"AKShaderWaitPending");
-    for (size_t i=0;i<carried.count;i++) {
-        GuestLibrary *library=&carried.libraries[i];
-        GFStats library_stats;
-        GuestBinder binder={.image=&library->image,.path=library->path,.host=carried_hosts[i]};
-        if (!gf_apply(&library->image,library->slide,resolve,&binder,&library_stats,error,sizeof error)) {
-            LOG("[native] %s fixups failed: %s\n",library->install_name,error); goto done;
+    for (size_t k=0;k<process_slots;k++)
+        for (size_t i=0;i<slot_set(k)->count;i++) {
+            GuestLinkSet *set=slot_set(k);
+            GuestLibrary *library=&set->libraries[i];
+            GFStats library_stats;
+            GuestBinder binder={.set=set,.image=&library->image,.path=library->path,.host=slot_hosts[k][i]};
+            if (!gf_apply(&library->image,library->slide,resolve,&binder,&library_stats,error,sizeof error)) {
+                LOG("[native] %s fixups failed: %s\n",library->install_name,error); goto done;
+            }
+            if (!k) LOG("[native] %s rebases=%zu binds=%zu\n",library->install_name,library_stats.rebases,library_stats.binds);
         }
-        LOG("[native] %s rebases=%zu binds=%zu\n",library->install_name,library_stats.rebases,library_stats.binds);
-    }
-    GuestBinder binder={.image=&guest.image,.path=guest.path,.host=guest.libraries};
+    GuestBinder binder={.set=&carried,.image=&guest.image,.path=guest.path,.host=guest.libraries};
     if (!gf_apply(&guest.image,guest.slide,resolve,&binder,&stats,error,sizeof error)) { LOG("[native] fixups failed: %s\n",error); goto done; }
     LOG("[native] resolved rebases=%zu binds=%zu\n",stats.rebases,stats.binds);
     LOG("[native] stubs=%u of %u\n",gs_used(),gs_capacity());
     if (!setup_tls(&guest.image,guest.slide,"the application")) goto done;
     // Carried libraries get the treatment dyld gives them.
-    for (size_t i=0;i<carried.count;i++)
-        if (!setup_tls(&carried.libraries[i].image,carried.libraries[i].slide,carried.libraries[i].install_name)) goto done;
+    for (size_t k=0;k<process_slots;k++)
+        for (size_t i=0;i<slot_set(k)->count;i++) {
+            GuestLibrary *library=&slot_set(k)->libraries[i];
+            if (!setup_tls(&library->image,library->slide,library->install_name)) goto done;
+        }
     size_t signed_pages_skipped=0;
     for(size_t i=0;i<guest.image.memory.count;i++) {
         GMPage *page=&guest.image.memory.pages[i];
@@ -1924,12 +2287,13 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         }
     }
     // Carried libraries are never part of a signed container: plain pages.
-    for (size_t i=0;i<carried.count;i++) {
-        GuestLibrary *library=&carried.libraries[i];
-        uint64_t base=library_low[i];
+    for (size_t k=0;k<process_slots;k++)
+    for (size_t i=0;i<slot_set(k)->count;i++) {
+        GuestLibrary *library=&slot_set(k)->libraries[i];
+        uint64_t base=library_low[k][i];
         for (size_t j=0;j<library->image.memory.count;j++) {
             GMPage *page=&library->image.memory.pages[j];
-            if (page->bytes && !nc_write(&guest.arena,(size_t)(page->address-base+library_offset[i]),page->bytes,GM_PAGE_SIZE)) {
+            if (page->bytes && !nc_write(&guest.arena,(size_t)(page->address-base+library_offset[k][i]),page->bytes,GM_PAGE_SIZE)) {
                 LOG("[native] %s: cannot place page %#llx\n",library->install_name,(unsigned long long)page->address); goto done;
             }
         }
@@ -1944,15 +2308,19 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     if (!ng_unwind_add(&guest.image, guest.slide)) {
         LOG("[native] cannot register executable unwind metadata\n"); goto done;
     }
-    for (size_t i = 0; i < carried.count; ++i) {
-        GuestLibrary *library = &carried.libraries[i];
-        if (!ng_unwind_add(&library->image, library->slide)) {
-            LOG("[native] cannot register library unwind metadata: %s\n", library->install_name); goto done;
+    for (size_t k = 0; k < process_slots; ++k)
+        for (size_t i = 0; i < slot_set(k)->count; ++i) {
+            GuestLibrary *library = &slot_set(k)->libraries[i];
+            if (!ng_unwind_add(&library->image, library->slide)) {
+                LOG("[native] cannot register library unwind metadata: %s\n", library->install_name); goto done;
+            }
         }
-    }
     LOG("[native] unwind metadata registered for executable and %zu libraries\n", carried.count);
     if(gsv_enabled() && !gsv_code_alias(guest.arena.executable,guest.arena.writable,guest.arena.size)) {
         LOG("[software-vm] cannot register the loader-owned instruction view\n"); goto done;
+    }
+    if(gsv_enabled() && split_pool && !gsv_code_alias(separate_code_pool.executable,separate_code_pool.writable,separate_code_pool.size)) {
+        LOG("[software-vm] cannot register the separate code-pool instruction view\n"); goto done;
     }
     {
         // The unpacking initializer runs in both backends. With Local signing
@@ -1987,6 +2355,17 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             if (!register_objc_image(library->path,(const struct mach_header *)(library->image.header_address+library->slide)) ||
                 !run_initializers(&library->image,library->slide,library->install_name,argc,argv,env,apple)) { ok=false; goto done; }
             startup_count(n+1);
+        }
+        // Each process slot's copies, as the launch's own.
+        for (size_t k=1;full_startup && k<process_slots;k++) {
+            GuestLinkSet *set=slot_set(k);
+            size_t slot_order[GL_MAX_LIBRARIES], slot_ordered=gl_initialization_order(set,slot_order);
+            for (size_t n=0;n<slot_ordered;n++) {
+                GuestLibrary *library=&set->libraries[slot_order[n]];
+                if (!register_objc_image(library->path,(const struct mach_header *)(library->image.header_address+library->slide)) ||
+                    !run_initializers(&library->image,library->slide,library->install_name,argc,argv,env,apple)) { ok=false; goto done; }
+            }
+            LOG("[native] process slot %zu: %zu libraries ready\n",k,slot_ordered);
         }
         // Nothing to call where the image records no initializer.
         startup_begin("running the app's startup code",full_startup?guest.image.initializer_count:1);
@@ -2039,7 +2418,61 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             LOG("[native] all %llu initializers returned; entering original main=%p\n",(unsigned long long)guest.image.initializer_count,(void *)(guest.image.entry+guest.slide));
             if([NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"]) schedule_native_sample(mach_thread_self(),1);
             startup_begin("the app is running its own startup",0);
+            // The second app runs the processes the first hands over, not a program of its own:
+            // the first one here, as this app's own first program (its windows are the app's),
+            // the run loop kept turning while it is awaited; later ones in slots.
+#if TARGET_OS_IOS
+            __block UIBackgroundTaskIdentifier handover_task=UIBackgroundTaskInvalid;
+#endif
+            if (getenv("TOLKARA_SLOT_HOST")) {
+                // One finite owned test, not a background allowance for arbitrary guests.
+                if ([NSProcessInfo.processInfo.arguments containsObject:@"--finite-handover-probe"]) {
+#if TARGET_OS_IOS
+                    if (![NSProcessInfo.processInfo.arguments containsObject:@"--app=mp-process-probe"] ||
+                        ![@(guest.path) hasSuffix:@"MPTest/Wine/lib/wine/aarch64-unix/wine"] ||
+                        UIApplication.sharedApplication.applicationState!=UIApplicationStateActive) {
+                        LOG("[handover-probe] refused: expected owned profile in foreground\n"); ok=false; goto done;
+                    }
+                    handover_task=[UIApplication.sharedApplication beginBackgroundTaskWithName:@"Finite Wine handover validation"
+                        expirationHandler:^{
+                            LOG("[handover-probe] expired; ending owned diagnostic with exit 124\n");
+                            if (handover_task!=UIBackgroundTaskInvalid)
+                                [UIApplication.sharedApplication endBackgroundTask:handover_task];
+                            _exit(124);
+                        }];
+                    if (handover_task==UIBackgroundTaskInvalid) {
+                        LOG("[handover-probe] background allowance refused\n"); ok=false; goto done;
+                    }
+                    LOG("[handover-probe] finite background allowance started; no renewal\n");
+#else
+                    LOG("[handover-probe] requires iOS\n"); ok=false; goto done;
+#endif
+                }
+                gr_serve_in_background();
+                char **handed_argv=NULL, **handed_envp=NULL;
+                while (!gr_take_first(&handed_argv,&handed_envp)) CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.25,true);
+                // This app's own settings (its profile, its rules) stay; the rest comes from the
+                // first app, and the server connection is the one handed over.
+                for (char **entry=handed_envp;entry && *entry;entry++) {
+                    char *equals=strchr(*entry,'=');
+                    if (!equals) continue;
+                    char name[256]; size_t length=(size_t)(equals-*entry);
+                    if (length>=sizeof name) continue;
+                    memcpy(name,*entry,length); name[length]=0;
+                    if (!getenv(name) || !strcmp(name,"WINESERVERSOCKET")) setenv(name,equals+1,1);
+                }
+                argc=0; while (handed_argv[argc]) argc++;
+                handed_argv[0]=(char *)guest.path;  // the runtime's own executable, as at launch
+                argv=(const char **)handed_argv;
+                LOG("[native] slot host: entering main for %s\n",argc>1?argv[1]:argv[0]);
+            }
             int result=((int (*)(int,const char **,const char **,const char **))(guest.image.entry+guest.slide))(argc,argv,env,apple);
+#if TARGET_OS_IOS
+            if (handover_task!=UIBackgroundTaskInvalid) {
+                [UIApplication.sharedApplication endBackgroundTask:handover_task];
+                handover_task=UIBackgroundTaskInvalid;
+            }
+#endif
             LOG("[native] original main returned %d\n",result);
             ok=(result==0);
         }

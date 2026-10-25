@@ -71,7 +71,45 @@ OSStatus AKCopySystemCertificates(CFDictionaryRef raw,CFTypeRef *result,BOOL *ha
     if(!matching.count)return errSecItemNotFound;
     *result=CFRetain((__bridge CFTypeRef)(all?matching:matching.firstObject));return errSecSuccess;
 }
+// Wine enumerates roots through the macOS trust-settings API. Only the public
+// system domain is available here; do not fabricate user/admin trust settings.
+OSStatus AKCopyTrustSettingsCertificates(uint32_t domain,CFArrayRef *certificates) {
+    if(!certificates)return errSecParam;
+    *certificates=NULL;
+    if(domain>2)return errSecParam;
+    if(domain!=2)return errSecItemNotFound;
+    CFTypeRef keychain=NULL;
+    OSStatus status=AKOpenSystemKeychain("/System/Library/Keychains/SystemRootCertificates.keychain",&keychain);
+    if(status)return status;
+    NSDictionary *query=@{(__bridge id)kSecClass:(__bridge id)kSecClassCertificate,
+        (__bridge id)kSecMatchLimit:(__bridge id)kSecMatchLimitAll,(__bridge id)kSecReturnRef:@YES,
+        (__bridge id)kSecMatchTrustedOnly:@YES,(__bridge id)kSecMatchSearchList:@[(__bridge id)keychain]};
+    CFTypeRef result=NULL;BOOL handled=NO;
+    status=AKCopySystemCertificates((__bridge CFDictionaryRef)query,&result,&handled);
+    CFRelease(keychain);
+    if(status)return status;
+    if(!handled || !result || CFGetTypeID(result)!=CFArrayGetTypeID()) {
+        if(result)CFRelease(result);
+        return errSecInternalComponent;
+    }
+    *certificates=(CFArrayRef)result;
+    return errSecSuccess;
+}
+
+// Certificate DER only. Key export, PEM, aggregates and export options are not
+// implemented; never treat a private-key object as a public certificate.
+OSStatus AKExportPublicCertificate(CFTypeRef item,uint32_t format,uint32_t flags,const void *parameters,CFDataRef *data) {
+    if(!data)return errSecParam;
+    *data=NULL;
+    if(!item || CFGetTypeID(item)!=SecCertificateGetTypeID())return errSecParam;
+    if(format!=9 || flags || parameters)return errSecUnimplemented;
+    *data=SecCertificateCopyData((SecCertificateRef)item);
+    return *data?errSecSuccess:errSecDecode;
+}
+
 #if TARGET_OS_IPHONE
+OSStatus SecTrustSettingsCopyCertificates(uint32_t domain,CFArrayRef *certificates){return AKCopyTrustSettingsCertificates(domain,certificates);}
+OSStatus SecItemExport(CFTypeRef item,uint32_t format,uint32_t flags,const void *parameters,CFDataRef *data){return AKExportPublicCertificate(item,format,flags,parameters,data);}
 OSStatus SecKeychainOpen(const char *path,CFTypeRef *keychain){return AKOpenSystemKeychain(path,keychain);}
 OSStatus SecItemCopyMatching(CFDictionaryRef query,CFTypeRef *result){
     BOOL handled=NO;OSStatus status=AKCopySystemCertificates(query,result,&handled);if(handled)return status;

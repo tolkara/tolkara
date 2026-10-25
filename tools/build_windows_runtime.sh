@@ -65,12 +65,12 @@ step "Sources"
 # such as the Tolkara fork branch, are fine). Another source: keep the old tree
 # aside and start clean.
 WINE_SOURCE_MARK="$SRC/wine.source"
-if [ -d "$SRC/wine/.git" ] && [ -f "$WINE_SOURCE_MARK" ] && [ "$(cat "$WINE_SOURCE_MARK")" != "$WINE_REPO $WINE_BRANCH" ]; then
+if [ -e "$SRC/wine/.git" ] && [ -f "$WINE_SOURCE_MARK" ] && [ "$(cat "$WINE_SOURCE_MARK")" != "$WINE_REPO $WINE_BRANCH" ]; then
     mv "$SRC/wine" "$SRC/wine-$(date +%Y%m%d-%H%M%S)"; rm -f "$WINE_SOURCE_MARK"; rm -rf "$OUT/wine-build"
 fi
-if [ ! -d "$SRC/wine/.git" ]; then git clone --depth 1 --branch "$WINE_BRANCH" "$WINE_REPO" "$SRC/wine"; rm -rf "$OUT/wine-build"; fi
+if [ ! -e "$SRC/wine/.git" ]; then git clone --depth 1 --branch "$WINE_BRANCH" "$WINE_REPO" "$SRC/wine"; rm -rf "$OUT/wine-build"; fi
 [ -f "$WINE_SOURCE_MARK" ] || printf '%s %s\n' "$WINE_REPO" "$WINE_BRANCH" > "$WINE_SOURCE_MARK"
-if [ ! -d "$SRC/FEX/.git" ]; then git clone --depth 1 --recurse-submodules --shallow-submodules --branch "$FEX_BRANCH" "$FEX_REPO" "$SRC/FEX"; fi
+if [ ! -e "$SRC/FEX/.git" ]; then git clone --depth 1 --recurse-submodules --shallow-submodules --branch "$FEX_BRANCH" "$FEX_REPO" "$SRC/FEX"; fi
 (cd "$SRC/wine" && git log -1 --format='wine %h %s')
 (cd "$SRC/FEX" && git log -1 --format='FEX %h %s')
 
@@ -163,7 +163,8 @@ for lib in $DLOPENED; do
     install_name_tool -id "@rpath/$name" "$RUNTIME/lib/$name" 2>/dev/null || true
 done
 for binary in "$RUNTIME"/bin/* "$RUNTIME"/lib/wine/aarch64-unix/*.so "$RUNTIME"/lib/*.dylib; do
-    [ -f "$binary" ] && file "$binary" | grep -q Mach-O || continue
+    # Links (bin/msiexec -> wine) name a binary handled under its own name.
+    [ -f "$binary" ] && [ ! -L "$binary" ] && file "$binary" | grep -q Mach-O || continue
     bundle "$binary"
     # One run path to the bundled libraries, relative to this binary: the
     # Unix-side libraries have header room for only one more.

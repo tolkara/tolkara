@@ -79,7 +79,13 @@ static void TKWaitForStoppedRoute(NETunnelProviderManager *manager,CFTimeInterva
                     finish(@"Local service setup timed out. Close and reopen the app to retry.",NO);
                     [self.manager.connection stopVPNTunnel];
                 });
-                NSString *device=[NSUserDefaults.standardUserDefaults stringForKey:@"TKEnrolledDeviceIdentifier"]?:@"";
+                // The enrolment is in the Keychain group both builds of Tolkara share, keyed by device; the
+                // second build (docs/MULTIPROCESS.md) learns which device from the first through their App Group.
+                NSString *groupName=[NSBundle.mainBundle objectForInfoDictionaryKey:@"TolkaraAppGroup"];
+                NSUserDefaults *shared=[groupName isKindOfClass:NSString.class]?[[NSUserDefaults alloc] initWithSuiteName:groupName]:nil;
+                NSString *device=[NSUserDefaults.standardUserDefaults stringForKey:@"TKEnrolledDeviceIdentifier"];
+                if (device.length) [shared setObject:device forKey:@"TKEnrolledDeviceIdentifier"];
+                else device=[shared stringForKey:@"TKEnrolledDeviceIdentifier"]?:@"";
                 NSData *request=[NSJSONSerialization dataWithJSONObject:@{@"version":@TK_AUTH_PROTOCOL_VERSION,
                     @"operation":mode==3?@"prepareAuthorization":mode==2?@"verifyTunnel":mode==1?@"verifyPairing":@"probeService",@"deviceIdentifier":device} options:0 error:NULL];
                 NSError *error=nil;
@@ -170,8 +176,7 @@ static void TKWaitForStoppedRoute(NETunnelProviderManager *manager,CFTimeInterva
 - (void)stopLocalRoute { [self.manager.connection stopVPNTunnel]; }
 @end
 
-NCPreparation TKPrepareLocalArena(void *address,size_t size,void *context) {
-    (void)context;
+static TKLocalArenaPublisher *localArenaPublisher(void) {
     static TKLocalArenaPublisher *publisher;
     static dispatch_once_t once;
     dispatch_once(&once,^{
@@ -201,10 +206,18 @@ NCPreparation TKPrepareLocalArena(void *address,size_t size,void *context) {
             return YES;
         }];
     });
+    return publisher;
+}
+NCPreparation TKPrepareLocalArenaPair(void *address,size_t size,void *second,size_t secondSize,void *context) {
+    (void)context;
     CFTimeInterval began=CACurrentMediaTime();
-    announceArena(TKLocalArenaWillPrepare, @{@"bytes":@(size)});
-    NCPreparation result=[publisher prepare:address size:size timeout:930];
+    announceArena(TKLocalArenaWillPrepare, @{@"bytes":@(size+secondSize)});
+    NCPreparation result=[localArenaPublisher() prepare:address size:size second:second secondSize:secondSize timeout:1830];
     announceArena(TKLocalArenaDidPrepare, @{@"prepared":@(result == NC_PREPARED)});
-    fprintf(stderr,"[local-launch] arena result=%u bytes=%zu elapsed=%.3fs\n",(unsigned)result,size,CACurrentMediaTime()-began);
+    fprintf(stderr,"[local-launch] arena result=%u bytes=%zu elapsed=%.3fs\n",(unsigned)result,size+secondSize,CACurrentMediaTime()-began);
     return result;
+}
+
+NCPreparation TKPrepareLocalArena(void *address,size_t size,void *context) {
+    return TKPrepareLocalArenaPair(address,size,NULL,0,context);
 }

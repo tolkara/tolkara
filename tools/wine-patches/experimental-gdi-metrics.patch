@@ -1,0 +1,34 @@
+--- a/dlls/win32u/font.c
++++ b/dlls/win32u/font.c
+@@ -4935,6 +4935,15 @@
+     if (!(fontPtr = malloc( sizeof(*fontPtr) ))) return 0;
+ 
+     fontPtr->logfont = *plf;
++    {
++        static LONG created;
++        LONG count = InterlockedIncrement( &created );
++        if (count <= 8 || (count <= 32768 && !(count & (count - 1))))
++            ERR( "GDI font request %d height %d width %d weight %d charset %u\n",
++                 count, fontPtr->logfont.lfHeight, fontPtr->logfont.lfWidth,
++                 fontPtr->logfont.lfWeight, fontPtr->logfont.lfCharSet );
++    }
++
+ 
+     if (!(hFont = alloc_gdi_handle( &fontPtr->obj, NTGDI_OBJ_FONT, &fontobj_funcs )))
+     {
+@@ -5336,6 +5345,15 @@
+           metrics->tmDescent,
+           metrics->tmHeight );
+     }
++    {
++        static LONG measured;
++        LONG count = InterlockedIncrement( &measured );
++        if (count <= 8 || (count <= 32768 && !(count & (count - 1))))
++            ERR( "GDI metrics result %d ok %u height %d ascent %d width %d\n",
++                 count, ret, ret ? metrics->tmHeight : 0,
++                 ret ? metrics->tmAscent : 0, ret ? metrics->tmAveCharWidth : 0 );
++    }
++
+     release_dc_ptr( dc );
+     return ret;
+ }

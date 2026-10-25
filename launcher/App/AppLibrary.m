@@ -74,11 +74,17 @@ static BOOL valid_libraries(id libraries) {
     for (id library in libraries) if (!valid_relative(library,NO)) return NO;
     return YES;
 }
-// codePool, as tools/check_profile.py checks it: 1 to 1024 megabytes, only with a runtime.
+// codePool, as tools/check_profile.py checks it: 1 to 2048 megabytes, only with a runtime.
 static BOOL valid_code_pool(id size) {
     return [size isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)size)!=CFBooleanGetTypeID() &&
            [size doubleValue]==[size integerValue] &&
-           [size integerValue]>=1 && [size integerValue]<=1024;
+           [size integerValue]>=1 && [size integerValue]<=2048;
+}
+// processes, as tools/check_profile.py checks it: 1 to 8 at once, only with a runtime.
+static BOOL valid_processes(id count) {
+    return [count isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)count)!=CFBooleanGetTypeID() &&
+           [count doubleValue]==[count integerValue] &&
+           [count integerValue]>=1 && [count integerValue]<=8;
 }
 static NSString *clean_name(id name) {
     if (![name isKindOfClass:NSString.class]) return nil;
@@ -116,6 +122,7 @@ static NSString *clean_name(id name) {
 - (NSString *)runtime { return self.launchProfile[@"runtime"]; }
 - (NSArray<NSString *> *)libraries { return self.launchProfile[@"libraries"]?:@[]; }
 - (NSUInteger)codePool { return [self.launchProfile[@"codePool"] unsignedIntegerValue]; }
+- (NSUInteger)processes { return MAX([self.launchProfile[@"processes"] unsignedIntegerValue],1u); }
 - (NSDate *)added { return [NSDate dateWithTimeIntervalSince1970:[self.record[@"added"] doubleValue]]; }
 - (NSDate *)lastLaunched {
     NSNumber *value=self.record[@"lastLaunched"];
@@ -149,7 +156,8 @@ static NSString *clean_name(id name) {
             (profile[@"arguments"] && !valid_arguments(profile[@"arguments"])) ||
             (profile[@"environment"] && !valid_environment(profile[@"environment"])) ||
             (profile[@"libraries"] && (!profile[@"runtime"] || !valid_libraries(profile[@"libraries"]))) ||
-            (profile[@"codePool"] && (!profile[@"runtime"] || !valid_code_pool(profile[@"codePool"])))) continue;
+            (profile[@"codePool"] && (!profile[@"runtime"] || !valid_code_pool(profile[@"codePool"]))) ||
+            (profile[@"processes"] && (!profile[@"runtime"] || !valid_processes(profile[@"processes"])))) continue;
         [seen addObject:profile[@"id"]];
         [profiles addObject:profile];
     }
@@ -348,7 +356,26 @@ static NSString *bundle_executable(NSString *path, NSError **error) {
     }
     for (NSDictionary *profile in _profiles) {
         NSString *relative=[TKAppLibrary executableOfProfile:profile];
-        if ([dismissed containsObject:profile[@"id"]] || [known containsObject:relative]) continue;
+        if ([dismissed containsObject:profile[@"id"]]) continue;
+        if ([known containsObject:relative]) {
+            // Runtime profiles share their runtime's executable: an entry that came from
+            // this profile follows a newer one that starts the application elsewhere.
+            BOOL directory=NO;
+            if (![NSFileManager.defaultManager fileExistsAtPath:join(_documents,profile[@"workingDirectory"]) isDirectory:&directory] || !directory) continue;
+            @synchronized (self) {
+                for (NSUInteger i=0;i<_records.count;i++) {
+                    NSDictionary *existing=_records[i];
+                    if (![existing[@"profile"] isEqual:profile[@"id"]] || [existing[@"workingDirectory"] isEqual:profile[@"workingDirectory"]]) continue;
+                    NSMutableArray *records=[_records mutableCopy];
+                    NSMutableDictionary *updated=[existing mutableCopy];
+                    updated[@"workingDirectory"]=profile[@"workingDirectory"];
+                    records[i]=updated;
+                    [self saveRecords:records dismissed:_dismissedProfiles legacy:_legacyImported error:NULL];
+                    break;
+                }
+            }
+            continue;
+        }
         // Recorded by its real location, as an import from the picker would be.
         NSString *real=[self relativeInDocuments:join(_documents,relative)];
         if (!real || [known containsObject:real]) continue;

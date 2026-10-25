@@ -1,0 +1,14 @@
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -2974,7 +2974,10 @@
+ 
+     /* only try mmap if media is not removable (or if we require write access),
+        and if alignment is correct */
+-    if ((!removable || (flags & MAP_SHARED)) && host_addr == map_addr && host_size == map_size)
++    /* Never replace prepared executable pages: their writable aliases must
++     * retain the same backing. Populate private image sections via pread below. */
++    if (!is_jit_pool_aliased( map_addr ) &&
++        (!removable || (flags & MAP_SHARED)) && host_addr == map_addr && host_size == map_size)
+     {
+         if (mmap( host_addr, host_size, host_prot( host_addr, prot ), flags, fd, offset ) != MAP_FAILED)
+             return STATUS_SUCCESS;

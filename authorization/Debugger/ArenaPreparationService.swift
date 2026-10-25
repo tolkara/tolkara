@@ -78,18 +78,20 @@ import Darwin
         guard valid else { completion(nil); return }
         let now = UInt64(ProcessInfo.processInfo.systemUptime*1000)
         guard !used, !closed, let manager, let port, raw.pid != UInt32(getpid()),
-              raw.uid == UInt32(geteuid()), raw.deadline_ms > now, raw.deadline_ms-now <= 950_000 else {
+              raw.uid == UInt32(geteuid()), raw.deadline_ms > now, raw.deadline_ms-now <= 1850_000 else {
             completion(Self.response(data,TKAC_REJECTED)); return
         }
         do {
             let challenge = withUnsafeBytes(of:raw.challenge) { Data($0) }
+            var regions = [DebugArenaRequest.Region(address:raw.address,size:raw.size)]
+            if raw.second_size != 0 { regions.append(DebugArenaRequest.Region(address:raw.second_address,size:raw.second_size)) }
             let request = try DebugArenaRequest(pid:raw.pid,helperPID:UInt32(getpid()),uid:raw.uid,
                 challengeAddress:raw.challenge_address,challenge:challenge,
-                regions:[.init(address:raw.address,size:raw.size)])
+                regions:regions)
             // One attach attempt per helper instance; never reattach after the
             // target could have entered the guest's PT_DENY_ATTACH path.
             used = true; self.completion = completion; message = data
-            recordProgress("Starting own-app memory preparation, bytes=\(raw.size)")
+            recordProgress("Starting own-app memory preparation, bytes=\(raw.size+raw.second_size)")
             let client = DebugArenaClient(manager:manager,request:request); self.client = client
             let timer = DispatchSource.makeTimerSource(queue:queue)
             timer.schedule(deadline:.now()+0.1,repeating:1)

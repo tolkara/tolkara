@@ -1,0 +1,20 @@
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -1034,8 +1034,15 @@
+             end = min( (char *)address_space_start + 0x10000000000, (char *)host_addr_space_limit );
+             /* several Windows processes in this one (WINESINGLEPROCESS=2) each take
+              * a reservation of their own rather than every hole */
+-            if ((end < (char *)host_addr_space_limit && single_process < 2) ||
+-                !reserve_small_address_space( address_space_start, end ))
++            if (single_process >= 2)
++            {
++                /* Other Wine processes and UIKit share this host. Failure of
++                 * the bounded reservation must not consume their VM holes. */
++                if (!reserve_small_address_space( address_space_start, end ))
++                    ERR( "bounded process reservation failed; preserving host address space\n" );
++            }
++            else if (end < (char *)host_addr_space_limit ||
++                     !reserve_small_address_space( address_space_start, end ))
+             {
+                 TRACE( "reserving holes in %p-%p\n", address_space_start, end );
+                 reserve_area( address_space_start, end );

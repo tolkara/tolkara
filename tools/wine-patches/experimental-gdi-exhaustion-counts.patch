@@ -1,0 +1,23 @@
+--- a/dlls/win32u/gdiobj.c
++++ b/dlls/win32u/gdiobj.c
+@@ -730,6 +730,20 @@
+         entry = next_unused++;
+     else
+     {
++        /* Bounded allocator metadata only; no application memory or object contents. */
++        static BOOL reported;
++        if (!reported)
++        {
++            unsigned counts[128] = {0};
++            GDI_HANDLE_ENTRY *item;
++            reported = TRUE;
++            for (item = gdi_shared->Handles; item < next_unused; item++)
++                if (item->Type) counts[item->ExtType & 0x7f]++;
++            ERR( "GDI handle capacity exhausted requesting %s\n", gdi_obj_type(type) );
++            for (unsigned i = 0; i < 128; i++)
++                if (counts[i]) ERR( "GDI live type %s count %u\n",
++                                   gdi_obj_type(i << NTGDI_HANDLE_TYPE_SHIFT), counts[i] );
++        }
+         pthread_mutex_unlock( &gdi_lock );
+         ERR( "out of GDI object handles, expect a crash\n" );
+         if (TRACE_ON(gdi)) dump_gdi_objects();

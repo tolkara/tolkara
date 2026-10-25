@@ -25,6 +25,21 @@ xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_displays"
 "${CC[@]}" translation/AKSupport/AKSupport.m translation/CoreAudio/*.m tests/test_audio_hardware.m \
     $(cat translation/CoreAudio/ldflags) -framework CoreAudio -o build/emulation/test_audio_hardware
 xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_audio_hardware"
+"${CC[@]}" translation/AKSupport/AKSupport.m tests/test_audio_hardware_pool.m \
+    $(cat translation/CoreAudio/ldflags) -framework CoreAudio -o build/emulation/test_audio_hardware_pool
+xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_audio_hardware_pool"
+"${CC[@]}" translation/AKSupport/AKSupport.m translation/CoreAudio/Hardware.m translation/AudioToolbox/Output.m tests/test_session_audio.m \
+    -framework Foundation -framework AVFAudio -framework AudioToolbox -framework CoreAudio -o build/emulation/test_session_audio
+SIMCTL_CHILD_TOLKARA_SESSION_AUDIO_ONLY=1 xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_session_audio"
+SIMCTL_CHILD_TOLKARA_SESSION_AUDIO_ONLY=1 xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_audio_hardware"
 "${CC[@]}" -Itranslation/AppKit translation/AKSupport/AKSupport.m translation/AppKit/*.m translation/AppKit/*.c tests/test_appkit_views.m \
     $(cat translation/AppKit/ldflags) -o build/emulation/test_appkit_views
 xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_appkit_views"
+
+"${CC[@]}" translation/AKSupport/AKSupport.m tests/test_audio_callback_lifetime.m \
+    -framework Foundation -framework AudioToolbox -framework AVFAudio -o build/emulation/test_audio_callback_lifetime
+xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_audio_callback_lifetime"
+
+"${CC[@]}" translation/AKSupport/AKSupport.m tests/test_dispatch_callback_lifetime.m \
+    -framework Foundation -o build/emulation/test_dispatch_callback_lifetime
+xcrun simctl spawn "$SIM_ID" "$PWD/build/emulation/test_dispatch_callback_lifetime"

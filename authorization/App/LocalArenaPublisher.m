@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <math.h>
+#include <stdio.h>
 
 @implementation TKLocalArenaPublisher {
     TKArenaTransport _transport;
@@ -17,8 +18,16 @@
     return self;
 }
 - (NCPreparation)prepare:(void *)address size:(size_t)size timeout:(NSTimeInterval)timeout {
+    return [self prepare:address size:size second:NULL secondSize:0 timeout:timeout];
+}
+- (NCPreparation)prepare:(void *)address size:(size_t)size second:(void *)second
+                    secondSize:(size_t)secondSize timeout:(NSTimeInterval)timeout {
     [_condition lock];
-    if(_used || !isfinite(timeout) || timeout<=0 || timeout>950 || !_transport) {
+    if(_used || !isfinite(timeout) || timeout<=0 || timeout>TKAC_MAX_TIMEOUT_SECONDS || !_transport) {
+        [_condition unlock]; return NC_REJECTED;
+    }
+    if(secondSize>TKAC_MAX_ARENA_BYTES || size>TKAC_MAX_ARENA_BYTES-secondSize) {
+        fprintf(stderr,"[local-launch] arena request exceeds developer-service limit: %zu bytes requested, %zu bytes maximum\n",size,(size_t)TKAC_MAX_ARENA_BYTES);
         [_condition unlock]; return NC_REJECTED;
     }
     _used=YES; _outcome=NC_UNCERTAIN;
@@ -29,7 +38,7 @@
     if(mprotect(_challenge,_challengeSize,PROT_READ)) { _finished=YES; _outcome=NC_REJECTED; [_condition unlock]; return NC_REJECTED; }
     NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+timeout;
     TKACRequest request={.pid=(uint32_t)getpid(),.uid=(uint32_t)geteuid(),
-        .address=(uintptr_t)address,.size=size,.challenge_address=(uintptr_t)_challenge,
+        .address=(uintptr_t)address,.size=size,.second_address=(uintptr_t)second,.second_size=secondSize,.challenge_address=(uintptr_t)_challenge,
         .deadline_ms=(uint64_t)ceil(deadline*1000)};
     memcpy(request.challenge,_challenge,32); arc4random_buf(request.identifier,16);
     uint8_t wire[TKAC_SIZE];

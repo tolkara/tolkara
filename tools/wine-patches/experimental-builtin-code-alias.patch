@@ -1,0 +1,96 @@
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -7262,6 +7262,21 @@
+             if (res_len) *res_len = sizeof(ULONG_PTR);
+             return STATUS_SUCCESS;
+ 
++        case MemoryWineCodeAlias:
++            if (len != sizeof(ULONG_PTR)) return STATUS_INFO_LENGTH_MISMATCH;
++            if (process != NtCurrentProcess()) return STATUS_NOT_SUPPORTED;
++            if (!getenv("WINEBUILTINCODEALIAS") || strcmp(getenv("WINEBUILTINCODEALIAS"), "1"))
++                return STATUS_NOT_SUPPORTED;
++            SERVER_START_REQ( get_builtin_code_alias )
++            {
++                req->addr = wine_server_client_ptr(addr);
++                status = wine_server_call(req);
++                if (!status) *(ULONG_PTR *)buffer = reply->addr;
++            }
++            SERVER_END_REQ;
++            if (!status && res_len) *res_len = sizeof(ULONG_PTR);
++            return status;
++
+         case MemoryFexStatsShm:
+ #if defined(linux) && defined(__aarch64__)
+             return get_memory_fex_stats_shm( process, addr, buffer, len, res_len );
+--- a/include/winternl.h
++++ b/include/winternl.h
+@@ -2394,6 +2394,7 @@
+ #endif
+     MemoryFexStatsShm = 2000,
+     MemoryWineJitWriteOffset,
++    MemoryWineCodeAlias,
+ } MEMORY_INFORMATION_CLASS;
+ 
+ typedef struct _MEMORY_SECTION_NAME
+--- a/server/mapping.c
++++ b/server/mapping.c
+@@ -1830,3 +1830,45 @@
+ 
+     release_object( process );
+ }
++
++struct builtin_alias_query
++{
++    struct process *target;
++    client_ptr_t input, output;
++};
++
++static int find_builtin_alias( struct process *process, void *context )
++{
++    struct builtin_alias_query *query = context;
++    struct memory_view *source, *target;
++    struct unicode_str source_name, target_name;
++    if (process == query->target) return 0;
++    LIST_FOR_EACH_ENTRY( source, &process->views, struct memory_view, entry )
++    {
++        if (!(source->flags & SEC_IMAGE) || !source->image.wine_builtin ||
++            query->input < source->base || query->input - source->base >= source->size) continue;
++        if (!get_view_nt_name( source, &source_name )) continue;
++        LIST_FOR_EACH_ENTRY( target, &query->target->views, struct memory_view, entry )
++        {
++            if (!(target->flags & SEC_IMAGE) || !target->image.wine_builtin ||
++                target->size != source->size || target->image.machine != source->image.machine) continue;
++            if (!get_view_nt_name( target, &target_name ) || source_name.len != target_name.len ||
++                memcmp( source_name.str, target_name.str, source_name.len )) continue;
++            query->output = target->base + (query->input - source->base);
++            return 1;
++        }
++    }
++    return 0;
++}
++
++DECL_HANDLER(get_builtin_code_alias)
++{
++    struct builtin_alias_query query = { current->process, req->addr, req->addr };
++    struct memory_view *view;
++    reply->addr = req->addr;
++    /* Existing addresses in this process always retain their identity. */
++    LIST_FOR_EACH_ENTRY( view, &current->process->views, struct memory_view, entry )
++        if (req->addr >= view->base && req->addr - view->base < view->size) return;
++    enum_processes( find_builtin_alias, &query );
++    reply->addr = query.output;
++}
+--- a/server/protocol.def
++++ b/server/protocol.def
+@@ -4123,3 +4123,11 @@
+ @REPLY
+     int enable;                /* previous state of auto-repeat enable */
+ @END
++
++/* Resolve a foreign builtin image address to the current process's copy.
++ * Only mapping metadata is consulted; no process memory is read or changed. */
++@REQ(get_builtin_code_alias)
++    client_ptr_t addr;
++@REPLY
++    client_ptr_t addr;
++@END

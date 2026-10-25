@@ -1,0 +1,30 @@
+diff --git a/dlls/ntdll/loader.c b/dlls/ntdll/loader.c
+index 8208cc1..42093a4 100644
+--- a/dlls/ntdll/loader.c
++++ b/dlls/ntdll/loader.c
+@@ -4065,6 +4065,25 @@ static NTSTATUS MODULE_DecRefCount( LDR_DDAG_NODE *node, void *context )
+     if ( wm->ldr.LoadCount <= 0 )
+         return STATUS_SUCCESS;
+ 
++    /* Prepared executable pools cannot restore execute permission after an
++     * image is released. Keep Wine-owned modules loaded in this opt-in mode;
++     * application DLLs retain their normal unload semantics. This also keeps
++     * the retained module's dependency references alive until process exit. */
++    if (wm->ldr.LoadCount == 1 && (wm->ldr.Flags & LDR_WINE_INTERNAL))
++    {
++        UNICODE_STRING name = RTL_CONSTANT_STRING( L"WINEJITPOOLNOREUSE" );
++        WCHAR buffer[2];
++        UNICODE_STRING value = { 0, sizeof(buffer), buffer };
++        if (!RtlQueryEnvironmentVariable_U( NULL, &name, &value ) &&
++            value.Length == sizeof(WCHAR) && buffer[0] == '1')
++        {
++            wm->ldr.LoadCount = -1;
++            TRACE( "retaining builtin %s for prepared executable pool\n",
++                   debugstr_w(wm->ldr.BaseDllName.Buffer) );
++            return STATUS_SUCCESS;
++        }
++    }
++
+     --wm->ldr.LoadCount;
+     TRACE("(%s) ldr.LoadCount: %d\n", debugstr_w(wm->ldr.BaseDllName.Buffer), wm->ldr.LoadCount );
+ 

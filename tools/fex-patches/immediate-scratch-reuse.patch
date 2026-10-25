@@ -1,0 +1,15 @@
+--- a/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
++++ b/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
+@@ -570,6 +570,12 @@
+     LOGMAN_THROW_A_FMT(FEXCore::Utils::IntrusivePooledAllocator::IsClientBufferOwned(ClientOwnedFlag), "Tried to disown buffer when client "
+                                                                                                        "doesn't own it");
+ 
++#ifdef FEX_TEB_TSD_OFFSET
++    // Bounded Darwin hosts must not keep a translation scratch buffer per
++    // recently active thread. This point already permits reuse by the pool.
++    UnclaimBuffer();
++    return;
++#endif
+     // Always disown but not always unclaim
+     // Disowning = cheap, unclaiming = expensive
+     ThreadAllocator.DisownBuffer(Info);
