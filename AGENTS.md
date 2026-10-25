@@ -34,6 +34,16 @@ tools/package_management.sh                   # Tolkara Management .dmg (Develop
 
 Device installs replace the app under the same bundle ID and keep its data.
 
+## One build for the device
+
+The iPad runs one Tolkara: the current `main`, built generic (`NATIVE_GUEST_SHIMS=GENERIC`, no `GUEST_EXE`), carrying every profile in `profiles/`. Every application on the device works from that one build.
+
+- Never build or install an app for one application: no `TOLKARA_PROFILE` from `build/` or another folder, no `GUEST_EXE` build, no subset of profiles, no device build from a branch or worktree. Such builds silently drop the other applications' profiles; a Steam-only build left MegaBonk with no Wine libraries.
+- A new application's profile goes into `profiles/<id>/profile.json` and reaches the device through `main`. Changing what an application needs means editing its profile there.
+- Branch work is merged into `main` before it reaches the device. Commit it; uncommitted work in a worktree is not a version anyone can find.
+- For an experiment, change one launch, not the build: `--guest-environment=NAME=value` and `--guest-arguments=` override a profile for that launch only.
+- Install with `tools/install.sh` from the `main` checkout. With `TOLKARA_DEVICE_POLICY=main-only` in `local.env`, a device build refuses anything else; do not remove that setting or work around the check.
+
 ## Coding Style & Naming Conventions
 
 Four-space indentation in source files, two spaces in YAML; match surrounding conventions without unrelated reformatting. Preserve module prefixes such as `gm_`, `AK` and `TK`. Tests are named `test_*.{c,m,swift,py}`. Compiler warnings are errors in the regression scripts.

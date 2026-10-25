@@ -2,6 +2,25 @@
 # Build only our runtime into the app. Stage the original as a separate module.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# TOLKARA_DEVICE_POLICY=main-only in local.env: a device build is the one build
+# of main, with every profile in profiles/ and the generic adapters, never a
+# build for one application ("One build for the device" in AGENTS.md).
+POLICY=$(cd "$ROOT" && . tools/localenv.sh && tolkara_load_env && printf '%s' "${TOLKARA_DEVICE_POLICY:-}")
+# ACTION is set by Xcode only: the regression tests run this script directly.
+if [ "$POLICY" = main-only ] && [ "${PLATFORM_NAME:-iphoneos}" = iphoneos ] && [ -n "${ACTION:-}" ]; then
+    OWN_PROFILE=${TOLKARA_PROFILE:-}
+    [ -n "$OWN_PROFILE" ] || OWN_PROFILE=$(cd "$ROOT" && . tools/localenv.sh && tolkara_load_env && printf '%s' "${TOLKARA_PROFILE:-}")
+    REFUSED=()
+    [ "$(git -C "$ROOT" branch --show-current)" = main ] || REFUSED+=("the checkout is not on main")
+    [ -z "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ] || REFUSED+=("main has uncommitted changes: commit them first")
+    [ -z "${2:-}" ] || REFUSED+=("GUEST_EXE names one application")
+    [ "${NATIVE_GUEST_SHIMS:-GENERIC}" = GENERIC ] || REFUSED+=("NATIVE_GUEST_SHIMS is not GENERIC")
+    [ -z "$OWN_PROFILE" ] || REFUSED+=("TOLKARA_PROFILE adds a profile outside profiles/: add it to profiles/ instead")
+    if [ ${#REFUSED[@]} -gt 0 ]; then
+        for reason in "${REFUSED[@]}"; do echo "error: device build refused (TOLKARA_DEVICE_POLICY=main-only): $reason"; done
+        exit 1
+    fi
+fi
 # The second argument (GUEST_EXE) may list several executables separated by
 # ':', like PATH: the compatibility libraries then cover all of them.
 OUT=$1; EXES=()
