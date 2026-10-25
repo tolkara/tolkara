@@ -1,0 +1,52 @@
+{
+  "id": "megabonk",
+  "name": "Megabonk (Windows)",
+  "workingDirectory": "Megabonk/prefix/drive_c/Games/Megabonk",
+  "runtime": "Megabonk/Wine",
+  "executable": "lib/wine/aarch64-unix/wine",
+  "arguments": [
+    "Megabonk.exe",
+    "-force-d3d11",
+    "-job-worker-count",
+    "2",
+    "-screen-fullscreen",
+    "0",
+    "-screen-width",
+    "1280",
+    "-screen-height",
+    "720",
+    "-logFile",
+    "C:\\Games\\Megabonk\\Player-tolkara.log"
+  ],
+  "libraries": [
+    "lib/wine/aarch64-unix/ntdll.so",
+    "bin/wineserver.so",
+    "lib/wine/aarch64-unix/win32u.so",
+    "lib/wine/aarch64-unix/winemac.so",
+    "lib/wine/aarch64-unix/winecoreaudio.so",
+    "lib/wine/aarch64-unix/ws2_32.so",
+    "lib/wine/aarch64-unix/opengl32.so",
+    "lib/wine/aarch64-unix/winevulkan.so",
+    "lib/wine/aarch64-unix/bcrypt.so",
+    "lib/wine/aarch64-unix/crypt32.so",
+    "lib/wine/aarch64-unix/secur32.so",
+    "lib/wine/aarch64-unix/kerberos.so",
+    "lib/wine/aarch64-unix/msv1_0.so",
+    "lib/wine/aarch64-unix/netapi32.so",
+    "lib/wine/aarch64-unix/dnsapi.so",
+    "lib/libfreetype.6.dylib"
+  ],
+  "codePool": 496,
+  "environment": {
+    "WINEPREFIX": "${Documents}/Megabonk/prefix",
+    "WINESINGLEPROCESS": "1",
+    "WINEJITPOOL": "${CodePool}",
+    "FEX_MAXCODEBUFFERSIZE": "128",
+    "FEX_DISABLEL2CACHE": "1",
+    "WINE_VIRTUAL_RESERVE_MB": "4096",
+    "WINEDEBUG": "err+all,fixme-all",
+    "WINEDLLOVERRIDES": "d3d11,d3d10core=n,b;mscoree,mshtml=",
+    "WINE_D3D_CONFIG": "renderer=vulkan"
+  },
+  "notes": "Official Steam Windows files, copied unchanged. Physical M5 iPad passes original D3D11 shader, triangle, pixel-readback and visible-window fixtures, plus a 40-thread memory fixture with D3D11 active. User confirms a playable run; a cursor-confinement and recentering fix is installed for the reported camera issue, passing physical Wine pointer-lock, recentering and release verification; manual camera feel confirmation remains pending. The game uses a 4 GiB Wine reservation, two Unity job workers, a 496 MiB code pool with 128 MiB FEX code buffers (the Developer service caps the arena at 512 MiB; 256 MiB filled after about 8 minutes of play), and needs its VSync setting on to avoid menus drifting down on the iPad. Genuine Steam Cloud saves load on the iPad; its two changed saves were uploaded and independently downloaded with byte-for-byte verification of all three files. Final clean-exit synchronization also passes on the physical iPad after the embedded Wine server self-kill fix. Authentication is stored in the device Keychain. On 2026-10-06, the old saved Local signing choice was replaced with the working Developer service mode; a launch using the saved choice passed. Physical unplugged regular-library confirmation is pending. The simulator Apple2 GPU lacks required D3D capabilities."
+}
