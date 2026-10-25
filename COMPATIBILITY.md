@@ -229,3 +229,10 @@ loads. The restore had not brought back Documents/SteamCloud/megabonk either;
 with its config.json back, the first sync downloaded and verified all three
 genuine Cloud saves, backing up the blank local ones. The login in the
 Keychain survived the container reset.
+The same evening the configuration moved into the MegaBonk profile's
+steamCloud block (required), so a reset can no longer lose it. On the iPad
+the installed build of main logged "Steam Cloud configuration from the
+built-in profile" and synchronized all three files, uploading the latest
+change. During play the minute-by-minute sync uploaded changes; twice the game
+was writing a save mid-upload, and the sync stopped that pass (error 44)
+without touching the file, uploading it on a later pass.
