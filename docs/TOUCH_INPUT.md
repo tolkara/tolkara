@@ -14,12 +14,16 @@ of the screen belongs to the game.
 **iPhone Duo.** Unfolded, the inner display keeps a strip at one side for the
 status bar (UIKit reports it as an occlusion reserved region, iOS 27.1). There
 the buttons stand in a column in that strip, under the status bar, as Apple's
-own bars do: keyboard, stick, trackpad, then **1** to **5**. A number button
-holds its key (a US keyboard's 1 to 5, e.g. a game's first action slots) for
-as long as it is touched. The buttons shrink, down to 34 points, to fit the
-strip; with the iOS keyboard open, those that no longer fit are hidden from the
-bottom up. The game still draws under the strip, so the column covers that
-much of the game's edge. Other screens keep the row and have no number buttons.
+own bars do: keyboard, stick, trackpad, then **1** to **5**; **6** to **0**
+stand in a matching column at the opposite edge. A number button holds its key
+(a US keyboard's 1 to 0, e.g. a game's action slots) for as long as it is
+touched. The buttons shrink, down to 34 points, to fit; with the iOS keyboard
+open, those that no longer fit are hidden from the bottom up. Once found, the
+strip stays for that screen size: on the device UIKit stops reporting it when
+the game hides the status bar. The game still draws under both columns. Other
+screens keep the row and have no number buttons. Tolkara logs which layout it
+chose, and whether iOS accepted a keyboard request and how tall the keyboard
+came up (with a hardware keyboard connected, iOS shows only the row above it).
 
 **Movement stick.** The stick button turns it on (cyan) or off; the choice is
 kept, and it is on by default on iPhone. With it on, a touch that lands on the
@@ -83,4 +87,4 @@ checks the keyboard's placement, typing and returning focus, then drives the
 stick and the trackpad's tap, double tap and hold, two-finger tap and scroll
 with synthetic points, and `--show-keyboard` opens the keyboard to look at.
 With `SIMULATOR` naming an iPhone Duo simulator (iOS 27.2 runtime), it also
-checks the side-strip column with all eight buttons.
+checks the side-strip columns with all thirteen buttons.

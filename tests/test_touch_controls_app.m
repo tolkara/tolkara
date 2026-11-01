@@ -130,12 +130,20 @@
 // test screen; the fixture view counts what arrived through the event queue.
 - (void)stickAndTrackpadSelfTest:(UIView *)host controls:(AKTouchControls *)controls {
     AKInputFixtureView *view = (AKInputFixtureView *)self.guest.contentView;
-    // On iPhone Duo the buttons stand in the status bar's side strip, all
-    // eight of them (with the keys 1 to 5); elsewhere in a row at the bottom.
+    // On iPhone Duo the buttons stand in the status bar's side strip, with
+    // keys 1 to 5, and keys 6 to 0 at the opposite edge; elsewhere in a row.
     [host layoutIfNeeded];
     NSArray<UIButton *> *quick = [controls valueForKey:@"_quickButtons"];
     for (UIButton *button in quick) assert(button.hidden == !controls.vertical);
-    if (controls.vertical) assert(controls.frame.size.width == 44 && CGRectGetMinY(controls.frame) > 40);
+    if (controls.vertical) {
+        CGRect strip = controls.sideStrip;
+        assert(strip.size.width >= 44 && strip.origin.y > 40);
+        assert(CGRectContainsRect(strip, quick[4].frame) && !CGRectIntersectsRect(strip, quick[9].frame));
+        assert(fabs(CGRectGetMidX(quick[9].frame) - (host.bounds.size.width - CGRectGetMidX(strip))) < 1);
+        // The strip stays when UIKit stops reporting it (the status bar hides).
+        [host setNeedsLayout]; [host layoutIfNeeded];
+        assert(CGRectEqualToRect(controls.sideStrip, strip));
+    }
     controls.stickEnabled = YES;
     assert(controls.trackpadEnabled);
     CGSize size = host.bounds.size;

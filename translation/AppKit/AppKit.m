@@ -322,6 +322,7 @@ static BOOL AKWindowInputDiagnostics(void) {
     CGSize _touchViewportSize;
     NSArray<NSLayoutConstraint *> *_touchRow, *_touchColumn;
     CGRect _touchStrip;
+    CGSize _touchStripSize;
 }
 - (instancetype)initWithFrame:(CGRect)f {
     if ((self = [super initWithFrame:f])) {
@@ -330,6 +331,7 @@ static BOOL AKWindowInputDiagnostics(void) {
         // Mac's would somewhere on screen: not in a corner, where a game that
         // polls the position would hover whatever sits there.
         _last = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
+        _touchStrip = CGRectNull;
         _softwareCursor=[NSProcessInfo.processInfo.arguments containsObject:@"--software-cursor"];
         AKLog(@"cursor presentation=%@",_softwareCursor?@"software overlay":@"native iPad pointer");
         _cursorView=[UIImageView new]; _cursorView.userInteractionEnabled=NO;
@@ -360,10 +362,11 @@ static BOOL AKWindowInputDiagnostics(void) {
         [_touchControls.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-12],
         [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
     ];
-    // Constants follow the side strip in layoutSubviews.
+    // With a side strip the controls cover the game (they take touches only
+    // on their buttons) and place their columns themselves.
     _touchColumn = @[
         [_touchControls.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
-        [_touchControls.widthAnchor constraintEqualToConstant:44],
+        [_touchControls.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
         [_touchControls.topAnchor constraintEqualToAnchor:self.topAnchor],
         [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
     ];
@@ -373,13 +376,19 @@ static BOOL AKWindowInputDiagnostics(void) {
 // The iPhone Duo's inner display keeps a column at one side for the status
 // bar, an occlusion region; Apple's own bars stack their buttons under it.
 // Returns that column below the status bar, or a null rect on other screens.
-- (CGRect)touchControlsStrip {
+// The region is also looked for while inactive: on the device it goes once
+// the game hides the status bar, and safe-area insets never mark the strip.
+- (CGRect)touchControlsStripRegions:(NSUInteger *)count {
+    *count = 0;
     if (@available(iOS 27.1, *)) {
         CGRect bounds = self.bounds;
-        for (UIViewReservedRegion *region in [self reservedRegionsOfKind:UIViewReservedRegionKind.occlusionRegionKind]) {
+        NSArray<UIViewReservedRegion *> *regions = [self reservedRegionsOfKind:UIViewReservedRegionKind.occlusionRegionKind
+                                                                       options:UIViewReservedRegionQueryOptionsIncludeInactive];
+        *count = regions.count;
+        for (UIViewReservedRegion *region in regions) {
             CGRect frame = region.frame;
             BOOL trailing = CGRectGetMaxX(frame) >= CGRectGetMaxX(bounds) - 1, leading = CGRectGetMinX(frame) <= CGRectGetMinX(bounds) + 1;
-            if (!region.active || trailing == leading || frame.size.width < 44 || frame.size.width > bounds.size.width / 4 ||
+            if (trailing == leading || frame.size.width < 44 || frame.size.width > bounds.size.width / 4 ||
                 CGRectGetMinY(frame) > CGRectGetMinY(bounds) + 1 || CGRectGetMaxY(frame) > CGRectGetMidY(bounds)) continue;
             return CGRectMake(frame.origin.x, CGRectGetMaxY(frame) + 8, frame.size.width, CGRectGetMaxY(bounds) - CGRectGetMaxY(frame) - 8);
         }
@@ -388,20 +397,22 @@ static BOOL AKWindowInputDiagnostics(void) {
 }
 - (void)layoutTouchControls {
     if (!_touchControls) return;
-    CGRect strip = [self touchControlsStrip];
-    if (CGRectEqualToRect(strip, _touchStrip)) return;
+    NSUInteger regions;
+    CGRect strip = [self touchControlsStripRegions:&regions];
+    // The strip is part of the screen: once found it stays for this screen
+    // size even if UIKit stops reporting it; a new size looks again.
+    BOOL kept = CGRectIsNull(strip) && !CGRectIsNull(_touchStrip) && CGSizeEqualToSize(_touchStripSize, self.bounds.size);
+    if (kept) strip = _touchStrip;
+    if (CGRectEqualToRect(strip, _touchStrip) && CGSizeEqualToSize(_touchStripSize, self.bounds.size)) return;
     _touchStrip = strip;
+    _touchStripSize = self.bounds.size;
     // Positions only: no screen contents or touches.
-    AKLog(@"touch controls layout=%@ strip=%@ safe=%@", CGRectIsNull(strip) ? @"row" : @"column",
-          NSStringFromCGRect(strip), NSStringFromUIEdgeInsets(self.safeAreaInsets));
+    AKLog(@"touch controls layout=%@ strip=%@ safe=%@ regions=%lu", CGRectIsNull(strip) ? @"row" : @"column",
+          NSStringFromCGRect(strip), NSStringFromUIEdgeInsets(self.safeAreaInsets), (unsigned long)regions);
     BOOL column = !CGRectIsNull(strip);
-    if (column) {
-        _touchColumn[0].constant = CGRectGetMidX(strip) - 22;
-        _touchColumn[2].constant = strip.origin.y;
-    }
     [NSLayoutConstraint deactivateConstraints:column ? _touchRow : _touchColumn];
     [NSLayoutConstraint activateConstraints:column ? _touchColumn : _touchRow];
-    _touchControls.vertical = column;
+    _touchControls.sideStrip = strip;
 }
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *target=[super hitTest:point withEvent:event];

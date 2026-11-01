@@ -26,9 +26,13 @@ extern NSString *const AKTouchControlsDefaultsKey;   // "AKTouchControls"
 // needs trackpad mode: turning either on or off keeps the two consistent.
 @property (nonatomic) BOOL stickEnabled;
 @property (nonatomic, readonly) BOOL keyboardVisible;
-// A column (the iPhone Duo's side strip) instead of a row: keyboard, stick,
-// trackpad, then keys 1 to 5, each held down while touched.
-@property (nonatomic) BOOL vertical;
+// The iPhone Duo's side strip in this view's coordinates, or CGRectNull for
+// the row. With a strip this view covers the game, taking touches only on its
+// buttons: keyboard, stick, trackpad and keys 1 to 5 stand in a column in the
+// strip, keys 6 to 0 in a matching column at the opposite edge. A number key
+// is held down while touched.
+@property (nonatomic) CGRect sideStrip;
+@property (nonatomic, readonly) BOOL vertical;
 - (void)processTouches:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
 - (void)cancelTouches;
 - (void)toggleKeyboard;
