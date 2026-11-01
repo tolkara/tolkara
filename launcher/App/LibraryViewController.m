@@ -198,7 +198,7 @@ static BOOL TKTouchControlsShown(void) {
 
 - (void)showDiagnostics { [self.delegate libraryViewControllerShowDiagnostics:self]; }
 - (void)showExecutionMode { [self.delegate libraryViewControllerShowExecutionMode:self]; }
-// Optional keyboard and touch-trackpad buttons over a game, read when it starts.
+// Optional movement-stick, touch-trackpad and keyboard buttons over a game, read when it starts.
 - (void)updateControlsMenu {
     __weak TKLibraryViewController *weakSelf=self;
     UIAction *toggle=[UIAction actionWithTitle:@"On-Screen Controls" image:nil identifier:nil handler:^(UIAction *a) {
@@ -207,7 +207,7 @@ static BOOL TKTouchControlsShown(void) {
         [weakSelf updateControlsMenu];
     }];
     toggle.state=TKTouchControlsShown()?UIMenuElementStateOn:UIMenuElementStateOff;
-    _controlsItem.menu=[UIMenu menuWithTitle:@"Keyboard and touch-trackpad buttons over the game, from its next start"
+    _controlsItem.menu=[UIMenu menuWithTitle:@"Movement stick, touch trackpad and keyboard buttons over the game, from its next start"
         children:@[toggle]];
 }
 

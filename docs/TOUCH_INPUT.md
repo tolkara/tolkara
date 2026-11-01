@@ -1,44 +1,74 @@
 # On-screen controls
 
-Optional keyboard and touch-trackpad buttons over a game, for a device without
-a keyboard or mouse. They are shown by default on iPhone and hidden on iPad;
+Optional on-screen controls over a game, for a device without a keyboard or
+mouse, modelled on the Windows App's (Microsoft Remote Desktop) mouse pointer
+mode. They are shown by default on iPhone and hidden on iPad;
 **On-Screen Controls**, under the hand button in the library's toolbar, turns
 them on or off from the next game start. Without them, touches act as before:
 a touch is a left click where the finger is.
 
-Two translucent buttons sit at the bottom right of the game. Only the buttons
-take touches; the rest of the screen belongs to the game.
+Three translucent buttons sit at the bottom right of the game: the movement
+stick, the trackpad and the keyboard. Only the buttons take touches; the rest
+of the screen belongs to the game.
+
+**Movement stick.** The stick button turns it on (cyan) or off; the choice is
+kept, and it is on by default on iPhone. With it on, a touch that lands on the
+left half of the game becomes a stick centred where the finger landed, and the
+right half is the trackpad. Sliding the finger holds W, A, S or D; a diagonal
+holds two of them, lifting releases them all, and past the stick's rim its
+centre follows the finger. A touch keeps the half it landed on, so the stick
+and the trackpad work at the same time (walking while turning the camera). A
+second touch on the left half while the stick is held is ignored. The stick
+needs trackpad mode: turning it on turns trackpad mode on, and turning
+trackpad mode off turns it off. The keys are those of a US keyboard's W, A, S
+and D; what they do is the game's binding (World of Warcraft turns with A and
+D, and strafes with them while the right button is held).
+
+**Trackpad.** The hand button turns trackpad mode on (cyan) or off; the choice
+is kept. The finger moves the pointer by its motion, like a laptop's trackpad:
+where it lands does not matter, and a tap clicks where the pointer is, not
+under the finger. Motion is accelerated with the finger's speed: slow motion
+moves the pointer a little less than the finger, for aiming, and a quick flick
+up to two and a half times as far. Long-press the hand button for a menu with
+left, right and middle click.
+
+| In trackpad mode (the right half, with the stick) | Mouse input |
+| --- | --- |
+| Slide one finger | Moves the pointer by the finger's motion; lifting and placing the finger elsewhere does not move it. |
+| Tap / tap twice | Left click / double click |
+| Double tap and hold, or double tap and slide | Holds the right button until the finger lifts, e.g. to steer the camera |
+| Hold one finger still about half a second | Right click |
+| Tap with two fingers | Right click |
+| Tap with three fingers | Middle click |
+| Slide two fingers | Scroll, vertically or horizontally |
+| Hold two fingers about half a second, then slide | Drag with the right button held |
+
+A double tap's second touch must start within 0.3 s of the first tap and near
+it; if it lifts again quickly without moving, it is a double click instead. In
+the Windows App, a one-finger double tap and hold drags with the left button;
+here it holds the right button, which a game's camera needs more often, and
+there is no one-finger left drag (the hand button's menu still clicks).
+
+A cancelled touch, a rotation, switching apps or turning trackpad mode off
+releases a button the trackpad was holding and every key the stick was
+holding. A keyboard and mouse work at the same time as before.
 
 **Keyboard.** Opens and closes the iOS keyboard; the game keeps its size. A row
 above the keyboard has Escape, Tab, left and right arrows, Return and a button
 to close it. Select a text field in the game first: Tolkara does not detect
-the game's text fields, and it does not read the game's text or selection. Typed
-text reaches the game as key presses, with macOS key codes for the characters
-of a US keyboard. The keyboard is set up as a password field, so iOS offers no
-predictions or corrections; it also offers no dictation or third-party
-keyboards, and may limit other input methods.
-
-**Trackpad.** The hand button turns trackpad mode on (cyan) or off; the choice
-is kept. Long-press it for a menu with left, right and middle click.
-
-| In trackpad mode | Mouse input |
-| --- | --- |
-| Slide one finger | Moves the cursor by the finger's motion; lifting and placing the finger elsewhere does not move it. |
-| Tap / tap twice | Left click / double click |
-| Tap with two fingers | Right click |
-| Tap with three fingers | Middle click |
-| Slide two fingers | Scroll, vertically or horizontally |
-| Hold one finger about half a second, then slide | Drag with the left button held |
-| Hold two fingers about half a second, then slide | Drag with the right button held, e.g. to turn the camera |
-
-A cancelled touch, a rotation, switching apps or turning trackpad mode off
-releases a button the trackpad was holding. A keyboard and mouse work at the
-same time as before.
+the game's text fields, and it does not read the game's text or selection, so
+the keyboard does not open by itself. Typed text reaches the game as key
+presses, with macOS key codes for the characters of a US keyboard. The keyboard
+is set up as a password field, so iOS offers no predictions or corrections; it
+also offers no dictation or third-party keyboards, and may limit other input
+methods.
 
 ## Tests
 
-`tools/test_emulation.sh` runs the trackpad's finger traces and the text-to-key
-mapping; `tools/test_translation_sim.sh` checks event delivery in the
-simulator. `tools/test_touch_controls_ui.sh` opens our own test screen (never a
-game) in the simulator; `--self-test` checks the keyboard's placement, typing
-and returning focus, and `--show-keyboard` opens the keyboard to look at.
+`tools/test_emulation.sh` runs the trackpad's and the stick's finger traces
+and the text-to-key mapping; `tools/test_translation_sim.sh` checks event
+delivery in the simulator, including the stick's keys. `tools/test_touch_controls_ui.sh`
+opens our own test screen (never a game) in the simulator; `--self-test`
+checks the keyboard's placement, typing and returning focus, then drives the
+stick and the trackpad's tap, double tap and hold, two-finger tap and scroll
+with synthetic points, and `--show-keyboard` opens the keyboard to look at.

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds/opens our own input fixture, never an imported application.
-# Optional --self-test checks keyboard layout, text delivery and focus.
+# Optional --self-test checks keyboard layout, text delivery and focus, then
+# the movement stick and the trackpad gestures on that test screen.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SIM=${SIMULATOR:-iPhone 17 Pro}

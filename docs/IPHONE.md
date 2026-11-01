@@ -35,8 +35,9 @@ has none). Login was refused (`BLZ51900003`) until both were right.
 
 ## Input
 
-The [on-screen controls](TOUCH_INPUT.md), a keyboard button and a touch
-trackpad, are shown by default on the iPhone. Turn them off or on with
+The [on-screen controls](TOUCH_INPUT.md), a movement stick on the left half
+(W, A, S and D), a touch trackpad on the right half and a keyboard button, are
+shown by default on the iPhone. Turn them off or on with
 **On-Screen Controls** under the hand button in the library's toolbar.
 
 A Bluetooth keyboard works as on the iPad. A mouse works through

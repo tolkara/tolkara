@@ -353,7 +353,7 @@ static BOOL AKWindowInputDiagnostics(void) {
     _touchControls.translatesAutoresizingMaskIntoConstraints = NO;
     [self addSubview:_touchControls];
     [NSLayoutConstraint activateConstraints:@[
-        [_touchControls.widthAnchor constraintEqualToConstant:96],
+        [_touchControls.widthAnchor constraintEqualToConstant:148],
         [_touchControls.heightAnchor constraintEqualToConstant:44],
         [_touchControls.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-12],
         [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
@@ -459,6 +459,15 @@ static BOOL AKWindowInputDiagnostics(void) {
 }
 - (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters {
     [self postTextKey:code characters:characters unmodified:characters modifiers:0];
+}
+// A held key from the movement stick, with the hardware keyboard's modifiers.
+- (void)touchKey:(unsigned short)code characters:(NSString *)characters pressed:(BOOL)pressed {
+    NSEvent *event = [NSEvent new];
+    event.type = pressed ? NSEventTypeKeyDown : NSEventTypeKeyUp;
+    event.window = self.nsWindow; event.keyCode = code; event.modifierFlags = _mods;
+    event.characters = event.charactersIgnoringModifiers = characters;
+    event.timestamp = NSProcessInfo.processInfo.systemUptime;
+    [NSApp postEvent:event atStart:NO];
 }
 - (BOOL)usesRelativeMouse { return AKMouseIsCaptured() && GCMouse.mice.count>0; }
 - (void)captureChanged:(NSNotification *)notification {

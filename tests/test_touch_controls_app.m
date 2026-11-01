@@ -7,6 +7,9 @@
 @property CATextLayer *heading, *instructions, *result;
 @property NSMutableString *text;
 @property NSString *lastAction;
+@property NSMutableSet<NSNumber *> *keysDown;
+@property unsigned leftDowns, leftUps, rightDowns, rightUps, rightDrags, scrolls;
+@property NSInteger lastClickCount;
 @end
 @implementation AKInputFixtureView
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -15,6 +18,7 @@
         self.layer.backgroundColor = [UIColor colorWithRed:0.06 green:0.10 blue:0.16 alpha:1].CGColor;
         _text = [NSMutableString new];
         _lastAction = @"Ready";
+        _keysDown = [NSMutableSet new];
         for (NSString *key in @[@"heading", @"instructions", @"result"]) {
             CATextLayer *label = [CATextLayer new];
             label.contentsScale = UIScreen.mainScreen.scale;
@@ -25,7 +29,7 @@
         }
         _heading.fontSize = 24; _instructions.fontSize = 15; _result.fontSize = 18;
         _heading.string = @"Tolkara · Touch input fixture";
-        _instructions.string = @"Slide: move • Tap: left click • Two fingers: scroll / right click\nThree-finger tap: middle click • Hold then slide: drag\nUse the keyboard button at the bottom right. This is an original test screen.";
+        _instructions.string = @"Left half: movement stick (W A S D) • Right half: slide to move the pointer\nTap: left click • Two-finger tap or hold: right click • Double tap and hold: right drag\nTwo fingers: scroll • Three-finger tap: middle click. This is an original test screen.";
         [self setFrame:frame];
     }
     return self;
@@ -39,11 +43,14 @@
     [self refresh];
 }
 - (void)refresh {
-    self.result.string = [NSString stringWithFormat:@"%@\nText: %@", self.lastAction, self.text];
+    NSMutableArray<NSString *> *keys = [NSMutableArray new];
+    for (NSNumber *code in @[@13, @0, @1, @2]) if ([self.keysDown containsObject:code]) [keys addObject:@[@"W", @"A", @"S", @"D"][[@[@13, @0, @1, @2] indexOfObject:code]]];
+    self.result.string = [NSString stringWithFormat:@"%@\nKeys held: %@\nText: %@", self.lastAction, [keys componentsJoinedByString:@" "], self.text];
     [CATransaction flush];
 }
 - (BOOL)acceptsFirstResponder { return YES; }
 - (void)keyDown:(NSEvent *)event {
+    [self.keysDown addObject:@(event.keyCode)];
     if (event.keyCode == 51 && self.text.length) {
         [self.text deleteCharactersInRange:[self.text rangeOfComposedCharacterSequenceAtIndex:self.text.length - 1]];
     } else if (event.keyCode == 53) [self.text setString:@""];
@@ -51,16 +58,23 @@
     self.lastAction = @"Keyboard input received";
     [self refresh];
 }
+- (void)keyUp:(NSEvent *)event { [self.keysDown removeObject:@(event.keyCode)]; [self refresh]; }
 - (void)mouseMoved:(NSEvent *)event {
     self.lastAction = [NSString stringWithFormat:@"Pointer %.0f, %.0f", event.locationInWindow.x, event.locationInWindow.y];
     [self refresh];
 }
-- (void)mouseDown:(NSEvent *)event { self.lastAction = event.clickCount == 2 ? @"Double click" : @"Left click / hold"; [self refresh]; }
-- (void)rightMouseDown:(NSEvent *)event { (void)event; self.lastAction = @"Right click / hold"; [self refresh]; }
+- (void)mouseDown:(NSEvent *)event {
+    self.leftDowns++; self.lastClickCount = event.clickCount;
+    self.lastAction = event.clickCount == 2 ? @"Double click" : @"Left click / hold"; [self refresh];
+}
+- (void)mouseUp:(NSEvent *)event { (void)event; self.leftUps++; }
+- (void)rightMouseDown:(NSEvent *)event { (void)event; self.rightDowns++; self.lastAction = @"Right click / hold"; [self refresh]; }
+- (void)rightMouseUp:(NSEvent *)event { (void)event; self.rightUps++; }
 - (void)otherMouseDown:(NSEvent *)event { (void)event; self.lastAction = @"Middle click"; [self refresh]; }
 - (void)mouseDragged:(NSEvent *)event { (void)event; self.lastAction = @"Left drag"; [self refresh]; }
-- (void)rightMouseDragged:(NSEvent *)event { (void)event; self.lastAction = @"Right drag"; [self refresh]; }
+- (void)rightMouseDragged:(NSEvent *)event { (void)event; self.rightDrags++; self.lastAction = @"Right drag"; [self refresh]; }
 - (void)scrollWheel:(NSEvent *)event {
+    self.scrolls++;
     self.lastAction = [NSString stringWithFormat:@"Scroll %.0f, %.0f", event.deltaX, event.deltaY];
     [self refresh];
 }
@@ -106,12 +120,51 @@
                     assert([((AKInputFixtureView *)self.guest.contentView).text isEqual:@"Fixture @ñ"]);
                     [controls dismissKeyboard];
                     assert(!controls.keyboardVisible && host.isFirstResponder);
-                    NSLog(@"TOUCH_UI_SELF_TEST_PASS: keyboard layout, text delivery, delete and focus restoration");
-                    exit(EXIT_SUCCESS);
+                    [self stickAndTrackpadSelfTest:host controls:controls];
                 });
             });
         });
     }
+}
+// Drives the two halves' routing directly with synthetic points on this
+// test screen; the fixture view counts what arrived through the event queue.
+- (void)stickAndTrackpadSelfTest:(UIView *)host controls:(AKTouchControls *)controls {
+    AKInputFixtureView *view = (AKInputFixtureView *)self.guest.contentView;
+    controls.stickEnabled = YES;
+    assert(controls.trackpadEnabled);
+    CGSize size = host.bounds.size;
+    CGPoint origin = CGPointMake(size.width * 0.2, size.height * 0.6);
+    [controls stickPhase:UITouchPhaseBegan at:origin];
+    [controls stickPhase:UITouchPhaseMoved at:CGPointMake(origin.x + 30, origin.y - 30)];
+    UIView *base = [controls valueForKey:@"_stickBase"];
+    assert(base.superview == host && !base.hidden && CGPointEqualToPoint(base.center, origin));
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 3), dispatch_get_main_queue(), ^{
+        assert(([view.keysDown isEqualToSet:[NSSet setWithArray:@[@13, @2]]]));
+        [controls stickPhase:UITouchPhaseEnded at:CGPointMake(origin.x + 30, origin.y - 30)];
+        assert(base.hidden);
+        CGPoint right = CGPointMake(size.width * 0.75, size.height * 0.5);
+        NSTimeInterval t = NSProcessInfo.processInfo.systemUptime;
+        // Tap: left click. Double tap and slide: the right button held while dragging.
+        [controls padFingers:1 at:right time:t];
+        [controls padFingers:0 at:CGPointZero time:t + 0.05];
+        [controls padFingers:1 at:right time:t + 0.15];
+        [controls padFingers:1 at:CGPointMake(right.x + 40, right.y) time:t + 0.25];
+        [controls padFingers:1 at:CGPointMake(right.x + 80, right.y) time:t + 0.35];
+        [controls padFingers:0 at:CGPointZero time:t + 0.4];
+        // Two-finger tap: right click. Two-finger slide: scroll wheel.
+        [controls padFingers:2 at:right time:t + 1];
+        [controls padFingers:0 at:CGPointZero time:t + 1.05];
+        for (unsigned i = 0; i <= 6; i++) [controls padFingers:2 at:CGPointMake(right.x, right.y + 12 * i) time:t + 2 + i / 50.0];
+        [controls padFingers:0 at:CGPointZero time:t + 2.2];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 3), dispatch_get_main_queue(), ^{
+            assert(!view.keysDown.count);
+            assert(view.leftDowns == 1 && view.leftUps == 1 && view.lastClickCount == 1);
+            assert(view.rightDowns == 2 && view.rightUps == 2 && view.rightDrags >= 1 && view.scrolls >= 1);
+            NSLog(@"TOUCH_UI_SELF_TEST_PASS: keyboard layout, text delivery, delete and focus restoration; "
+                  "stick keys and drawing, tap, double tap and hold, two-finger tap and scroll");
+            exit(EXIT_SUCCESS);
+        });
+    });
 }
 @end
 

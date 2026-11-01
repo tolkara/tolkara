@@ -240,10 +240,11 @@ int main(void) { @autoreleasepool {
     // Unicode and never depend on reading the guest's text/selection.
     AKTouchControls *controls = [host valueForKey:@"_touchControls"];
     assert(controls && controls.hasText && controls.isSecureTextEntry);
-    // Only the two buttons take touches; the gap between them is the game's.
-    controls.frame = CGRectMake(0, 0, 96, 44); [controls layoutIfNeeded];
+    // Only the three buttons take touches; the gaps between them are the game's.
+    controls.frame = CGRectMake(0, 0, 148, 44); [controls layoutIfNeeded];
     assert([controls pointInside:CGPointMake(20, 20) withEvent:nil] && [controls pointInside:CGPointMake(70, 20) withEvent:nil]);
-    assert(![controls pointInside:CGPointMake(48, 20) withEvent:nil]);
+    assert([controls pointInside:CGPointMake(126, 20) withEvent:nil]);
+    assert(![controls pointInside:CGPointMake(48, 20) withEvent:nil] && ![controls pointInside:CGPointMake(100, 20) withEvent:nil]);
     [controls insertText:@"@ñ🙂"];
     NSArray<NSString *> *typed = @[@"@", @"ñ", @"🙂"];
     for (unsigned i = 0; i < 3; i++) for (unsigned up = 0; up < 2; up++) {
@@ -296,8 +297,47 @@ int main(void) { @autoreleasepool {
     assert(next_input().clickCount == 1); (void)next_input();
     [host touchButton:0 pressed:YES]; [host touchButton:0 pressed:NO];
     assert(next_input().clickCount == 2); (void)next_input();
+    // The movement stick needs trackpad mode, and turning that off ends it.
     controls.trackpadEnabled = NO;
-    assert(!hostView.multipleTouchEnabled);
+    controls.stickEnabled = YES;
+    assert(controls.trackpadEnabled && hostView.multipleTouchEnabled);
+    // The stick holds W, A, S and D down as the host's key events, with
+    // diagonals as two keys and every key released when the finger lifts.
+    [hostView addSubview:controls];
+    [controls stickPhase:UITouchPhaseBegan at:CGPointMake(50, 50)];
+    [controls stickPhase:UITouchPhaseMoved at:CGPointMake(50, 10)];
+    NSEvent *stickKey = next_input();
+    assert(stickKey.type == NSEventTypeKeyDown && stickKey.keyCode == 13 && [stickKey.characters isEqual:@"w"] && stickKey.window == window);
+    [controls stickPhase:UITouchPhaseMoved at:CGPointMake(20, 20)];
+    stickKey = next_input();
+    assert(stickKey.type == NSEventTypeKeyDown && stickKey.keyCode == 0 && [stickKey.charactersIgnoringModifiers isEqual:@"a"]);
+    [controls stickPhase:UITouchPhaseMoved at:CGPointMake(20, 80)];
+    NSEvent *upW = next_input(), *downS = next_input();
+    assert(upW.type == NSEventTypeKeyUp && upW.keyCode == 13 && downS.type == NSEventTypeKeyDown && downS.keyCode == 1);
+    UIView *stickBase = [controls valueForKey:@"_stickBase"];
+    assert(stickBase.superview == hostView && !stickBase.hidden && !stickBase.userInteractionEnabled);
+    // Cancelling (a rotation, switching apps) releases the held keys and the drawn stick.
+    [controls cancelTouches];
+    NSEvent *upA = next_input(), *upS = next_input();
+    assert(upA.type == NSEventTypeKeyUp && upS.type == NSEventTypeKeyUp && upA.keyCode + upS.keyCode == 1);
+    assert(stickBase.hidden);
+    [controls stickPhase:UITouchPhaseBegan at:CGPointMake(50, 50)];
+    [controls stickPhase:UITouchPhaseMoved at:CGPointMake(90, 50)];
+    assert(next_input().keyCode == 2);
+    [controls stickPhase:UITouchPhaseEnded at:CGPointMake(90, 50)];
+    stickKey = next_input();
+    assert(stickKey.type == NSEventTypeKeyUp && stickKey.keyCode == 2 && stickBase.hidden);
+    // The right half's tap is a left click where the pointer is, not where the finger is.
+    [host touchMoveBy:CGPointMake(-10000, 10000)];
+    assert(next_input().type == NSEventTypeMouseMoved);
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    [controls padFingers:1 at:CGPointMake(180, 90) time:now];
+    [controls padFingers:0 at:CGPointZero time:now + 0.05];
+    NSEvent *tapDown = next_input(), *tapUp = next_input();
+    assert(tapDown.type == NSEventTypeLeftMouseDown && tapUp.type == NSEventTypeLeftMouseUp);
+    assert(CGPointEqualToPoint(tapDown.locationInWindow, CGPointMake(0, 1)) && CGPointEqualToPoint(tapUp.locationInWindow, CGPointMake(0, 1)));
+    controls.trackpadEnabled = NO;
+    assert(!controls.stickEnabled && !hostView.multipleTouchEnabled);
 
     // Windows are numbered once each; with none on screen, none is found.
     assert(window.windowNumber > 0 && other.windowNumber != window.windowNumber && panel.windowNumber != other.windowNumber);
