@@ -61,6 +61,8 @@ extern void AKSetWindowProcess(NSWindow *window,size_t slot);
 - (void)touchMoveBy:(CGPoint)delta;
 - (void)touchScrollBy:(CGPoint)delta;
 - (void)touchButton:(unsigned)button pressed:(BOOL)pressed;
+- (void)quickKeyDown:(UIButton *)button;
+- (void)quickKeyUp:(UIButton *)button;
 @end
 @interface FixtureKeyResponder : NSResponder
 @property unsigned downs, ups;
@@ -336,6 +338,39 @@ int main(void) { @autoreleasepool {
     NSEvent *tapDown = next_input(), *tapUp = next_input();
     assert(tapDown.type == NSEventTypeLeftMouseDown && tapUp.type == NSEventTypeLeftMouseUp);
     assert(CGPointEqualToPoint(tapDown.locationInWindow, CGPointMake(0, 1)) && CGPointEqualToPoint(tapUp.locationInWindow, CGPointMake(0, 1)));
+    // The side-strip column: keyboard, stick, trackpad, then keys 1 to 5,
+    // hidden from the bottom when they do not fit; a key is held while touched.
+    // (UIControl actions need a UIApplication, so the handlers are called directly.)
+    assert(!controls.vertical);
+    NSArray<UIButton *> *quick = [controls valueForKey:@"_quickButtons"];
+    assert(quick.count == 5 && quick[0].hidden);
+    [controls removeFromSuperview];   // free of the host's row constraints
+    controls.translatesAutoresizingMaskIntoConstraints = YES;
+    controls.vertical = YES;
+    controls.frame = CGRectMake(0, 0, 44, 300); [controls layoutIfNeeded];
+    // 300 points: buttons shrink to 34 on a 40-point pitch, and seven fit.
+    assert(quick[0].frame.size.height == 34 && quick[1].frame.origin.y == 160);
+    assert(!quick[0].hidden && !quick[3].hidden && quick[4].hidden);
+    assert([controls pointInside:CGPointMake(22, 170) withEvent:nil] && ![controls pointInside:CGPointMake(22, 157) withEvent:nil]);
+    assert(![controls pointInside:CGPointMake(22, 290) withEvent:nil]);
+    // Room for all eight at full size.
+    controls.frame = CGRectMake(0, 0, 44, 420); [controls layoutIfNeeded];
+    assert(!quick[4].hidden && quick[4].frame.size.height == 44 && quick[4].frame.origin.y == 364);
+    [(id)controls quickKeyDown:quick[1]];
+    [(id)controls quickKeyDown:quick[1]];
+    NSEvent *quickKey = next_input();
+    assert(quickKey.type == NSEventTypeKeyDown && quickKey.keyCode == 19 && [quickKey.characters isEqual:@"2"]);
+    [(id)controls quickKeyUp:quick[1]];
+    quickKey = next_input();
+    assert(quickKey.type == NSEventTypeKeyUp && quickKey.keyCode == 19);
+    [(id)controls quickKeyDown:quick[0]];
+    assert(next_input().keyCode == 18);
+    // Leaving the column releases a held key exactly once.
+    controls.vertical = NO; [controls layoutIfNeeded];
+    quickKey = next_input();
+    assert(quickKey.type == NSEventTypeKeyUp && quickKey.keyCode == 18 && quick[0].hidden);
+    [(id)controls quickKeyUp:quick[0]];
+    assert(![NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:NO]);
     controls.trackpadEnabled = NO;
     assert(!controls.stickEnabled && !hostView.multipleTouchEnabled);
 

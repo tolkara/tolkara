@@ -8,6 +8,8 @@ static NSString *const AKTouchStickDefaultsKey = @"AKTouchStickEnabled";
 
 @implementation AKTouchControls {
     UIButton *_keyboardButton, *_trackpadButton, *_stickButton;
+    NSArray<UIButton *> *_quickButtons;
+    unsigned _quickHeld;   // bit i: quick key i+1 is down
     UIView *_accessory, *_stickBase, *_stickKnob;
     NSTimer *_holdTimer;
     AKTrackpad _pad;
@@ -35,6 +37,9 @@ static void AKEmitStick(void *context, unsigned direction, bool pressed) {
     NSString *characters = direction == AKStickUp ? @"w" : direction == AKStickLeft ? @"a" : direction == AKStickDown ? @"s" : @"d";
     [controls.delegate touchKey:code characters:characters pressed:pressed];
 }
+
+// macOS key codes of a US keyboard's 1 to 5.
+static const unsigned short AKQuickKeyCodes[] = {18, 19, 20, 21, 23};
 
 + (BOOL)enabled {
     NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchControlsDefaultsKey];
@@ -67,7 +72,7 @@ static void AKEmitStick(void *context, unsigned direction, bool pressed) {
         _keyboardButton.accessibilityIdentifier = @"tolkara.keyboard";
         _trackpadButton = [self buttonWithSymbol:@"hand.draw" label:@"Enable touch trackpad" action:@selector(toggleTrackpad)];
         _trackpadButton.accessibilityIdentifier = @"tolkara.trackpad";
-        _trackpadButton.accessibilityHint = @"One finger moves the pointer; tap to click. Double-tap and hold to drag. Hold one finger or tap two for right click. Two fingers scroll. Three fingers tap for middle click. Long-press this button for mouse buttons.";
+        _trackpadButton.accessibilityHint = @"One finger moves the pointer; tap to click. Double-tap and hold for the right button. Hold one finger or tap two for right click. Two fingers scroll. Three fingers tap for middle click. Long-press this button for mouse buttons.";
         __weak AKTouchControls *weakSelf = self;
         NSMutableArray<UIAction *> *actions = [NSMutableArray new];
         NSArray<NSString *> *buttons = @[@"Left click", @"Right click", @"Middle click"];
@@ -81,6 +86,20 @@ static void AKEmitStick(void *context, unsigned direction, bool pressed) {
             }]];
         }
         _trackpadButton.menu = [UIMenu menuWithTitle:@"Mouse buttons" children:actions];
+        // Keys 1 to 5 (a game's first action slots), held while touched. Shown
+        // only in the column layout, where a side strip has room for them.
+        NSMutableArray<UIButton *> *quick = [NSMutableArray new];
+        for (NSInteger i = 0; i < 5; i++) {
+            UIButton *button = [self buttonWithSymbol:[NSString stringWithFormat:@"%ld.circle", (long)i + 1]
+                                                label:[NSString stringWithFormat:@"Key %ld", (long)i + 1] action:@selector(quickKeyUp:)];
+            button.tag = i;
+            button.hidden = YES;
+            button.accessibilityIdentifier = [NSString stringWithFormat:@"tolkara.key%ld", (long)i + 1];
+            [button addTarget:self action:@selector(quickKeyDown:) forControlEvents:UIControlEventTouchDown];
+            [button addTarget:self action:@selector(quickKeyUp:) forControlEvents:UIControlEventTouchUpOutside | UIControlEventTouchCancel];
+            [quick addObject:button];
+        }
+        _quickButtons = quick;
         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchTrackpadDefaultsKey];
         BOOL phone = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
         self.trackpadEnabled = saved ? saved.boolValue : phone;
@@ -95,14 +114,56 @@ static void AKEmitStick(void *context, unsigned direction, bool pressed) {
 // The gaps between the buttons belong to the game.
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
     (void)event;
-    return CGRectContainsPoint(_stickButton.frame, point) || CGRectContainsPoint(_trackpadButton.frame, point) ||
-           CGRectContainsPoint(_keyboardButton.frame, point);
+    for (UIView *button in self.subviews)
+        if ([button isKindOfClass:UIButton.class] && !button.hidden && CGRectContainsPoint(button.frame, point)) return YES;
+    return NO;
+}
+- (void)setVertical:(BOOL)vertical {
+    if (_vertical == vertical) return;
+    _vertical = vertical;
+    [self releaseQuickKeys];
+    [self setNeedsLayout];
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
-    _stickButton.frame = CGRectMake(0, 0, 44, 44);
-    _trackpadButton.frame = CGRectMake(52, 0, 44, 44);
-    _keyboardButton.frame = CGRectMake(104, 0, 44, 44);
+    if (!self.vertical) {
+        for (UIView *button in self.subviews) button.layer.cornerRadius = 22;
+        _stickButton.frame = CGRectMake(0, 0, 44, 44);
+        _trackpadButton.frame = CGRectMake(52, 0, 44, 44);
+        _keyboardButton.frame = CGRectMake(104, 0, 44, 44);
+        for (UIButton *button in _quickButtons) button.hidden = YES;
+        return;
+    }
+    // Top to bottom, shrunk (to 34 points) to fit the strip; what still does
+    // not fit (above the iOS keyboard) is hidden from the bottom up, so the
+    // keyboard button stays.
+    NSArray<UIButton *> *column = [@[_keyboardButton, _stickButton, _trackpadButton] arrayByAddingObjectsFromArray:_quickButtons];
+    CGFloat height = self.bounds.size.height;
+    CGFloat pitch = MAX(40, MIN(52, floor((height + 6) / column.count))), size = MIN(44, pitch - 6);
+    CGFloat x = floor((self.bounds.size.width - size) / 2), y = 0;
+    for (UIButton *button in column) {
+        button.frame = CGRectMake(x, y, size, size);
+        button.layer.cornerRadius = size / 2;
+        BOOL fits = y + size <= height;
+        if (!fits && [_quickButtons containsObject:button]) [self quickKeyUp:button];
+        button.hidden = !fits;
+        y += pitch;
+    }
+}
+- (void)quickKeyDown:(UIButton *)button {
+    unsigned bit = 1u << button.tag;
+    if (_quickHeld & bit) return;
+    _quickHeld |= bit;
+    [self.delegate touchKey:AKQuickKeyCodes[button.tag] characters:[NSString stringWithFormat:@"%ld", (long)button.tag + 1] pressed:YES];
+}
+- (void)quickKeyUp:(UIButton *)button {
+    unsigned bit = 1u << button.tag;
+    if (!(_quickHeld & bit)) return;
+    _quickHeld &= ~bit;
+    [self.delegate touchKey:AKQuickKeyCodes[button.tag] characters:[NSString stringWithFormat:@"%ld", (long)button.tag + 1] pressed:NO];
+}
+- (void)releaseQuickKeys {
+    for (UIButton *button in _quickButtons) [self quickKeyUp:button];
 }
 - (void)setStickEnabled:(BOOL)enabled {
     [self cancelTouches];
@@ -294,6 +355,7 @@ static void AKEmitStick(void *context, unsigned direction, bool pressed) {
 - (void)suspendInput:(NSNotification *)notification {
     (void)notification;
     [self cancelTouches];
+    [self releaseQuickKeys];
     _pad = (AKTrackpad){0};
     [_ignoredTouches removeAllObjects];
     [self dismissKeyboard];

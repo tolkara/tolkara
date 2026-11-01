@@ -11,6 +11,16 @@ Three translucent buttons sit at the bottom right of the game: the movement
 stick, the trackpad and the keyboard. Only the buttons take touches; the rest
 of the screen belongs to the game.
 
+**iPhone Duo.** Unfolded, the inner display keeps a strip at one side for the
+status bar (UIKit reports it as an occlusion reserved region, iOS 27.1). There
+the buttons stand in a column in that strip, under the status bar, as Apple's
+own bars do: keyboard, stick, trackpad, then **1** to **5**. A number button
+holds its key (a US keyboard's 1 to 5, e.g. a game's first action slots) for
+as long as it is touched. The buttons shrink, down to 34 points, to fit the
+strip; with the iOS keyboard open, those that no longer fit are hidden from the
+bottom up. The game still draws under the strip, so the column covers that
+much of the game's edge. Other screens keep the row and have no number buttons.
+
 **Movement stick.** The stick button turns it on (cyan) or off; the choice is
 kept, and it is on by default on iPhone. With it on, a touch that lands on the
 left half of the game becomes a stick centred where the finger landed, and the
@@ -50,8 +60,8 @@ here it holds the right button, which a game's camera needs more often, and
 there is no one-finger left drag (the hand button's menu still clicks).
 
 A cancelled touch, a rotation, switching apps or turning trackpad mode off
-releases a button the trackpad was holding and every key the stick was
-holding. A keyboard and mouse work at the same time as before.
+releases a button the trackpad was holding and every key the stick or a
+number button was holding. A keyboard and mouse work at the same time as before.
 
 **Keyboard.** Opens and closes the iOS keyboard; the game keeps its size. A row
 above the keyboard has Escape, Tab, left and right arrows, Return and a button
@@ -72,3 +82,5 @@ opens our own test screen (never a game) in the simulator; `--self-test`
 checks the keyboard's placement, typing and returning focus, then drives the
 stick and the trackpad's tap, double tap and hold, two-finger tap and scroll
 with synthetic points, and `--show-keyboard` opens the keyboard to look at.
+With `SIMULATOR` naming an iPhone Duo simulator (iOS 27.2 runtime), it also
+checks the side-strip column with all eight buttons.

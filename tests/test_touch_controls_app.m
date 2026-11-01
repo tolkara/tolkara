@@ -130,6 +130,12 @@
 // test screen; the fixture view counts what arrived through the event queue.
 - (void)stickAndTrackpadSelfTest:(UIView *)host controls:(AKTouchControls *)controls {
     AKInputFixtureView *view = (AKInputFixtureView *)self.guest.contentView;
+    // On iPhone Duo the buttons stand in the status bar's side strip, all
+    // eight of them (with the keys 1 to 5); elsewhere in a row at the bottom.
+    [host layoutIfNeeded];
+    NSArray<UIButton *> *quick = [controls valueForKey:@"_quickButtons"];
+    for (UIButton *button in quick) assert(button.hidden == !controls.vertical);
+    if (controls.vertical) assert(controls.frame.size.width == 44 && CGRectGetMinY(controls.frame) > 40);
     controls.stickEnabled = YES;
     assert(controls.trackpadEnabled);
     CGSize size = host.bounds.size;
@@ -161,7 +167,7 @@
             assert(view.leftDowns == 1 && view.leftUps == 1 && view.lastClickCount == 1);
             assert(view.rightDowns == 2 && view.rightUps == 2 && view.rightDrags >= 1 && view.scrolls >= 1);
             NSLog(@"TOUCH_UI_SELF_TEST_PASS: keyboard layout, text delivery, delete and focus restoration; "
-                  "stick keys and drawing, tap, double tap and hold, two-finger tap and scroll");
+                  "stick keys and drawing, tap, double tap and hold, two-finger tap and scroll; %@ layout", controls.vertical ? @"side-strip column" : @"row");
             exit(EXIT_SUCCESS);
         });
     });

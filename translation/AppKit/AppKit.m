@@ -320,6 +320,8 @@ static BOOL AKWindowInputDiagnostics(void) {
     unsigned _lastTouchButton;
     NSInteger _touchClickCount;
     CGSize _touchViewportSize;
+    NSArray<NSLayoutConstraint *> *_touchRow, *_touchColumn;
+    CGRect _touchStrip;
 }
 - (instancetype)initWithFrame:(CGRect)f {
     if ((self = [super initWithFrame:f])) {
@@ -352,13 +354,54 @@ static BOOL AKWindowInputDiagnostics(void) {
     _touchControls.delegate = self;
     _touchControls.translatesAutoresizingMaskIntoConstraints = NO;
     [self addSubview:_touchControls];
-    [NSLayoutConstraint activateConstraints:@[
+    _touchRow = @[
         [_touchControls.widthAnchor constraintEqualToConstant:148],
         [_touchControls.heightAnchor constraintEqualToConstant:44],
         [_touchControls.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-12],
         [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
-    ]];
+    ];
+    // Constants follow the side strip in layoutSubviews.
+    _touchColumn = @[
+        [_touchControls.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
+        [_touchControls.widthAnchor constraintEqualToConstant:44],
+        [_touchControls.topAnchor constraintEqualToAnchor:self.topAnchor],
+        [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
+    ];
+    [NSLayoutConstraint activateConstraints:_touchRow];
     [self touchTrackpadChanged:_touchControls.trackpadEnabled];
+}
+// The iPhone Duo's inner display keeps a column at one side for the status
+// bar, an occlusion region; Apple's own bars stack their buttons under it.
+// Returns that column below the status bar, or a null rect on other screens.
+- (CGRect)touchControlsStrip {
+    if (@available(iOS 27.1, *)) {
+        CGRect bounds = self.bounds;
+        for (UIViewReservedRegion *region in [self reservedRegionsOfKind:UIViewReservedRegionKind.occlusionRegionKind]) {
+            CGRect frame = region.frame;
+            BOOL trailing = CGRectGetMaxX(frame) >= CGRectGetMaxX(bounds) - 1, leading = CGRectGetMinX(frame) <= CGRectGetMinX(bounds) + 1;
+            if (!region.active || trailing == leading || frame.size.width < 44 || frame.size.width > bounds.size.width / 4 ||
+                CGRectGetMinY(frame) > CGRectGetMinY(bounds) + 1 || CGRectGetMaxY(frame) > CGRectGetMidY(bounds)) continue;
+            return CGRectMake(frame.origin.x, CGRectGetMaxY(frame) + 8, frame.size.width, CGRectGetMaxY(bounds) - CGRectGetMaxY(frame) - 8);
+        }
+    }
+    return CGRectNull;
+}
+- (void)layoutTouchControls {
+    if (!_touchControls) return;
+    CGRect strip = [self touchControlsStrip];
+    if (CGRectEqualToRect(strip, _touchStrip)) return;
+    _touchStrip = strip;
+    // Positions only: no screen contents or touches.
+    AKLog(@"touch controls layout=%@ strip=%@ safe=%@", CGRectIsNull(strip) ? @"row" : @"column",
+          NSStringFromCGRect(strip), NSStringFromUIEdgeInsets(self.safeAreaInsets));
+    BOOL column = !CGRectIsNull(strip);
+    if (column) {
+        _touchColumn[0].constant = CGRectGetMidX(strip) - 22;
+        _touchColumn[2].constant = strip.origin.y;
+    }
+    [NSLayoutConstraint deactivateConstraints:column ? _touchRow : _touchColumn];
+    [NSLayoutConstraint activateConstraints:column ? _touchColumn : _touchRow];
+    _touchControls.vertical = column;
 }
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *target=[super hitTest:point withEvent:event];
@@ -376,6 +419,7 @@ static BOOL AKWindowInputDiagnostics(void) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     [self.nsWindow ak_hostBoundsChanged:self.bounds];
+    [self layoutTouchControls];
     if (!_touchCursorInitialized && _touchControls.trackpadEnabled) [self touchTrackpadChanged:YES];
     if (!CGSizeEqualToSize(_touchViewportSize, self.bounds.size)) {
         [_touchControls cancelTouches];
