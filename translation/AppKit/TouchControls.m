@@ -9,9 +9,9 @@ static NSString *const AKTouchTrackpadDefaultsKey = @"AKTouchTrackpadEnabled";
 static NSString *const AKTouchStickDefaultsKey = @"AKTouchStickEnabled";
 
 @implementation AKTouchControls {
-    UIButton *_keyboardButton, *_trackpadButton, *_stickButton;
+    UIButton *_keyboardButton, *_trackpadButton, *_stickButton, *_jumpButton;
     NSArray<UIButton *> *_quickButtons;
-    unsigned _quickHeld;   // bit i: the key of _quickButtons[i] is down
+    unsigned _quickHeld;   // bit i: the key of the held button tagged i is down
     UIView *_accessory, *_stickBase, *_stickKnob;
     NSTimer *_holdTimer;
     AKTrackpad _pad;
@@ -40,9 +40,12 @@ static void AKEmitStick(void *context, unsigned direction, bool pressed) {
     [controls.delegate touchKey:code characters:characters pressed:pressed];
 }
 
-// macOS key codes of a US keyboard's 1 to 9 and 0.
-static const unsigned short AKQuickKeyCodes[] = {18, 19, 20, 21, 23, 22, 26, 28, 25, 29};
-static NSString *AKQuickKeyCharacters(NSInteger index) { return [NSString stringWithFormat:@"%ld", (long)(index + 1) % 10]; }
+// macOS key codes of a US keyboard's 1 to 9 and 0, then Space for Jump.
+static const unsigned short AKQuickKeyCodes[] = {18, 19, 20, 21, 23, 22, 26, 28, 25, 29, 49};
+enum { AKJumpTag = 10 };
+static NSString *AKQuickKeyCharacters(NSInteger index) {
+    return index == AKJumpTag ? @" " : [NSString stringWithFormat:@"%ld", (long)(index + 1) % 10];
+}
 
 + (BOOL)enabled {
     NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchControlsDefaultsKey];
@@ -105,6 +108,13 @@ static NSString *AKQuickKeyCharacters(NSInteger index) { return [NSString string
             [quick addObject:button];
         }
         _quickButtons = quick;
+        // Jump holds Space while touched, near the right thumb.
+        _jumpButton = [self buttonWithSymbol:@"arrow.up" label:@"Jump" action:@selector(quickKeyUp:)];
+        _jumpButton.tag = AKJumpTag;
+        _jumpButton.accessibilityIdentifier = @"tolkara.jump";
+        _jumpButton.accessibilityHint = @"Holds Space while touched.";
+        [_jumpButton addTarget:self action:@selector(quickKeyDown:) forControlEvents:UIControlEventTouchDown];
+        [_jumpButton addTarget:self action:@selector(quickKeyUp:) forControlEvents:UIControlEventTouchUpOutside | UIControlEventTouchCancel];
         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchTrackpadDefaultsKey];
         BOOL phone = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
         self.trackpadEnabled = saved ? saved.boolValue : phone;
@@ -134,16 +144,23 @@ static NSString *AKQuickKeyCharacters(NSInteger index) { return [NSString string
     [super layoutSubviews];
     if (!self.vertical) {
         for (UIView *button in self.subviews) button.layer.cornerRadius = 22;
-        _stickButton.frame = CGRectMake(0, 0, 44, 44);
-        _trackpadButton.frame = CGRectMake(52, 0, 44, 44);
-        _keyboardButton.frame = CGRectMake(104, 0, 44, 44);
+        _jumpButton.frame = CGRectMake(0, 0, 44, 44);
+        _stickButton.frame = CGRectMake(52, 0, 44, 44);
+        _trackpadButton.frame = CGRectMake(104, 0, 44, 44);
+        _keyboardButton.frame = CGRectMake(156, 0, 44, 44);
         for (UIButton *button in _quickButtons) button.hidden = YES;
         return;
     }
     CGRect strip = self.sideStrip;
+    CGFloat stripCentre = CGRectGetMidX(strip), otherCentre = self.bounds.size.width - stripCentre;
     NSArray<UIButton *> *main = [@[_keyboardButton, _stickButton, _trackpadButton] arrayByAddingObjectsFromArray:[_quickButtons subarrayWithRange:NSMakeRange(0, 5)]];
-    [self layoutColumn:main centre:CGRectGetMidX(strip) top:strip.origin.y];
-    [self layoutColumn:[_quickButtons subarrayWithRange:NSMakeRange(5, 5)] centre:self.bounds.size.width - CGRectGetMidX(strip) top:strip.origin.y];
+    [self layoutColumn:main centre:stripCentre top:strip.origin.y];
+    [self layoutColumn:[_quickButtons subarrayWithRange:NSMakeRange(5, 5)] centre:otherCentre top:strip.origin.y];
+    // Jump, larger, at the bottom just inside the right-hand column.
+    CGFloat size = 64, right = MAX(stripCentre, otherCentre) - strip.size.width / 2 - 8;
+    _jumpButton.frame = CGRectMake(right - size, self.bounds.size.height - size, size, size);
+    _jumpButton.layer.cornerRadius = size / 2;
+    _jumpButton.hidden = NO;
 }
 // Top to bottom, shrunk (to 34 points) to fit; what still does not fit (above
 // the iOS keyboard) is hidden from the bottom up, so the keyboard button stays.
@@ -174,6 +191,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) { return [NSString string
 }
 - (void)releaseQuickKeys {
     for (UIButton *button in _quickButtons) [self quickKeyUp:button];
+    [self quickKeyUp:_jumpButton];
 }
 - (void)setStickEnabled:(BOOL)enabled {
     [self cancelTouches];

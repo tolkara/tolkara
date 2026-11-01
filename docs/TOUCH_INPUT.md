@@ -7,15 +7,17 @@ mode. They are shown by default on iPhone and hidden on iPad;
 them on or off from the next game start. Without them, touches act as before:
 a touch is a left click where the finger is.
 
-Three translucent buttons sit at the bottom right of the game: the movement
-stick, the trackpad and the keyboard. Only the buttons take touches; the rest
+Four translucent buttons sit at the bottom right of the game: Jump, the
+movement stick, the trackpad and the keyboard. Jump holds Space for as long as
+it is touched. Only the buttons take touches; the rest
 of the screen belongs to the game.
 
 **iPhone Duo.** Unfolded, the inner display keeps a strip at one side for the
 status bar (UIKit reports it as an occlusion reserved region, iOS 27.1). There
 the buttons stand in a column in that strip, under the status bar, as Apple's
 own bars do: keyboard, stick, trackpad, then **1** to **5**; **6** to **0**
-stand in a matching column at the opposite edge. A number button holds its key
+stand in a matching column at the opposite edge, and a larger Jump sits at the
+bottom just inside the right-hand column. A number button holds its key
 (a US keyboard's 1 to 0, e.g. a game's action slots) for as long as it is
 touched. The buttons shrink, down to 34 points, to fit; with the iOS keyboard
 open, those that no longer fit are hidden from the bottom up. Once found, the
@@ -42,9 +44,9 @@ D, and strafes with them while the right button is held).
 is kept. The finger moves the pointer by its motion, like a laptop's trackpad:
 where it lands does not matter, and a tap clicks where the pointer is, not
 under the finger. Motion is accelerated with the finger's speed: slow motion
-moves the pointer a little less than the finger, for aiming, and a quick flick
-up to two and a half times as far. Long-press the hand button for a menu with
-left, right and middle click.
+moves the pointer half as far as the finger, for aiming, rising to 0.7 times at
+150 points a second and to one and a half times for a quick flick.
+Long-press the hand button for a menu with left, right and middle click.
 
 | In trackpad mode (the right half, with the stick) | Mouse input |
 | --- | --- |
@@ -64,7 +66,7 @@ here it holds the right button, which a game's camera needs more often, and
 there is no one-finger left drag (the hand button's menu still clicks).
 
 A cancelled touch, a rotation, switching apps or turning trackpad mode off
-releases a button the trackpad was holding and every key the stick or a
+releases a button the trackpad was holding and every key the stick, Jump or a
 number button was holding. A keyboard and mouse work at the same time as before.
 
 **Keyboard.** Opens and closes the iOS keyboard; the game keeps its size. A row
@@ -87,4 +89,4 @@ checks the keyboard's placement, typing and returning focus, then drives the
 stick and the trackpad's tap, double tap and hold, two-finger tap and scroll
 with synthetic points, and `--show-keyboard` opens the keyboard to look at.
 With `SIMULATOR` naming an iPhone Duo simulator (iOS 27.2 runtime), it also
-checks the side-strip columns with all thirteen buttons.
+checks the side-strip columns with all thirteen buttons and Jump.

@@ -16,8 +16,8 @@ typedef struct {
     double tapEnded, tapX, tapY;
 } AKTrackpad;
 
-// Pointer gain for a finger speed in points per second: below 1 when slow,
-// for aiming, rising to 2.5 for a quick flick across the screen.
+// Pointer gain for a finger speed in points per second: half the finger's
+// motion when slow, for aiming, rising to 1.5 for a quick flick.
 double AKTrackpadGain(double speed);
 void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, double time,
                      AKTrackpadEmit emit, void *context);

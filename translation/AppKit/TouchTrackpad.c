@@ -9,9 +9,9 @@ static const double AKTrackpadTapTime = 0.35, AKTrackpadHoldTime = 0.45;
 static const double AKTrackpadDoubleTapGap = 0.3, AKTrackpadDoubleTapReach = 70;
 
 double AKTrackpadGain(double speed) {
-    if (!isfinite(speed) || speed <= 0) return 0.8;
-    if (speed < 150) return 0.8 + 0.2 * speed / 150;
-    return 1 + 1.5 * fmin(1, (speed - 150) / 1050);
+    if (!isfinite(speed) || speed <= 0) return 0.5;
+    if (speed < 150) return 0.5 + 0.2 * speed / 150;
+    return 0.7 + 0.8 * fmin(1, (speed - 150) / 1350);
 }
 
 void AKTrackpadCancel(AKTrackpad *pad, AKTrackpadEmit emit, void *context) {

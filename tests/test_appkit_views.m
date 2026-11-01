@@ -242,11 +242,11 @@ int main(void) { @autoreleasepool {
     // Unicode and never depend on reading the guest's text/selection.
     AKTouchControls *controls = [host valueForKey:@"_touchControls"];
     assert(controls && controls.hasText && controls.isSecureTextEntry);
-    // Only the three buttons take touches; the gaps between them are the game's.
-    controls.frame = CGRectMake(0, 0, 148, 44); [controls layoutIfNeeded];
-    assert([controls pointInside:CGPointMake(20, 20) withEvent:nil] && [controls pointInside:CGPointMake(70, 20) withEvent:nil]);
-    assert([controls pointInside:CGPointMake(126, 20) withEvent:nil]);
-    assert(![controls pointInside:CGPointMake(48, 20) withEvent:nil] && ![controls pointInside:CGPointMake(100, 20) withEvent:nil]);
+    // Only the four buttons (Jump, stick, trackpad, keyboard) take touches;
+    // the gaps between them are the game's.
+    controls.frame = CGRectMake(0, 0, 200, 44); [controls layoutIfNeeded];
+    for (CGFloat x = 20; x < 200; x += 52) assert([controls pointInside:CGPointMake(x, 20) withEvent:nil]);
+    for (CGFloat x = 48; x < 200; x += 52) assert(![controls pointInside:CGPointMake(x, 20) withEvent:nil]);
     [controls insertText:@"@ñ🙂"];
     NSArray<NSString *> *typed = @[@"@", @"ñ", @"🙂"];
     for (unsigned i = 0; i < 3; i++) for (unsigned up = 0; up < 2; up++) {
@@ -372,6 +372,14 @@ int main(void) { @autoreleasepool {
     assert(quickKey.keyCode == 29 && [quickKey.charactersIgnoringModifiers isEqual:@"0"]);
     [(id)controls quickKeyUp:quick[9]];
     assert(next_input().type == NSEventTypeKeyUp);
+    // Jump: larger, at the bottom just inside the right-hand column, holding Space.
+    UIButton *jump = [controls valueForKey:@"_jumpButton"];
+    assert(!jump.hidden && CGRectEqualToRect(jump.frame, CGRectMake(284, 236, 64, 64)));
+    [(id)controls quickKeyDown:jump];
+    quickKey = next_input();
+    assert(quickKey.type == NSEventTypeKeyDown && quickKey.keyCode == 49 && [quickKey.characters isEqual:@" "]);
+    [(id)controls quickKeyUp:jump];
+    assert(next_input().type == NSEventTypeKeyUp);
     // Room for all eight at full size.
     controls.frame = CGRectMake(0, 0, 400, 420); [controls layoutIfNeeded];
     assert(!quick[4].hidden && quick[4].frame.size.height == 44 && quick[4].frame.origin.y == 364);
@@ -381,6 +389,7 @@ int main(void) { @autoreleasepool {
     controls.sideStrip = CGRectNull; [controls layoutIfNeeded];
     quickKey = next_input();
     assert(quickKey.type == NSEventTypeKeyUp && quickKey.keyCode == 18 && quick[0].hidden && quick[5].hidden);
+    assert(!jump.hidden && CGRectEqualToRect(jump.frame, CGRectMake(0, 0, 44, 44)));
     [(id)controls quickKeyUp:quick[0]];
     assert(![NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:NO]);
     controls.trackpadEnabled = NO;

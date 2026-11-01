@@ -357,7 +357,7 @@ static BOOL AKWindowInputDiagnostics(void) {
     _touchControls.translatesAutoresizingMaskIntoConstraints = NO;
     [self addSubview:_touchControls];
     _touchRow = @[
-        [_touchControls.widthAnchor constraintEqualToConstant:148],
+        [_touchControls.widthAnchor constraintEqualToConstant:200],
         [_touchControls.heightAnchor constraintEqualToConstant:44],
         [_touchControls.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-12],
         [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],

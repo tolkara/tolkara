@@ -29,8 +29,10 @@ extern NSString *const AKTouchControlsDefaultsKey;   // "AKTouchControls"
 // The iPhone Duo's side strip in this view's coordinates, or CGRectNull for
 // the row. With a strip this view covers the game, taking touches only on its
 // buttons: keyboard, stick, trackpad and keys 1 to 5 stand in a column in the
-// strip, keys 6 to 0 in a matching column at the opposite edge. A number key
-// is held down while touched.
+// strip, keys 6 to 0 in a matching column at the opposite edge, and a larger
+// Jump just inside the right-hand column at the bottom. Without a strip the
+// row is Jump, stick, trackpad and keyboard. Number keys and Jump (Space) are
+// held down while touched.
 @property (nonatomic) CGRect sideStrip;
 @property (nonatomic, readonly) BOOL vertical;
 - (void)processTouches:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;

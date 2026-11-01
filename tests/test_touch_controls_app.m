@@ -140,6 +140,9 @@
         assert(strip.size.width >= 44 && strip.origin.y > 40);
         assert(CGRectContainsRect(strip, quick[4].frame) && !CGRectIntersectsRect(strip, quick[9].frame));
         assert(fabs(CGRectGetMidX(quick[9].frame) - (host.bounds.size.width - CGRectGetMidX(strip))) < 1);
+        UIButton *jump = [controls valueForKey:@"_jumpButton"];
+        assert(!jump.hidden && CGRectGetMaxY(jump.frame) <= controls.bounds.size.height && CGRectGetMidX(jump.frame) > host.bounds.size.width / 2);
+        assert(CGRectGetMaxX(jump.frame) < MAX(CGRectGetMinX(quick[9].frame), CGRectGetMinX(quick[4].frame)));
         // The strip stays when UIKit stops reporting it (the status bar hides).
         [host setNeedsLayout]; [host layoutIfNeeded];
         assert(CGRectEqualToRect(controls.sideStrip, strip));

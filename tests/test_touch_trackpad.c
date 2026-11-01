@@ -23,7 +23,7 @@ int main(void) {
     update(&pad, &trace, 0, 0, 0, 1.2);
     assert(trace.count == 1 && trace.events[0].action == AKTrackpadMove);
     double gain = AKTrackpadGain(hypot(20, 20) / 0.1);
-    assert(gain > 1 && gain < 1.5);
+    assert(gain > 0.7 && gain < 0.8);
     assert(fabs(trace.events[0].x - 20 * gain) < 1e-9 && fabs(trace.events[0].y + 20 * gain) < 1e-9);
     // Lifting and placing somewhere else does not teleport the cursor.
     trace.count = 0;
@@ -98,11 +98,11 @@ int main(void) {
         update(&pad, &trace, 0, 0, 0, 10.2);
         assert(!trace.count);
     }
-    // Pointer gain: slower than the finger when aiming, faster for a flick,
-    // never decreasing with speed and capped.
-    assert(AKTrackpadGain(0) == 0.8 && AKTrackpadGain(150) == 1 && AKTrackpadGain(NAN) == 0.8);
+    // Pointer gain: half the finger's motion when aiming, up to 1.5 for a
+    // flick, never decreasing with speed and capped.
+    assert(AKTrackpadGain(0) == 0.5 && fabs(AKTrackpadGain(150) - 0.7) < 1e-12 && AKTrackpadGain(NAN) == 0.5);
     for (double speed = 0; speed < 3000; speed += 10) assert(AKTrackpadGain(speed + 10) >= AKTrackpadGain(speed));
-    assert(AKTrackpadGain(1200) == 2.5 && AKTrackpadGain(100000) == 2.5);
+    assert(AKTrackpadGain(1500) == 1.5 && AKTrackpadGain(100000) == 1.5 && AKTrackpadGain(1000) < 1.3);
     // Repeated still samples (another touch's events) do not shorten the
     // interval the next motion's speed is measured over.
     trace.count = 0;
