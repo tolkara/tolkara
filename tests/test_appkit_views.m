@@ -338,27 +338,30 @@ int main(void) { @autoreleasepool {
     NSEvent *tapDown = next_input(), *tapUp = next_input();
     assert(tapDown.type == NSEventTypeLeftMouseDown && tapUp.type == NSEventTypeLeftMouseUp);
     assert(CGPointEqualToPoint(tapDown.locationInWindow, CGPointMake(0, 1)) && CGPointEqualToPoint(tapUp.locationInWindow, CGPointMake(0, 1)));
-    // The side strip: keyboard, stick, trackpad and keys 1 to 5 in a column
-    // in it, keys 6 to 0 at the opposite edge, shrunk and then hidden from the
-    // bottom when they do not fit; a key is held while touched.
+    // The side strip: a column in it and one mirroring it at the other edge.
+    // On the right Escape, Tab, keys 1 to 5 and Jump; on the left keyboard,
+    // stick, trackpad and keys 6 to 0. Shrunk, then hidden from the bottom
+    // when they do not fit; a key button holds its key while touched.
     // (UIControl actions need a UIApplication, so the handlers are called directly.)
     assert(!controls.vertical && CGRectIsNull(controls.sideStrip));
     NSArray<UIButton *> *quick = [controls valueForKey:@"_quickButtons"];
-    assert(quick.count == 10 && quick[0].hidden && quick[9].hidden);
+    UIButton *jump = [controls valueForKey:@"_jumpButton"], *escape = [controls valueForKey:@"_escapeButton"], *tab = [controls valueForKey:@"_tabButton"];
+    UIButton *keyboardButton = [controls valueForKey:@"_keyboardButton"];
+    assert(quick.count == 10 && quick[0].hidden && quick[9].hidden && escape.hidden && tab.hidden && !jump.hidden);
     [controls removeFromSuperview];   // free of the host's row constraints
     controls.translatesAutoresizingMaskIntoConstraints = YES;
     controls.frame = CGRectMake(0, 0, 400, 300);
     controls.sideStrip = CGRectMake(356, 0, 44, 300);
     [controls layoutIfNeeded];
     assert(controls.vertical);
-    // 300 points: eight buttons shrink to 34 on a 40-point pitch, and seven fit.
-    assert(quick[0].frame.size.height == 34 && quick[1].frame.origin.y == 160 && CGRectGetMidX(quick[1].frame) == 378);
-    assert(!quick[0].hidden && !quick[3].hidden && quick[4].hidden);
-    assert([controls pointInside:CGPointMake(378, 170) withEvent:nil] && ![controls pointInside:CGPointMake(378, 157) withEvent:nil]);
+    // 300 points: eight buttons a column shrink to 34 on a 40-point pitch, and seven fit.
+    assert(CGRectEqualToRect(escape.frame, CGRectMake(361, 0, 34, 34)) && tab.frame.origin.y == 40);
+    assert(quick[0].frame.origin.y == 80 && quick[1].frame.origin.y == 120 && quick[4].frame.origin.y == 240 && CGRectGetMidX(quick[4].frame) == 378);
+    assert(jump.hidden && jump.frame.origin.y == 280 && CGRectGetMidX(jump.frame) == 378);
+    assert(CGRectGetMidX(keyboardButton.frame) == 22 && keyboardButton.frame.origin.y == 0);
+    assert(CGRectGetMidX(quick[5].frame) == 22 && quick[5].frame.origin.y == 120 && !quick[8].hidden && quick[9].hidden);
+    assert([controls pointInside:CGPointMake(378, 130) withEvent:nil] && ![controls pointInside:CGPointMake(378, 157) withEvent:nil]);
     assert(![controls pointInside:CGPointMake(378, 290) withEvent:nil] && ![controls pointInside:CGPointMake(200, 150) withEvent:nil]);
-    // Keys 6 to 0 mirror the strip at the left edge, at full size.
-    for (unsigned i = 5; i < 10; i++)
-        assert(!quick[i].hidden && quick[i].frame.size.width == 44 && CGRectGetMidX(quick[i].frame) == 22 && quick[i].frame.origin.y == (i - 5) * 52);
     assert([controls pointInside:CGPointMake(22, 20) withEvent:nil]);
     [(id)controls quickKeyDown:quick[1]];
     [(id)controls quickKeyDown:quick[1]];
@@ -367,28 +370,40 @@ int main(void) { @autoreleasepool {
     [(id)controls quickKeyUp:quick[1]];
     quickKey = next_input();
     assert(quickKey.type == NSEventTypeKeyUp && quickKey.keyCode == 19);
-    [(id)controls quickKeyDown:quick[9]];
-    quickKey = next_input();
-    assert(quickKey.keyCode == 29 && [quickKey.charactersIgnoringModifiers isEqual:@"0"]);
-    [(id)controls quickKeyUp:quick[9]];
-    assert(next_input().type == NSEventTypeKeyUp);
-    // Jump: larger, at the bottom just inside the right-hand column, holding Space.
-    UIButton *jump = [controls valueForKey:@"_jumpButton"];
-    assert(!jump.hidden && CGRectEqualToRect(jump.frame, CGRectMake(284, 236, 64, 64)));
+    // Escape and Tab (target), held while touched.
+    for (UIButton *button in @[escape, tab]) {
+        [(id)controls quickKeyDown:button];
+        quickKey = next_input();
+        assert(quickKey.type == NSEventTypeKeyDown && quickKey.keyCode == (button == escape ? 53 : 48));
+        assert([quickKey.characters isEqual:button == escape ? @"\x1b" : @"\t"]);
+        [(id)controls quickKeyUp:button];
+        assert(next_input().type == NSEventTypeKeyUp);
+    }
+    // The toggles are not key buttons.
+    [(id)controls quickKeyDown:keyboardButton];
+    assert(![NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:NO]);
+    // Room for all eight at full size: Jump at the bottom of the right column, holding Space.
+    controls.frame = CGRectMake(0, 0, 400, 420); [controls layoutIfNeeded];
+    assert(!jump.hidden && CGRectEqualToRect(jump.frame, CGRectMake(356, 364, 44, 44)) && !quick[9].hidden);
     [(id)controls quickKeyDown:jump];
     quickKey = next_input();
     assert(quickKey.type == NSEventTypeKeyDown && quickKey.keyCode == 49 && [quickKey.characters isEqual:@" "]);
     [(id)controls quickKeyUp:jump];
     assert(next_input().type == NSEventTypeKeyUp);
-    // Room for all eight at full size.
-    controls.frame = CGRectMake(0, 0, 400, 420); [controls layoutIfNeeded];
-    assert(!quick[4].hidden && quick[4].frame.size.height == 44 && quick[4].frame.origin.y == 364);
+    [(id)controls quickKeyDown:quick[9]];
+    quickKey = next_input();
+    assert(quickKey.keyCode == 29 && [quickKey.charactersIgnoringModifiers isEqual:@"0"]);
+    [(id)controls quickKeyUp:quick[9]];
+    assert(next_input().type == NSEventTypeKeyUp);
+    // With the strip on the left the columns keep their sides.
+    controls.sideStrip = CGRectMake(0, 0, 44, 420); [controls layoutIfNeeded];
+    assert(CGRectGetMidX(jump.frame) == 378 && CGRectGetMidX(keyboardButton.frame) == 22);
     [(id)controls quickKeyDown:quick[0]];
     assert(next_input().keyCode == 18);
     // Leaving the column releases a held key exactly once.
     controls.sideStrip = CGRectNull; [controls layoutIfNeeded];
     quickKey = next_input();
-    assert(quickKey.type == NSEventTypeKeyUp && quickKey.keyCode == 18 && quick[0].hidden && quick[5].hidden);
+    assert(quickKey.type == NSEventTypeKeyUp && quickKey.keyCode == 18 && quick[0].hidden && quick[5].hidden && escape.hidden);
     assert(!jump.hidden && CGRectEqualToRect(jump.frame, CGRectMake(0, 0, 44, 44)));
     [(id)controls quickKeyUp:quick[0]];
     assert(![NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:NO]);

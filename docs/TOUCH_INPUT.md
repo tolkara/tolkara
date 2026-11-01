@@ -13,19 +13,17 @@ it is touched. Only the buttons take touches; the rest
 of the screen belongs to the game.
 
 **iPhone Duo.** Unfolded, the inner display keeps a strip at one side for the
-status bar (UIKit reports it as an occlusion reserved region, iOS 27.1). There
-the buttons stand in a column in that strip, under the status bar, as Apple's
-own bars do: keyboard, stick, trackpad, then **1** to **5**; **6** to **0**
-stand in a matching column at the opposite edge, and a larger Jump sits at the
-bottom just inside the right-hand column. A number button holds its key
-(a US keyboard's 1 to 0, e.g. a game's action slots) for as long as it is
-touched. The buttons shrink, down to 34 points, to fit; with the iOS keyboard
-open, those that no longer fit are hidden from the bottom up. Once found, the
-strip stays for that screen size: on the device UIKit stops reporting it when
-the game hides the status bar. The game still draws under both columns. Other
-screens keep the row and have no number buttons. Tolkara logs which layout it
-chose, and whether iOS accepted a keyboard request and how tall the keyboard
-came up (with a hardware keyboard connected, iOS shows only the row above it).
+status bar (UIKit reports it as an occlusion reserved region, iOS 27.1). The
+buttons stand in a column in that strip and in one mirroring it at the other
+edge, both starting below the status bar as Apple's own bars do: on the right
+Escape, Tab (e.g. to select a target), **1** to **5** and Jump at the bottom; on
+the left the keyboard, stick and trackpad buttons and **6** to **0**. Key
+buttons hold their key (a US keyboard's) for as long as they are touched. The
+buttons shrink, down to 34 points, to fit; with the iOS keyboard open, those
+that no longer fit are hidden from the bottom up. Once found, the strip stays
+for that screen size: on the device UIKit stops reporting it when the game
+hides the status bar. The game still draws under both columns. Other screens
+keep the row, without number, Escape and Tab buttons.
 
 **Movement stick.** The stick button turns it on (cyan) or off; the choice is
 kept, and it is on by default on iPhone. With it on, a touch that lands on the
@@ -44,8 +42,10 @@ D, and strafes with them while the right button is held).
 is kept. The finger moves the pointer by its motion, like a laptop's trackpad:
 where it lands does not matter, and a tap clicks where the pointer is, not
 under the finger. Motion is accelerated with the finger's speed: slow motion
-moves the pointer half as far as the finger, for aiming, rising to 0.7 times at
-150 points a second and to one and a half times for a quick flick.
+moves the pointer a little less than the finger, for aiming, and a quick flick
+up to two and a half times as far. While the right button is held (double tap
+and slide, or two fingers held then slid), motion is doubled again, since that
+turns a game's camera.
 Long-press the hand button for a menu with left, right and middle click.
 
 | In trackpad mode (the right half, with the stick) | Mouse input |
@@ -73,7 +73,11 @@ number button was holding. A keyboard and mouse work at the same time as before.
 above the keyboard has Escape, Tab, left and right arrows, Return and a button
 to close it. Select a text field in the game first: Tolkara does not detect
 the game's text fields, and it does not read the game's text or selection, so
-the keyboard does not open by itself. Typed text reaches the game as key
+the keyboard does not open by itself. While iOS reports a hardware keyboard (a
+Bluetooth keyboard, or the Mac's keyboard while Device Hub mirrors the device),
+it shows only the row above its keyboard; type on that keyboard instead.
+Tolkara logs when a hardware keyboard connects or disconnects, whether iOS
+accepted a keyboard request and how tall the keyboard came up. Typed text reaches the game as key
 presses, with macOS key codes for the characters of a US keyboard. The keyboard
 is set up as a password field, so iOS offers no predictions or corrections; it
 also offers no dictation or third-party keyboards, and may limit other input
@@ -89,4 +93,4 @@ checks the keyboard's placement, typing and returning focus, then drives the
 stick and the trackpad's tap, double tap and hold, two-finger tap and scroll
 with synthetic points, and `--show-keyboard` opens the keyboard to look at.
 With `SIMULATOR` naming an iPhone Duo simulator (iOS 27.2 runtime), it also
-checks the side-strip columns with all thirteen buttons and Jump.
+checks the two side-strip columns.

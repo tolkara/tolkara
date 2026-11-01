@@ -130,19 +130,21 @@
 // test screen; the fixture view counts what arrived through the event queue.
 - (void)stickAndTrackpadSelfTest:(UIView *)host controls:(AKTouchControls *)controls {
     AKInputFixtureView *view = (AKInputFixtureView *)self.guest.contentView;
-    // On iPhone Duo the buttons stand in the status bar's side strip, with
-    // keys 1 to 5, and keys 6 to 0 at the opposite edge; elsewhere in a row.
+    // On iPhone Duo the buttons stand in two columns from below the status
+    // bar: on the right Escape, Tab, 1 to 5 and Jump; on the left the toggles
+    // and 6 to 0. Elsewhere they stand in a row.
     [host layoutIfNeeded];
     NSArray<UIButton *> *quick = [controls valueForKey:@"_quickButtons"];
-    for (UIButton *button in quick) assert(button.hidden == !controls.vertical);
+    UIButton *jump = [controls valueForKey:@"_jumpButton"], *escape = [controls valueForKey:@"_escapeButton"];
+    for (UIButton *button in [quick arrayByAddingObject:escape]) assert(button.hidden == !controls.vertical);
+    assert(!jump.hidden);
     if (controls.vertical) {
         CGRect strip = controls.sideStrip;
+        CGFloat middle = host.bounds.size.width / 2;
         assert(strip.size.width >= 44 && strip.origin.y > 40);
-        assert(CGRectContainsRect(strip, quick[4].frame) && !CGRectIntersectsRect(strip, quick[9].frame));
-        assert(fabs(CGRectGetMidX(quick[9].frame) - (host.bounds.size.width - CGRectGetMidX(strip))) < 1);
-        UIButton *jump = [controls valueForKey:@"_jumpButton"];
-        assert(!jump.hidden && CGRectGetMaxY(jump.frame) <= controls.bounds.size.height && CGRectGetMidX(jump.frame) > host.bounds.size.width / 2);
-        assert(CGRectGetMaxX(jump.frame) < MAX(CGRectGetMinX(quick[9].frame), CGRectGetMinX(quick[4].frame)));
+        assert(CGRectGetMidX(escape.frame) > middle && CGRectGetMidX(quick[4].frame) > middle && CGRectGetMidX(quick[9].frame) < middle);
+        assert(CGRectGetMidX(jump.frame) == CGRectGetMidX(quick[4].frame) && CGRectGetMinY(jump.frame) > CGRectGetMaxY(quick[4].frame));
+        assert(CGRectGetMaxY(jump.frame) <= controls.bounds.size.height);
         // The strip stays when UIKit stops reporting it (the status bar hides).
         [host setNeedsLayout]; [host layoutIfNeeded];
         assert(CGRectEqualToRect(controls.sideStrip, strip));
