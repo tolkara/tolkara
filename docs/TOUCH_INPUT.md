@@ -44,8 +44,8 @@ where it lands does not matter, and a tap clicks where the pointer is, not
 under the finger. Motion is accelerated with the finger's speed: slow motion
 moves the pointer a little less than the finger, for aiming, and a quick flick
 up to two and a half times as far. While the right button is held (double tap
-and slide, or two fingers held then slid), motion is doubled again, since that
-turns a game's camera.
+and slide, or two fingers held then slid), which turns a game's camera, motion
+is instead three times the finger's at any speed, so the camera turns evenly.
 Long-press the hand button for a menu with left, right and middle click.
 
 | In trackpad mode (the right half, with the stick) | Mouse input |

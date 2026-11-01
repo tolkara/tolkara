@@ -19,9 +19,9 @@ typedef struct {
 // Pointer gain for a finger speed in points per second: below 1 when slow,
 // for aiming, rising to 2.5 for a quick flick across the screen.
 double AKTrackpadGain(double speed);
-// Extra factor while the right button is held (double tap and slide, or two
-// fingers held then slid): a game's camera turns by it.
-#define AKTrackpadRightDragScale 2.0
+// Constant gain, without acceleration, while the right button is held (double
+// tap and slide, or two fingers held then slid): a game's camera turns by it.
+#define AKTrackpadRightDragGain 3.0
 void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, double time,
                      AKTrackpadEmit emit, void *context);
 // About half a second after a still touch: one finger right-clicks, or after

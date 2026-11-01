@@ -128,8 +128,8 @@ int main(void) {
     assert(trace.events[0].action == AKTrackpadDown && trace.events[0].button == 0 && trace.events[1].action == AKTrackpadUp);
     assert(trace.events[2].action == AKTrackpadDown && trace.events[2].button == 1);
     assert(trace.events[3].action == AKTrackpadMove && trace.events[3].button == 1 && trace.events[4].action == AKTrackpadMove);
-    // The held right button (camera) moves twice as far as the pointer would.
-    assert(fabs(trace.events[3].x - 48 * AKTrackpadGain(48 / 0.15) * AKTrackpadRightDragScale) < 1e-9);
+    // The held right button (camera) moves linearly: the same gain at any speed.
+    assert(trace.events[3].x == 48 * AKTrackpadRightDragGain && trace.events[4].x == 40 * AKTrackpadRightDragGain);
     assert(trace.events[5].action == AKTrackpadUp && trace.events[5].button == 1);
     // Held still instead, the right button goes down at the hold and is
     // released on lift, with no click at the end.

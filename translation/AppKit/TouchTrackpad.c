@@ -113,9 +113,10 @@ void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, dou
         emit(context, AKTrackpadDown, 0, 0, pad->button);
     }
     if (fingers == 1 || pad->dragging) {
-        double gain = AKTrackpadGain(distance / fmax(interval, 1.0 / 240));
-        // A held right button turns a game's camera, which needs more motion.
-        if (pad->dragging && pad->button == 1) gain *= AKTrackpadRightDragScale;
+        // A held right button turns a game's camera: linear, so it turns
+        // evenly with the finger; accelerated, uneven touch timing made it jump.
+        double gain = pad->dragging && pad->button == 1 ? AKTrackpadRightDragGain :
+                      AKTrackpadGain(distance / fmax(interval, 1.0 / 240));
         emit(context, AKTrackpadMove, dx * gain, dy * gain, pad->button);
     } else if (fingers == 2 && pad->travelled > AKTrackpadSlop) {
         // Keep sub-line motion: the Quartz adapter exposes integer wheel ticks.
