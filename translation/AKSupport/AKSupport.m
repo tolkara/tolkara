@@ -69,6 +69,22 @@ void AKMouseSetCaptured(bool captured) {
         [NSNotificationCenter.defaultCenter postNotificationName:@"AKMouseCaptureDidChange" object:nil];
 }
 
+#include <os/lock.h>
+static os_unfair_lock screenLock = OS_UNFAIR_LOCK_INIT;
+static double screenWidth, screenHeight;
+bool AKScreenGameSize(double *width, double *height) {
+    os_unfair_lock_lock(&screenLock);
+    bool known = screenWidth > 0 && screenHeight > 0;
+    if (known) { *width = screenWidth; *height = screenHeight; }
+    os_unfair_lock_unlock(&screenLock);
+    return known;
+}
+void AKScreenSetGameSize(double width, double height) {
+    os_unfair_lock_lock(&screenLock);
+    screenWidth = width; screenHeight = height;
+    os_unfair_lock_unlock(&screenLock);
+}
+
 void AKMouseSetConfined(bool confined) {
     if(atomic_exchange(&mouseConfined,confined)!=confined)
         [NSNotificationCenter.defaultCenter postNotificationName:@"AKMouseCaptureDidChange" object:nil];

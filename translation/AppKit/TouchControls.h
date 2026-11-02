@@ -21,13 +21,16 @@ extern NSString *const AKTouchControlsDefaultsKey;   // "AKTouchControls"
 @property (class, nonatomic, readonly) BOOL enabled;
 @property (nonatomic, weak) id<AKTouchControlsDelegate> delegate;
 @property (nonatomic) BOOL trackpadEnabled;
+// The view the game draws in: touches on it drive the stick and the trackpad,
+// in its coordinates. Without one, the view this one is in.
+@property (nonatomic, weak) UIView *gameView;
 // With the stick on, a touch landing on the left half of the game is a
 // movement stick (W, A, S and D) and the right half is the trackpad. It
 // needs trackpad mode: turning either on or off keeps the two consistent.
 @property (nonatomic) BOOL stickEnabled;
 @property (nonatomic, readonly) BOOL keyboardVisible;
 // The iPhone Duo's side strip in this view's coordinates, or CGRectNull for
-// the row. With a strip this view covers the game, taking touches only on its
+// the row. With a strip this view covers the screen, taking touches only on its
 // buttons, in a column in the strip and one mirroring it at the other edge:
 // on the right Escape, Tab, keys 1 to 5 and Jump; on the left the keyboard,
 // stick and trackpad buttons and keys 6 to 0. Without a strip the row is Jump,

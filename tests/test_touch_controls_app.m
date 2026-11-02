@@ -105,6 +105,7 @@
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             UIView *host = [self.guest valueForKey:@"_host"];
             AKTouchControls *controls = [host valueForKey:@"_touchControls"];
+            [host.superview setNeedsLayout]; [host.superview layoutIfNeeded];
             CGSize originalSize = host.bounds.size;
             [controls toggleKeyboard];
             if (!selfTest) return;
@@ -140,13 +141,22 @@
     assert(!jump.hidden);
     if (controls.vertical) {
         CGRect strip = controls.sideStrip;
-        CGFloat middle = host.bounds.size.width / 2;
+        CGFloat middle = host.superview.bounds.size.width / 2;
         assert(strip.size.width >= 44 && strip.origin.y > 40);
         assert(CGRectGetMidX(escape.frame) > middle && CGRectGetMidX(quick[4].frame) > middle && CGRectGetMidX(quick[9].frame) < middle);
         assert(CGRectGetMidX(jump.frame) == CGRectGetMidX(quick[4].frame) && CGRectGetMinY(jump.frame) > CGRectGetMaxY(quick[4].frame));
         assert(CGRectGetMaxY(jump.frame) <= controls.bounds.size.height);
+        // The game draws between the columns and sees a display that size.
+        UIView *container = host.superview;
+        CGFloat side = CGRectGetMidX(strip) > middle ? container.bounds.size.width - CGRectGetMinX(strip) : CGRectGetMaxX(strip);
+        assert(controls.superview == container && controls.gameView == host);
+        assert(CGRectEqualToRect(host.frame, CGRectInset(container.bounds, side, 0)));
+        assert(CGSizeEqualToSize(NSScreen.mainScreen.frame.size, host.bounds.size));
+        assert(CGSizeEqualToSize(self.guest.contentView.frame.size, host.bounds.size));
+        assert(CGRectGetMinX([container convertRect:escape.bounds fromView:escape]) >= CGRectGetMaxX(host.frame));
+        assert(CGRectGetMaxX([container convertRect:quick[9].bounds fromView:quick[9]]) <= CGRectGetMinX(host.frame));
         // The strip stays when UIKit stops reporting it (the status bar hides).
-        [host setNeedsLayout]; [host layoutIfNeeded];
+        [container setNeedsLayout]; [container layoutIfNeeded];
         assert(CGRectEqualToRect(controls.sideStrip, strip));
     }
     controls.stickEnabled = YES;

@@ -2,7 +2,12 @@
 @implementation NSScreen
 + (NSScreen *)mainScreen { static NSScreen *s; static dispatch_once_t once; dispatch_once(&once, ^{s=[self new];}); return s; }
 + (NSArray *)screens { return @[self.mainScreen]; }
-- (NSRect)frame { return UIScreen.mainScreen.bounds; }
+// The area the guest's windows get: the screen less the on-screen controls'
+// side columns, where they take them.
+- (NSRect)frame {
+    double width, height;
+    return AKScreenGameSize(&width, &height) ? CGRectMake(0, 0, width, height) : UIScreen.mainScreen.bounds;
+}
 - (NSRect)auxiliaryTopLeftArea { return CGRectZero; }
 - (NSRect)auxiliaryTopRightArea { return CGRectZero; }
 - (NSRect)convertRectFromBacking:(NSRect)r { CGFloat f=self.backingScaleFactor; return CGRectMake(r.origin.x/f,r.origin.y/f,r.size.width/f,r.size.height/f); }

@@ -272,7 +272,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
 - (void)dismissKeyboard {
     if (self.isFirstResponder) {
         [self resignFirstResponder];
-        [self.superview becomeFirstResponder];
+        [(self.gameView ?: self.superview) becomeFirstResponder];
     }
 }
 // The guest owns the text and selection. Do not cache account/password text
@@ -321,7 +321,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
     for (UITouch *touch in touches) if (touch.phase == UITouchPhaseCancelled) [self cancelTouches];
     // UIKit can report one event's touches to several handlers (began and
     // moved), so the same event may arrive twice; each step is idempotent.
-    UIView *host = self.superview;
+    UIView *host = self.gameView ?: self.superview;
     unsigned count = 0;
     CGPoint center = CGPointZero;
     for (UITouch *touch in event.allTouches) {
@@ -387,9 +387,11 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         _stickBase = [self stickCircle:2 * AKStickRadius alpha:0.25];
         _stickKnob = [self stickCircle:48 alpha:0.45];
     }
-    UIView *host = self.superview;
+    // In the game's view and its coordinates, below these buttons.
+    UIView *host = self.gameView ?: self.superview;
     if (_stickBase.superview != host) {
-        [host insertSubview:_stickBase belowSubview:self];
+        if (self.superview == host) [host insertSubview:_stickBase belowSubview:self];
+        else [host addSubview:_stickBase];
         [host insertSubview:_stickKnob aboveSubview:_stickBase];
     }
     _stickBase.hidden = _stickKnob.hidden = !_stick.active;

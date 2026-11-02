@@ -308,6 +308,11 @@ static BOOL AKWindowInputDiagnostics(void) {
 }
 @end
 
+@class AKHostView;
+@interface AKHostContainerView : UIView
+@property (nonatomic, weak) AKHostView *host;
+@end
+
 @interface AKHostView : UIView <UIPointerInteractionDelegate, AKTouchControlsDelegate>
 @property (nonatomic, weak) NSWindow *nsWindow;
 @end
@@ -323,6 +328,13 @@ static BOOL AKWindowInputDiagnostics(void) {
     NSArray<NSLayoutConstraint *> *_touchRow, *_touchColumn;
     CGRect _touchStrip;
     CGSize _touchStripSize;
+    // A touch camera drag (right button held) waits for the game to capture
+    // the pointer before its motion goes out; then counts what it sent.
+    BOOL _cameraWaiting, _cameraDragging;
+    CGPoint _cameraHeld, _cameraTotal;
+    NSTimeInterval _cameraPressed, _cameraCaptured;
+    CGFloat _cameraLargestStep;
+    unsigned _cameraSteps, _cameraWarps, _cameraReports;
 }
 - (instancetype)initWithFrame:(CGRect)f {
     if ((self = [super initWithFrame:f])) {
@@ -354,35 +366,45 @@ static BOOL AKWindowInputDiagnostics(void) {
 - (void)installTouchControls {
     _touchControls = [[AKTouchControls alloc] initWithFrame:CGRectZero];
     _touchControls.delegate = self;
+    _touchControls.gameView = self;
     _touchControls.translatesAutoresizingMaskIntoConstraints = NO;
-    [self addSubview:_touchControls];
+    [self placeTouchControlsIn:self];
+    [self touchTrackpadChanged:_touchControls.trackpadEnabled];
+}
+// The controls live in the game's container where it has one, so that their
+// columns stand beside the game instead of over it.
+- (void)placeTouchControlsIn:(UIView *)parent {
+    if (_touchControls.superview == parent) return;
+    if (_touchRow) [NSLayoutConstraint deactivateConstraints:_touchRow];
+    if (_touchColumn) [NSLayoutConstraint deactivateConstraints:_touchColumn];
+    [parent addSubview:_touchControls];
     _touchRow = @[
         [_touchControls.widthAnchor constraintEqualToConstant:200],
         [_touchControls.heightAnchor constraintEqualToConstant:44],
         [_touchControls.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-12],
-        [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
+        [_touchControls.bottomAnchor constraintEqualToAnchor:parent.keyboardLayoutGuide.topAnchor constant:-8],
     ];
-    // With a side strip the controls cover the game (they take touches only
-    // on their buttons) and place their columns themselves.
+    // With a side strip the controls cover the container (they take touches
+    // only on their buttons) and place their columns themselves.
     _touchColumn = @[
-        [_touchControls.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
-        [_touchControls.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
-        [_touchControls.topAnchor constraintEqualToAnchor:self.topAnchor],
-        [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
+        [_touchControls.leadingAnchor constraintEqualToAnchor:parent.leadingAnchor],
+        [_touchControls.trailingAnchor constraintEqualToAnchor:parent.trailingAnchor],
+        [_touchControls.topAnchor constraintEqualToAnchor:parent.topAnchor],
+        [_touchControls.bottomAnchor constraintEqualToAnchor:parent.keyboardLayoutGuide.topAnchor constant:-8],
     ];
-    [NSLayoutConstraint activateConstraints:_touchRow];
-    [self touchTrackpadChanged:_touchControls.trackpadEnabled];
+    [NSLayoutConstraint activateConstraints:CGRectIsNull(_touchStrip) ? _touchRow : _touchColumn];
 }
 // The iPhone Duo's inner display keeps a column at one side for the status
 // bar, an occlusion region; Apple's own bars stack their buttons under it.
-// Returns that column below the status bar, or a null rect on other screens.
-// The region is also looked for while inactive: on the device it goes once
-// the game hides the status bar, and safe-area insets never mark the strip.
-- (CGRect)touchControlsStripRegions:(NSUInteger *)count {
+// Returns that column below the status bar in the view's coordinates, or a
+// null rect on other screens. The region is also looked for while inactive:
+// on the device it goes once the game hides the status bar, and safe-area
+// insets never mark the strip.
++ (CGRect)touchControlsStripIn:(UIView *)view regions:(NSUInteger *)count {
     *count = 0;
     if (@available(iOS 27.1, *)) {
-        CGRect bounds = self.bounds;
-        NSArray<UIViewReservedRegion *> *regions = [self reservedRegionsOfKind:UIViewReservedRegionKind.occlusionRegionKind
+        CGRect bounds = view.bounds;
+        NSArray<UIViewReservedRegion *> *regions = [view reservedRegionsOfKind:UIViewReservedRegionKind.occlusionRegionKind
                                                                        options:UIViewReservedRegionQueryOptionsIncludeInactive];
         *count = regions.count;
         for (UIViewReservedRegion *region in regions) {
@@ -395,24 +417,45 @@ static BOOL AKWindowInputDiagnostics(void) {
     }
     return CGRectNull;
 }
-- (void)layoutTouchControls {
-    if (!_touchControls) return;
+// The game's area in a container: all of it, or with a strip the part
+// between the strip's column and the one mirroring it at the other edge.
++ (CGRect)gameFrameIn:(CGRect)bounds strip:(CGRect)strip {
+    if (CGRectIsNull(strip)) return bounds;
+    CGFloat side = CGRectGetMidX(strip) > CGRectGetMidX(bounds) ? CGRectGetMaxX(bounds) - CGRectGetMinX(strip)
+                                                               : CGRectGetMaxX(strip) - CGRectGetMinX(bounds);
+    return CGRectInset(bounds, side, 0);
+}
+// Called by the container (or, without one, by this view itself).
+- (void)layoutTouchControlsIn:(UIView *)parent {
+    if (!_touchControls) {
+        if (parent != self && !CGRectEqualToRect(self.frame, parent.bounds)) self.frame = parent.bounds;
+        return;
+    }
+    [self placeTouchControlsIn:parent];
     NSUInteger regions;
-    CGRect strip = [self touchControlsStripRegions:&regions];
+    CGRect strip = [AKHostView touchControlsStripIn:parent regions:&regions];
+    CGSize size = parent.bounds.size;
     // The strip is part of the screen: once found it stays for this screen
     // size even if UIKit stops reporting it; a new size looks again.
-    BOOL kept = CGRectIsNull(strip) && !CGRectIsNull(_touchStrip) && CGSizeEqualToSize(_touchStripSize, self.bounds.size);
+    BOOL kept = CGRectIsNull(strip) && !CGRectIsNull(_touchStrip) && CGSizeEqualToSize(_touchStripSize, size);
     if (kept) strip = _touchStrip;
-    if (CGRectEqualToRect(strip, _touchStrip) && CGSizeEqualToSize(_touchStripSize, self.bounds.size)) return;
-    _touchStrip = strip;
-    _touchStripSize = self.bounds.size;
-    // Positions only: no screen contents or touches.
-    AKLog(@"touch controls layout=%@ strip=%@ safe=%@ regions=%lu", CGRectIsNull(strip) ? @"row" : @"column",
-          NSStringFromCGRect(strip), NSStringFromUIEdgeInsets(self.safeAreaInsets), (unsigned long)regions);
-    BOOL column = !CGRectIsNull(strip);
-    [NSLayoutConstraint deactivateConstraints:column ? _touchRow : _touchColumn];
-    [NSLayoutConstraint activateConstraints:column ? _touchColumn : _touchRow];
-    _touchControls.sideStrip = strip;
+    CGRect game = parent == self ? self.bounds : [AKHostView gameFrameIn:parent.bounds strip:strip];
+    if (!CGRectEqualToRect(strip, _touchStrip) || !CGSizeEqualToSize(_touchStripSize, size)) {
+        _touchStrip = strip;
+        _touchStripSize = size;
+        // Positions only: no screen contents or touches.
+        AKLog(@"touch controls layout=%@ strip=%@ game=%@ safe=%@ regions=%lu", CGRectIsNull(strip) ? @"row" : @"column",
+              NSStringFromCGRect(strip), NSStringFromCGRect(game), NSStringFromUIEdgeInsets(parent.safeAreaInsets), (unsigned long)regions);
+        BOOL column = !CGRectIsNull(strip);
+        [NSLayoutConstraint deactivateConstraints:column ? _touchRow : _touchColumn];
+        [NSLayoutConstraint activateConstraints:column ? _touchColumn : _touchRow];
+        _touchControls.sideStrip = strip;
+    }
+    if (parent == self) return;
+    // The game draws only between the columns, and sees a display that size,
+    // as a Mac whose screen ends where the columns begin.
+    if (!CGRectEqualToRect(self.frame, game)) self.frame = game;
+    AKScreenSetGameSize(game.size.width, game.size.height);
 }
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *target=[super hitTest:point withEvent:event];
@@ -430,7 +473,7 @@ static BOOL AKWindowInputDiagnostics(void) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     [self.nsWindow ak_hostBoundsChanged:self.bounds];
-    [self layoutTouchControls];
+    if (![self.superview isKindOfClass:AKHostContainerView.class]) [self layoutTouchControlsIn:self];
     if (!_touchCursorInitialized && _touchControls.trackpadEnabled) [self touchTrackpadChanged:YES];
     if (!CGSizeEqualToSize(_touchViewportSize, self.bounds.size)) {
         [_touchControls cancelTouches];
@@ -457,9 +500,34 @@ static BOOL AKWindowInputDiagnostics(void) {
     if (!_touchCursorActive) { _touchCursorActive = YES; [self cursorChanged:nil]; }
     _pointerInside = YES;
 }
+// Holding the right button turns a game's camera once the game captures the
+// pointer, which it does a frame or so after the button goes down. Motion in
+// between would arrive as absolute drags, clamped at the window's edges and
+// reported again once the capture starts; it is held back instead and sent
+// with the captured motion (or as a plain drag if no capture comes).
+static const NSTimeInterval AKCameraCaptureWait = 0.25;
+- (void)sendHeldCameraMotion {
+    _cameraWaiting = NO;
+    CGPoint held = _cameraHeld; _cameraHeld = CGPointZero;
+    if (held.x || held.y) [self sendTouchMotion:held];
+}
 - (void)touchMoveBy:(CGPoint)delta {
     if (!isfinite(delta.x) || !isfinite(delta.y)) return;
     [self activateTouchCursor];
+    if (_cameraWaiting) {
+        _cameraHeld.x += delta.x; _cameraHeld.y += delta.y;
+        if (!AKMouseIsCaptured() && NSProcessInfo.processInfo.systemUptime - _cameraPressed < AKCameraCaptureWait) return;
+        [self sendHeldCameraMotion];
+        return;
+    }
+    [self sendTouchMotion:delta];
+}
+- (void)sendTouchMotion:(CGPoint)delta {
+    if (_cameraDragging) {
+        _cameraSteps++;
+        _cameraTotal.x += delta.x; _cameraTotal.y += delta.y;
+        _cameraLargestStep = MAX(_cameraLargestStep, hypot(delta.x, delta.y));
+    }
     if (AKMouseIsCaptured()) {
         // Camera motion uses deltas even at a screen edge, without a physical
         // mouse: the same confined path as a mouse's (which takes y up).
@@ -486,6 +554,7 @@ static BOOL AKWindowInputDiagnostics(void) {
     if (button > 2) return;
     [self activateTouchCursor];
     NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (button == 1) [self touchCamera:pressed];
     if (pressed) {
         BOOL twice = _touchClickCount == 1 && button == _lastTouchButton && now - _lastTouchClickTime < 0.5 &&
                      hypot(_last.x - _lastTouchClickPoint.x, _last.y - _lastTouchClickPoint.y) < 4;
@@ -496,6 +565,26 @@ static BOOL AKWindowInputDiagnostics(void) {
                        button == 1 ? (pressed ? NSEventTypeRightMouseDown : NSEventTypeRightMouseUp) :
                                      (pressed ? NSEventTypeLeftMouseDown : NSEventTypeLeftMouseUp);
     [self postMouse:type at:_last button:button clicks:_touchClickCount];
+}
+- (void)touchCamera:(BOOL)pressed {
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (pressed) {
+        _cameraDragging = YES;
+        _cameraWaiting = !AKMouseIsCaptured();
+        _cameraPressed = now;
+        _cameraCaptured = AKMouseIsCaptured() ? now : 0;
+        _cameraHeld = _cameraTotal = CGPointZero;
+        _cameraLargestStep = 0; _cameraSteps = _cameraWarps = 0;
+        return;
+    }
+    if (!_cameraDragging) return;
+    if (_cameraWaiting) [self sendHeldCameraMotion];
+    _cameraDragging = NO;
+    // Motion sizes only, in points, for the first drags of a session.
+    if (_cameraReports++ < 40)
+        AKLog(@"touch camera drag capture_ms=%.0f steps=%u total=(%.0f,%.0f) largest_step=%.0f warps=%u captured=%d",
+              _cameraCaptured ? (_cameraCaptured - _cameraPressed) * 1000 : -1, _cameraSteps, _cameraTotal.x, _cameraTotal.y,
+              _cameraLargestStep, _cameraWarps, AKMouseIsCaptured());
 }
 - (void)postTextKey:(unsigned short)code characters:(NSString *)characters unmodified:(NSString *)unmodified modifiers:(NSEventModifierFlags)modifiers {
     for (unsigned index = 0; index < 2; index++) {
@@ -530,6 +619,8 @@ static BOOL AKWindowInputDiagnostics(void) {
     if(!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{[self captureChanged:nil];});return; }
     [self.window.rootViewController setNeedsUpdateOfPrefersPointerLocked];
     AKLog(@"mouse capture requested=%d raw_devices=%lu",AKMouseIsCaptured(),(unsigned long)GCMouse.mice.count);
+    if (_cameraDragging && AKMouseIsCaptured() && !_cameraCaptured) _cameraCaptured = NSProcessInfo.processInfo.systemUptime;
+    if (_cameraWaiting && AKMouseIsCaptured()) [self sendHeldCameraMotion];
 }
 - (void)lockChanged:(NSNotification *)notification { (void)notification; AKLog(@"pointer lock active=%d",self.window.windowScene.pointerLockState.locked); }
 - (void)anchorChanged:(NSNotification *)notification {
@@ -539,6 +630,7 @@ static BOOL AKWindowInputDiagnostics(void) {
     self.nsWindow.ak_mouseLocation=[self.nsWindow convertPointFromScreen:screen];
     mouseScreenLocation=screen;
     _last=CGPointMake(self.nsWindow.ak_mouseLocation.x,self.bounds.size.height-self.nsWindow.ak_mouseLocation.y);
+    if(_cameraDragging)_cameraWarps++;
 }
 - (void)mouseConnected:(NSNotification *)notification { [self installMouse:notification.object]; [self captureChanged:nil]; }
 - (void)installMouse:(GCMouse *)mouse {
@@ -748,17 +840,35 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
 - (void)pressesCancelled:(NSSet<UIPress *> *)p withEvent:(UIPressesEvent *)e { [self postKeys:p down:NO]; }
 @end
 
+@implementation AKHostContainerView
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [self.host layoutTouchControlsIn:self];
+}
+@end
+
 @interface AKHostViewController : UIViewController
+@property (nonatomic, readonly) AKHostView *host;
 @end
 @implementation AKHostViewController
-- (void)loadView { self.view = [[AKHostView alloc] initWithFrame:UIScreen.mainScreen.bounds]; self.view.backgroundColor = UIColor.blackColor; }
+// The game's view sits in a container that also holds the on-screen controls,
+// so that their side columns can take screen space from the game.
+- (void)loadView {
+    AKHostContainerView *container = [[AKHostContainerView alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    container.backgroundColor = UIColor.blackColor;
+    _host = [[AKHostView alloc] initWithFrame:container.bounds];
+    _host.backgroundColor = UIColor.blackColor;
+    container.host = _host;
+    [container addSubview:_host];
+    self.view = container;
+}
 - (BOOL)prefersStatusBarHidden { return YES; }
 // Ask UIKit to require a deliberate repeat of edge gestures while gaming.
 // This is an immersive preference, not a device-wide kiosk lock.
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return UIRectEdgeAll; }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
 - (BOOL)prefersPointerLocked { return AKMouseIsCaptured() && GCMouse.mice.count>0; }
-- (void)viewDidAppear:(BOOL)a { [super viewDidAppear:a]; [self.view becomeFirstResponder]; }
+- (void)viewDidAppear:(BOOL)a { [super viewDidAppear:a]; [self.host becomeFirstResponder]; }
 @end
 
 #pragma mark - NSWindow
@@ -955,8 +1065,9 @@ static void logLayer(CALayer *layer,unsigned depth) {
     AKToggleFullscreenWindow(self);
 }
 - (void)ak_layoutFullscreenWindow {
-    [_host setNeedsLayout];
-    [_host layoutIfNeeded];
+    UIView *root = _host.superview ?: _host;
+    [root setNeedsLayout];
+    [root layoutIfNeeded];
     if(_host) [self ak_hostBoundsChanged:_host.bounds];
 }
 // Every way of showing a window ends here, never in a method a guest's window
@@ -972,7 +1083,8 @@ static void logLayer(CALayer *layer,unsigned depth) {
         _uiWindow = [[AKGuestUIWindow alloc] initWithWindowScene:scene];
         AKHostViewController *vc = [AKHostViewController new];
         _uiWindow.rootViewController = vc;
-        _host = (AKHostView *)vc.view; _host.nsWindow = self;
+        [vc loadViewIfNeeded];
+        _host = vc.host; _host.nsWindow = self;
         [self ak_applyWindowAppearance];
         if (_contentView) [self ak_attach];
         if(AKWindowInputDiagnostics()) {

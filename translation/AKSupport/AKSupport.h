@@ -35,6 +35,10 @@ void AKCursorUnhide(void);
 bool AKMouseIsCaptured(void);
 void AKMouseSetCaptured(bool captured);
 void AKMouseSetConfined(bool confined);
+// The display a guest sees, in points: the area its windows get, which is the
+// screen minus the on-screen controls' side columns. Unset, it is the screen.
+bool AKScreenGameSize(double *width, double *height);
+void AKScreenSetGameSize(double width, double height);
 
 // Native callbacks can outlive the guest pthread that registered them. The
 // runtime supplies ownership; adapters gate entry and count callbacks already

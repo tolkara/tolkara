@@ -63,6 +63,7 @@ extern void AKSetWindowProcess(NSWindow *window,size_t slot);
 - (void)touchButton:(unsigned)button pressed:(BOOL)pressed;
 - (void)quickKeyDown:(UIButton *)button;
 - (void)quickKeyUp:(UIButton *)button;
++ (CGRect)gameFrameIn:(CGRect)bounds strip:(CGRect)strip;
 @end
 @interface FixtureKeyResponder : NSResponder
 @property unsigned downs, ups;
@@ -299,6 +300,42 @@ int main(void) { @autoreleasepool {
     assert(next_input().clickCount == 1); (void)next_input();
     [host touchButton:0 pressed:YES]; [host touchButton:0 pressed:NO];
     assert(next_input().clickCount == 2); (void)next_input();
+    // A touch camera drag holds its motion until the game captures the
+    // pointer and then sends it as captured motion; with no capture it goes
+    // out as a drag after a quarter of a second, or before the release.
+    [host touchButton:1 pressed:YES];
+    assert(next_input().type == NSEventTypeRightMouseDown);
+    [host touchMoveBy:CGPointMake(12, -4)];
+    [host touchMoveBy:CGPointMake(6, 0)];
+    assert(![NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:NO]);
+    AKMouseSetCaptured(true);
+    move = next_input();
+    assert(move.type == NSEventTypeRightMouseDragged && move.deltaX == 18 && move.deltaY == -4);
+    [host touchMoveBy:CGPointMake(3, 0)];
+    move = next_input();
+    assert(move.type == NSEventTypeRightMouseDragged && move.deltaX == 3);
+    [host touchButton:1 pressed:NO];
+    assert(next_input().type == NSEventTypeRightMouseUp);
+    AKMouseSetCaptured(false);
+    [host touchButton:1 pressed:YES]; (void)next_input();
+    [host touchMoveBy:CGPointMake(5, 0)];
+    [NSThread sleepForTimeInterval:0.3];
+    [host touchMoveBy:CGPointMake(5, 0)];
+    move = next_input();
+    assert(move.type == NSEventTypeRightMouseDragged && move.deltaX == 10);
+    [host touchButton:1 pressed:NO];
+    assert(next_input().type == NSEventTypeRightMouseUp);
+    [host touchButton:1 pressed:YES]; (void)next_input();
+    [host touchMoveBy:CGPointMake(-7, 0)];
+    [host touchButton:1 pressed:NO];
+    move = next_input();
+    assert(move.type == NSEventTypeRightMouseDragged && move.deltaX == -7);
+    assert(next_input().type == NSEventTypeRightMouseUp);
+    // With the Duo's strip the game gets the space between the two columns.
+    Class hostClass = NSClassFromString(@"AKHostView");
+    assert(CGRectEqualToRect([hostClass gameFrameIn:CGRectMake(0, 0, 951, 669) strip:CGRectMake(867, 132, 84, 537)], CGRectMake(84, 0, 783, 669)));
+    assert(CGRectEqualToRect([hostClass gameFrameIn:CGRectMake(0, 0, 951, 669) strip:CGRectMake(0, 132, 84, 537)], CGRectMake(84, 0, 783, 669)));
+    assert(CGRectEqualToRect([hostClass gameFrameIn:CGRectMake(0, 0, 951, 669) strip:CGRectNull], CGRectMake(0, 0, 951, 669)));
     // The movement stick needs trackpad mode, and turning that off ends it.
     controls.trackpadEnabled = NO;
     controls.stickEnabled = YES;

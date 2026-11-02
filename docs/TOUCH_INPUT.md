@@ -22,8 +22,11 @@ buttons hold their key (a US keyboard's) for as long as they are touched. The
 buttons shrink, down to 34 points, to fit; with the iOS keyboard open, those
 that no longer fit are hidden from the bottom up. Once found, the strip stays
 for that screen size: on the device UIKit stops reporting it when the game
-hides the status bar. The game still draws under both columns. Other screens
-keep the row, without number, Escape and Tab buttons.
+hides the status bar. The game draws only between the two columns, which keep
+a black background, and sees a display that size (`NSScreen`,
+`CGDisplayBounds`), as a Mac whose screen ends where the columns begin; with
+the iOS keyboard open it keeps that size. Other screens keep the row over the
+game, without number, Escape and Tab buttons.
 
 **Movement stick.** The stick button turns it on (cyan) or off; the choice is
 kept, and it is on by default on iPhone. With it on, a touch that lands on the
@@ -46,6 +49,12 @@ moves the pointer a little less than the finger, for aiming, and a quick flick
 up to two and a half times as far. While the right button is held (double tap
 and slide, or two fingers held then slid), which turns a game's camera, motion
 is instead three times the finger's at any speed, so the camera turns evenly.
+A game captures the pointer a frame or so after the right button goes down;
+motion before that is held back (up to a quarter of a second) and sent with
+the captured motion, so it is neither clamped at the window's edge nor
+counted twice. Tolkara logs each such drag's motion in points (its steps,
+total, largest step, the game's pointer warps and how long the capture took),
+never what is on screen.
 Long-press the hand button for a menu with left, right and middle click.
 
 | In trackpad mode (the right half, with the stick) | Mouse input |
@@ -93,4 +102,4 @@ checks the keyboard's placement, typing and returning focus, then drives the
 stick and the trackpad's tap, double tap and hold, two-finger tap and scroll
 with synthetic points, and `--show-keyboard` opens the keyboard to look at.
 With `SIMULATOR` naming an iPhone Duo simulator (iOS 27.2 runtime), it also
-checks the two side-strip columns.
+checks the two side-strip columns and that the game gets the space between them.
