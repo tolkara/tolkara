@@ -24,8 +24,9 @@ double AKTrackpadGain(double speed);
 #define AKTrackpadRightDragGain 3.0
 void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, double time,
                      AKTrackpadEmit emit, void *context);
-// About half a second after a still touch: one finger right-clicks, or after
-// a double tap holds the right button; two fingers start a right-button drag.
+// About half a second after a still touch: one finger right-clicks; two
+// fingers start a right-button drag. (After a one-finger tap, a second touch
+// holds the right button at once, in AKTrackpadUpdate.)
 void AKTrackpadHold(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *context);
 // Suppress the remainder of a cancelled gesture until every finger is lifted.
 void AKTrackpadCancel(AKTrackpad *pad, AKTrackpadEmit emit, void *context);

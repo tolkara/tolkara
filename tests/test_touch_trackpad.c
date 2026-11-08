@@ -111,28 +111,29 @@ int main(void) {
     update(&pad, &trace, 1, 10, 0, 15.1);
     update(&pad, &trace, 0, 0, 0, 15.2);
     assert(trace.count == 1 && fabs(trace.events[0].x - 10 * AKTrackpadGain(100)) < 1e-9);
-    // Double tap and hold: a tap and an immediate second touch that slides
-    // presses the right button (e.g. to steer a camera) once it moves past
-    // the tap slop, and holds it until the finger lifts.
+    // Double tap and hold: a tap and an immediate second touch presses the
+    // right button (e.g. to steer a camera) as soon as that touch lands, before
+    // any movement, and holds it until the finger lifts. Even motion within
+    // the tap slop turns the camera.
     trace.count = 0;
     update(&pad, &trace, 1, 300, 200, 20);
     update(&pad, &trace, 0, 0, 0, 20.1);
     update(&pad, &trace, 1, 310, 205, 20.3);
+    assert(trace.count == 3 && trace.events[2].action == AKTrackpadDown && trace.events[2].button == 1);
     update(&pad, &trace, 1, 312, 205, 20.35);
-    assert(trace.count == 2);
     update(&pad, &trace, 1, 360, 205, 20.5);
     AKTrackpadHold(&pad, 21, emit, &trace);
     update(&pad, &trace, 1, 400, 205, 21.5);
     update(&pad, &trace, 0, 0, 0, 21.6);
-    assert(trace.count == 6);
+    assert(trace.count == 7);
     assert(trace.events[0].action == AKTrackpadDown && trace.events[0].button == 0 && trace.events[1].action == AKTrackpadUp);
-    assert(trace.events[2].action == AKTrackpadDown && trace.events[2].button == 1);
-    assert(trace.events[3].action == AKTrackpadMove && trace.events[3].button == 1 && trace.events[4].action == AKTrackpadMove);
+    for (unsigned i = 3; i < 6; i++) assert(trace.events[i].action == AKTrackpadMove && trace.events[i].button == 1);
     // The held right button (camera) moves linearly: the same gain at any speed.
-    assert(trace.events[3].x == 48 * AKTrackpadRightDragGain && trace.events[4].x == 40 * AKTrackpadRightDragGain);
-    assert(trace.events[5].action == AKTrackpadUp && trace.events[5].button == 1);
-    // Held still instead, the right button goes down at the hold and is
-    // released on lift, with no click at the end.
+    assert(trace.events[3].x == 2 * AKTrackpadRightDragGain && trace.events[4].x == 48 * AKTrackpadRightDragGain &&
+           trace.events[5].x == 40 * AKTrackpadRightDragGain);
+    assert(trace.events[6].action == AKTrackpadUp && trace.events[6].button == 1);
+    // Held still instead, the right button is down from the second touch
+    // through the hold and released on lift, with no click at the end.
     trace.count = 0;
     update(&pad, &trace, 1, 300, 200, 25);
     update(&pad, &trace, 0, 0, 0, 25.1);
@@ -142,8 +143,8 @@ int main(void) {
     update(&pad, &trace, 0, 0, 0, 26);
     assert(trace.count == 4 && trace.events[2].action == AKTrackpadDown && trace.events[2].button == 1);
     assert(trace.events[3].action == AKTrackpadUp && trace.events[3].button == 1);
-    // A quick second tap is a double click (the host counts the clicks), and
-    // a third tap right after it is a single click again, not a hold.
+    // A quick second tap is therefore a right click, and a third tap right
+    // after it is a single left click again, not a hold.
     trace.count = 0;
     update(&pad, &trace, 1, 300, 200, 30);
     update(&pad, &trace, 0, 0, 0, 30.1);
@@ -153,7 +154,7 @@ int main(void) {
     update(&pad, &trace, 0, 0, 0, 30.5);
     assert(trace.count == 6);
     for (unsigned i = 0; i < 6; i++)
-        assert(trace.events[i].action == (i % 2 ? AKTrackpadUp : AKTrackpadDown) && trace.events[i].button == 0);
+        assert(trace.events[i].action == (i % 2 ? AKTrackpadUp : AKTrackpadDown) && trace.events[i].button == (i == 2 || i == 3 ? 1u : 0u));
     // Too late, too far away or after a slide, the next touch only moves.
     for (unsigned kind = 0; kind < 3; kind++) {
         trace.count = 0;
@@ -195,8 +196,8 @@ int main(void) {
         assert(trace.count == 5 && trace.events[2].button == 1 && trace.events[3].action == AKTrackpadMove);
         assert(trace.events[4].action == AKTrackpadUp && trace.events[4].button == 1 && !pad.dragging);
     }
-    // A second finger joining a double tap before it presses makes an
-    // ordinary two-finger gesture: here a tap, so one right click.
+    // A second finger joining a double tap releases the right button it holds
+    // and the rest of the gesture is ignored: one right click in all.
     trace.count = 0;
     update(&pad, &trace, 1, 300, 200, 70);
     update(&pad, &trace, 0, 0, 0, 70.1);

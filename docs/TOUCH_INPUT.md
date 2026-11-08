@@ -15,8 +15,9 @@ of the screen belongs to the game.
 **iPhone Duo.** Unfolded, the inner display keeps a strip at one side for the
 status bar (UIKit reports it as an occlusion reserved region, iOS 27.1). The
 buttons stand in a column in that strip and in one mirroring it at the other
-edge, both starting below the status bar as Apple's own bars do: on the right
-Escape, Tab (e.g. to select a target), **1** to **5** and Jump at the bottom; on
+edge. Each column is only as wide as the buttons need (56 points, against the
+screen's edge; the strip itself is 84), so the game keeps the rest. Both
+start below the status bar as Apple's own bars do: on the right Escape, Tab (e.g. to select a target), **1** to **5** and Jump at the bottom; on
 the left the keyboard, stick and trackpad buttons and **6** to **0**. Key
 buttons hold their key (a US keyboard's) for as long as they are touched. The
 buttons shrink, down to 34 points, to fit; with the iOS keyboard open, those
@@ -60,8 +61,8 @@ Long-press the hand button for a menu with left, right and middle click.
 | In trackpad mode (the right half, with the stick) | Mouse input |
 | --- | --- |
 | Slide one finger | Moves the pointer by the finger's motion; lifting and placing the finger elsewhere does not move it. |
-| Tap / tap twice | Left click / double click |
-| Double tap and hold, or double tap and slide | Holds the right button until the finger lifts, e.g. to steer the camera |
+| Tap | Left click |
+| Double tap and hold, or double tap and slide | Holds the right button from the second touch until the finger lifts, e.g. to steer the camera |
 | Hold one finger still about half a second | Right click |
 | Tap with two fingers | Right click |
 | Tap with three fingers | Middle click |
@@ -69,7 +70,9 @@ Long-press the hand button for a menu with left, right and middle click.
 | Hold two fingers about half a second, then slide | Drag with the right button held |
 
 A double tap's second touch must start within 0.3 s of the first tap and near
-it; if it lifts again quickly without moving, it is a double click instead. In
+it. The right button goes down as that touch lands, so the camera turns with
+the first movement; lifting it again quickly is therefore a right click, not a
+double click. In
 the Windows App, a one-finger double tap and hold drags with the left button;
 here it holds the right button, which a game's camera needs more often, and
 there is no one-finger left drag (the hand button's menu still clicks).

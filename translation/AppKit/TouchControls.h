@@ -36,6 +36,9 @@ extern NSString *const AKTouchControlsDefaultsKey;   // "AKTouchControls"
 // stick and trackpad buttons and keys 6 to 0. Without a strip the row is Jump,
 // stick, trackpad and keyboard. Key buttons hold their key while touched.
 @property (nonatomic) CGRect sideStrip;
+// A column's width at most: the largest button (44 points) and 6 on each side.
+// The iPhone Duo's status-bar strip is wider (84 points); the game gets the rest.
+#define AKTouchControlsColumnWidth 56.0
 @property (nonatomic, readonly) BOOL vertical;
 - (void)processTouches:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
 - (void)cancelTouches;

@@ -396,7 +396,8 @@ static BOOL AKWindowInputDiagnostics(void) {
 }
 // The iPhone Duo's inner display keeps a column at one side for the status
 // bar, an occlusion region; Apple's own bars stack their buttons under it.
-// Returns that column below the status bar in the view's coordinates, or a
+// Returns that column below the status bar in the view's coordinates, narrowed
+// to the buttons' width (AKTouchControlsColumnWidth) at the screen's edge, or a
 // null rect on other screens. The region is also looked for while inactive:
 // on the device it goes once the game hides the status bar, and safe-area
 // insets never mark the strip.
@@ -412,7 +413,10 @@ static BOOL AKWindowInputDiagnostics(void) {
             BOOL trailing = CGRectGetMaxX(frame) >= CGRectGetMaxX(bounds) - 1, leading = CGRectGetMinX(frame) <= CGRectGetMinX(bounds) + 1;
             if (trailing == leading || frame.size.width < 44 || frame.size.width > bounds.size.width / 4 ||
                 CGRectGetMinY(frame) > CGRectGetMinY(bounds) + 1 || CGRectGetMaxY(frame) > CGRectGetMidY(bounds)) continue;
-            return CGRectMake(frame.origin.x, CGRectGetMaxY(frame) + 8, frame.size.width, CGRectGetMaxY(bounds) - CGRectGetMaxY(frame) - 8);
+            // Only as wide as the buttons need, against the screen's edge.
+            CGFloat width = MIN(frame.size.width, AKTouchControlsColumnWidth);
+            CGFloat x = trailing ? CGRectGetMaxX(frame) - width : frame.origin.x;
+            return CGRectMake(x, CGRectGetMaxY(frame) + 8, width, CGRectGetMaxY(bounds) - CGRectGetMaxY(frame) - 8);
         }
     }
     return CGRectNull;

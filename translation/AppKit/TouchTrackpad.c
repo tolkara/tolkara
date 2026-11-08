@@ -5,7 +5,7 @@
 enum { AKTrackpadSlop = 8 };
 static const double AKTrackpadTapTime = 0.35, AKTrackpadHoldTime = 0.45;
 // A second touch this soon after a one-finger tap, and this close to it,
-// holds the right button once it moves or is held.
+// holds the right button from the moment it lands.
 static const double AKTrackpadDoubleTapGap = 0.3, AKTrackpadDoubleTapReach = 70;
 
 double AKTrackpadGain(double speed) {
@@ -25,12 +25,6 @@ void AKTrackpadHold(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *con
     if (!isfinite(time) || pad->blocked || pad->lifting || pad->dragging ||
         pad->fingers < 1 || pad->fingers > 2 || pad->travelled > AKTrackpadSlop ||
         time - pad->started < AKTrackpadHoldTime) return;
-    if (pad->fingers == 1 && pad->doubleTap) {
-        pad->dragging = true;
-        pad->button = 1;
-        emit(context, AKTrackpadDown, 0, 0, pad->button);
-        return;
-    }
     if (pad->fingers == 1) {
         // The rest of the touch is consumed: lifting it is not also a left click.
         emit(context, AKTrackpadDown, 0, 0, 1);
@@ -90,6 +84,14 @@ void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, dou
     }
     pad->fingers = fingers;
     if (fingers > pad->peak) pad->peak = fingers;
+    if (pad->doubleTap && !pad->dragging && !pad->blocked) {
+        // Double tap and hold: the right button goes down as the second touch
+        // lands, so a camera turns with the very first movement, and stays
+        // down until it lifts (a quick second tap is a right click).
+        pad->dragging = true;
+        pad->button = 1;
+        emit(context, AKTrackpadDown, 0, 0, pad->button);
+    }
     // Speed is measured between samples that moved: other touches' events
     // (the stick's) repeat a still trackpad's position.
     double dx = x - pad->x, dy = y - pad->y, interval = time - pad->last;
@@ -103,15 +105,6 @@ void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, dou
     }
     pad->travelled += distance;
     if (!distance) return;
-    if (pad->doubleTap && !pad->dragging) {
-        // Double tap and hold: the right button goes down once the second
-        // touch moves (or, in AKTrackpadHold, is held) and stays down until
-        // it lifts. Lifting a still second tap is a double click instead.
-        if (pad->travelled <= AKTrackpadSlop) return;
-        pad->dragging = true;
-        pad->button = 1;
-        emit(context, AKTrackpadDown, 0, 0, pad->button);
-    }
     if (fingers == 1 || pad->dragging) {
         // A held right button turns a game's camera: linear, so it turns
         // evenly with the finger; accelerated, uneven touch timing made it jump.
