@@ -8,6 +8,8 @@ CC=(xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror -O1 -g
 build/emulation/test_guest_remote
 "${CC[@]}" -Itranslation/AppKit translation/AppKit/TouchTrackpad.c tests/test_touch_trackpad.c -o build/emulation/test_touch_trackpad
 build/emulation/test_touch_trackpad
+"${CC[@]}" -Itranslation/AppKit translation/AppKit/TouchCamera.c tests/test_touch_camera.c -o build/emulation/test_touch_camera
+build/emulation/test_touch_camera
 "${CC[@]}" -Itranslation/AppKit translation/AppKit/TouchStick.c tests/test_touch_stick.c -o build/emulation/test_touch_stick
 build/emulation/test_touch_stick
 "${CC[@]}" runtime/GuestWaitTrace.c tests/test_wait_trace.c -o build/emulation/test_wait_trace

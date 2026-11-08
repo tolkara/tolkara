@@ -3,7 +3,8 @@
 
 // Direct finger input only. Coordinates/deltas are UIKit points (y down).
 // The state machine does not inspect a guest or generate input on its own.
-typedef enum { AKTrackpadMove, AKTrackpadScroll, AKTrackpadDown, AKTrackpadUp } AKTrackpadAction;
+// AKTrackpadPoint (camera mode only) moves the pointer to (x, y) in the game's view.
+typedef enum { AKTrackpadMove, AKTrackpadScroll, AKTrackpadDown, AKTrackpadUp, AKTrackpadPoint } AKTrackpadAction;
 typedef void (*AKTrackpadEmit)(void *context, AKTrackpadAction action, double x, double y, unsigned button);
 typedef struct {
     unsigned fingers, peak;

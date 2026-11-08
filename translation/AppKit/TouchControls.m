@@ -1,5 +1,6 @@
 #import "TouchControls.h"
 #import "TouchTrackpad.h"
+#import "TouchCamera.h"
 #import "TouchStick.h"
 #import "AKSupport.h"
 #import <GameController/GameController.h>
@@ -7,6 +8,9 @@
 NSString *const AKTouchControlsDefaultsKey = @"AKTouchControls";
 static NSString *const AKTouchTrackpadDefaultsKey = @"AKTouchTrackpadEnabled";
 static NSString *const AKTouchStickDefaultsKey = @"AKTouchStickEnabled";
+// Camera or cursor mode, remembered for games whose profile asks for camera
+// mode (TOLKARA_TOUCH_MODE=camera); other games always use the trackpad.
+static NSString *const AKTouchCursorModeDefaultsKey = @"AKTouchCursorMode";
 
 @implementation AKTouchControls {
     UIButton *_keyboardButton, *_trackpadButton, *_stickButton, *_jumpButton, *_escapeButton, *_tabButton;
@@ -15,6 +19,8 @@ static NSString *const AKTouchStickDefaultsKey = @"AKTouchStickEnabled";
     UIView *_accessory, *_stickBase, *_stickKnob;
     NSTimer *_holdTimer;
     AKTrackpad _pad;
+    AKTouchCamera _camera;
+    BOOL _cameraProfile;   // the profile asks for camera mode: the hand button switches modes
     AKStick _stick;
     // UIKit keeps a touch's object for its lifetime. The stick's touch, and
     // left-half touches that arrive while it is held, never reach the trackpad.
@@ -29,6 +35,7 @@ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double
         case AKTrackpadScroll: [controls.delegate touchScrollBy:CGPointMake(x, y)]; break;
         case AKTrackpadDown: [controls.delegate touchButton:button pressed:YES]; break;
         case AKTrackpadUp: [controls.delegate touchButton:button pressed:NO]; break;
+        case AKTrackpadPoint: [controls.delegate touchPointAt:CGPointMake(x, y)]; break;
     }
 }
 
@@ -86,6 +93,8 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         _stickButton.accessibilityHint = @"A touch on the left half becomes a stick for W, A, S and D; the right half is the trackpad.";
         _keyboardButton = [self buttonWithSymbol:@"keyboard" label:@"Show keyboard" action:@selector(toggleKeyboard)];
         _keyboardButton.accessibilityIdentifier = @"tolkara.keyboard";
+        const char *mode = getenv("TOLKARA_TOUCH_MODE");
+        _cameraProfile = mode && !strcmp(mode, "camera");
         _trackpadButton = [self buttonWithSymbol:@"hand.draw" label:@"Enable touch trackpad" action:@selector(toggleTrackpad)];
         _trackpadButton.accessibilityIdentifier = @"tolkara.trackpad";
         _trackpadButton.accessibilityHint = @"One finger moves the pointer; tap to click. Double-tap and hold for the right button. Hold one finger or tap two for right click. Two fingers scroll. Three fingers tap for middle click. Long-press this button for mouse buttons.";
@@ -127,7 +136,10 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         _escapeButton.hidden = _tabButton.hidden = YES;
         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchTrackpadDefaultsKey];
         BOOL phone = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
-        self.trackpadEnabled = saved ? saved.boolValue : phone;
+        // Camera mode needs the controls to take touches; it starts in camera
+        // mode unless cursor mode was chosen last time.
+        _cursorMode = !_cameraProfile || [NSUserDefaults.standardUserDefaults boolForKey:AKTouchCursorModeDefaultsKey];
+        self.trackpadEnabled = _cameraProfile || (saved ? saved.boolValue : phone);
         NSNumber *savedStick = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchStickDefaultsKey];
         self.stickEnabled = self.trackpadEnabled && (savedStick ? savedStick.boolValue : phone);
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(suspendInput:) name:UIApplicationWillResignActiveNotification object:nil];
@@ -228,12 +240,38 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
     [self cancelTouches];
     _trackpadEnabled = enabled;
     if (!enabled && self.stickEnabled) self.stickEnabled = NO;
+    [self updateTrackpadButton];
+    [self.delegate touchTrackpadChanged:enabled];
+}
+- (void)setCursorMode:(BOOL)cursorMode {
+    [self cancelTouches];
+    _cursorMode = cursorMode;
+    [self updateTrackpadButton];
+}
+// For a camera-mode game the hand button shows the mode: a camera while
+// touches turn the camera, a cyan pointer in cursor mode.
+- (void)updateTrackpadButton {
+    if (_cameraProfile) {
+        [_trackpadButton setImage:[UIImage systemImageNamed:_cursorMode ? @"cursorarrow" : @"rotate.3d"] forState:UIControlStateNormal];
+        _trackpadButton.tintColor = _cursorMode ? UIColor.systemCyanColor : UIColor.whiteColor;
+        _trackpadButton.accessibilityLabel = @"Cursor mode";
+        _trackpadButton.accessibilityValue = _cursorMode ? @"On" : @"Off";
+        _trackpadButton.accessibilityHint = _cursorMode ? @"One finger moves the pointer; tap to click. Turn off for camera mode." :
+            @"Slide one finger to turn the camera; tap to right-click where you touch. Two fingers scroll or tap to left-click. Turn on for a pointer.";
+        return;
+    }
+    BOOL enabled = self.trackpadEnabled;
     _trackpadButton.tintColor = enabled ? UIColor.systemCyanColor : UIColor.whiteColor;
     _trackpadButton.accessibilityLabel = enabled ? @"Disable touch trackpad" : @"Enable touch trackpad";
     _trackpadButton.accessibilityValue = enabled ? @"On" : @"Off";
-    [self.delegate touchTrackpadChanged:enabled];
 }
 - (void)toggleTrackpad {
+    if (_cameraProfile) {
+        self.cursorMode = !self.cursorMode;
+        if (!self.trackpadEnabled) self.trackpadEnabled = YES;
+        [NSUserDefaults.standardUserDefaults setBool:self.cursorMode forKey:AKTouchCursorModeDefaultsKey];
+        return;
+    }
     self.trackpadEnabled = !self.trackpadEnabled;
     [NSUserDefaults.standardUserDefaults setBool:self.trackpadEnabled forKey:AKTouchTrackpadDefaultsKey];
     [NSUserDefaults.standardUserDefaults setBool:self.stickEnabled forKey:AKTouchStickDefaultsKey];
@@ -350,6 +388,10 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
     [self padFingers:count at:center time:event.timestamp];
 }
 - (void)padFingers:(unsigned)fingers at:(CGPoint)center time:(NSTimeInterval)time {
+    if (!_cursorMode) {
+        if (fingers || _camera.fingers) AKTouchCameraUpdate(&_camera, fingers, center.x, center.y, AKEmitTouch, (__bridge void *)self);
+        return;
+    }
     if (!fingers && !_pad.fingers && !_pad.dragging) return;
     AKTrackpadUpdate(&_pad, fingers, center.x, center.y, time, AKEmitTouch, (__bridge void *)self);
     [_holdTimer invalidate]; _holdTimer = nil;
@@ -405,6 +447,8 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
     [_holdTimer invalidate]; _holdTimer = nil;
     AKTrackpadCancel(&_pad, AKEmitTouch, (__bridge void *)self);
     if (!_pad.fingers) _pad = (AKTrackpad){0};
+    AKTouchCameraCancel(&_camera, AKEmitTouch, (__bridge void *)self);
+    if (!_camera.fingers) _camera = (AKTouchCamera){0};
     // A stick touch that outlives a cancellation stays inert until lifted.
     if (_stickTouch) [_ignoredTouches addObject:_stickTouch];
     _stickTouch = nil;
@@ -419,6 +463,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
     [self cancelTouches];
     [self releaseQuickKeys];
     _pad = (AKTrackpad){0};
+    _camera = (AKTouchCamera){0};
     [_ignoredTouches removeAllObjects];
     [self dismissKeyboard];
 }

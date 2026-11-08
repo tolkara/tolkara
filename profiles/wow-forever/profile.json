@@ -4,6 +4,9 @@
   "workingDirectory": "World of Warcraft/_forever_",
   "executable": "World of Warcraft.app/Contents/MacOS/World of Warcraft",
   "tested": "Release 1.60.1, macOS arm64 client (earlier: Classic beta 1.60.1 on iPad Pro M5 and iPhone 16 Pro Max)",
+  "environment": {
+    "TOLKARA_TOUCH_MODE": "camera"
+  },
   "notes": "Copy your own installed 'World of Warcraft' folder into the app's Documents. Log in inside the game. See profiles/README.md.",
   "setup": {
     "source": "/Applications/World of Warcraft",

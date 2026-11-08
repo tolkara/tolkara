@@ -9,6 +9,8 @@
 // The movement stick holds a key down until it reports the release.
 - (void)touchKey:(unsigned short)code characters:(NSString *)characters pressed:(BOOL)pressed;
 - (void)touchTrackpadChanged:(BOOL)enabled;
+// Camera mode: the pointer goes to this point of the game's view (a touch's).
+- (void)touchPointAt:(CGPoint)point;
 @end
 
 // Optional: the launcher's On-Screen Controls switch stores this Boolean.
@@ -21,6 +23,12 @@ extern NSString *const AKTouchControlsDefaultsKey;   // "AKTouchControls"
 @property (class, nonatomic, readonly) BOOL enabled;
 @property (nonatomic, weak) id<AKTouchControlsDelegate> delegate;
 @property (nonatomic) BOOL trackpadEnabled;
+// How touches on the game act while the controls handle them (trackpadEnabled):
+// camera mode (the default, TouchCamera.h) touches the game directly with the
+// right button, to turn the camera, attack or loot; cursor mode is the touch
+// trackpad (TouchTrackpad.h), a relative pointer for menus and dragging spells.
+// The hand button switches between them; the choice is remembered.
+@property (nonatomic) BOOL cursorMode;
 // The view the game draws in: touches on it drive the stick and the trackpad,
 // in its coordinates. Without one, the view this one is in.
 @property (nonatomic, weak) UIView *gameView;

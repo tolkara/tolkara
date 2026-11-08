@@ -42,6 +42,29 @@ trackpad mode off turns it off. The keys are those of a US keyboard's W, A, S
 and D; what they do is the game's binding (World of Warcraft turns with A and
 D, and strafes with them while the right button is held).
 
+**Camera mode.** A game whose profile sets `TOLKARA_TOUCH_MODE=camera` (both
+World of Warcraft profiles) starts in camera mode, made for games played with
+the mouse's right button. Touches on the game act where they land, with no
+pointer to steer:
+
+| Gesture | Effect |
+| --- | --- |
+| Slide one finger | Holds the right button and turns the camera with the finger, until it lifts |
+| Tap one finger | Right click where it touched (attack, talk, loot) |
+| Slide two fingers | Scroll (zoom the camera) |
+| Tap two fingers | Left click between them |
+
+The pointer goes to where the finger landed, and the right button goes down
+with the finger's first movement (past 4 points; the motion so far is sent
+along, so none is lost). It is not pressed at the touch itself: a two-finger
+gesture whose second finger lands a moment later would otherwise right-click
+whatever was under the first. The camera turns three times the finger's
+motion, as with the trackpad's right drag. For menus, bags and dragging
+spells to the action bars, the hand button (a camera icon in camera mode)
+switches to cursor mode, the trackpad below (a cyan pointer icon), and back;
+the choice is kept. The stick works in both. Other games have no camera mode:
+for them the hand button turns the trackpad on and off, as below.
+
 **Trackpad.** The hand button turns trackpad mode on (cyan) or off; the choice
 is kept. The finger moves the pointer by its motion, like a laptop's trackpad:
 where it lands does not matter, and a tap clicks where the pointer is, not

@@ -554,6 +554,19 @@ static const NSTimeInterval AKCameraCaptureWait = 0.25;
     event.timestamp = NSProcessInfo.processInfo.systemUptime;
     [NSApp postEvent:event atStart:NO];
 }
+// Camera mode: the pointer goes where the finger touched, so a tap clicks what
+// is under it and a camera drag starts there. A pointer the game holds
+// (captured) stays where it is.
+- (void)touchPointAt:(CGPoint)point {
+    if (!isfinite(point.x) || !isfinite(point.y)) return;
+    [self activateTouchCursor];
+    if (AKMouseIsCaptured()) return;
+    point = CGPointMake(MAX(0, MIN(self.bounds.size.width - 1, point.x)), MAX(0, MIN(self.bounds.size.height - 1, point.y)));
+    if (CGPointEqualToPoint(point, _last)) return;
+    NSEventType type = _pressedRight ? NSEventTypeRightMouseDragged : _pressedLeft ? NSEventTypeLeftMouseDragged :
+                       _pressedMiddle ? NSEventTypeOtherMouseDragged : NSEventTypeMouseMoved;
+    [self postMouse:type at:point button:_pressedRight ? 1 : _pressedMiddle ? 2 : 0];
+}
 - (void)touchButton:(unsigned)button pressed:(BOOL)pressed {
     if (button > 2) return;
     [self activateTouchCursor];
