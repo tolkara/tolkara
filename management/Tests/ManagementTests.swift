@@ -16,7 +16,7 @@ final class ProfileTests: XCTestCase {
         let forever = try XCTUnwrap(catalog.profiles.first { $0.id == "wow-forever" })
         XCTAssertTrue(forever.hasSetup)
         XCTAssertEqual(forever.destination, "World of Warcraft")
-        XCTAssertEqual(forever.executableInSource, "_classic_beta_/World of Warcraft Beta.app/Contents/MacOS/World of Warcraft")
+        XCTAssertEqual(forever.executableInSource, "_forever_/World of Warcraft.app/Contents/MacOS/World of Warcraft")
         XCTAssertEqual(forever.installerURL?.lastPathComponent, "install.py")
         XCTAssertNotNil(forever.risk)
         XCTAssertFalse(forever.risk!.history.isEmpty)
@@ -104,7 +104,7 @@ final class FirstRunTests: XCTestCase {
     }
 
     func testShippedWoWProfilesNeedAFirstRun() throws {
-        for (id, client) in [("wow-classic-era", "_classic_era_"), ("wow-forever", "_classic_beta_")] {
+        for (id, client) in [("wow-classic-era", "_classic_era_"), ("wow-forever", "_forever_")] {
             let firstRun = try XCTUnwrap(try shipped(id).firstRun, id)
             XCTAssertEqual(firstRun.settings, "\(client)/WTF/Config.wtf")
             XCTAssertEqual(firstRun.keys, ["portal", "textLocale", "audioLocale"])
@@ -452,8 +452,8 @@ final class LibraryTests: XCTestCase {
         let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let profiles = ProfileParser.catalog(source: repository).profiles
         let forever = try XCTUnwrap(profiles.first { $0.id == "wow-forever" })
-        XCTAssertEqual(forever.documentsExecutable, "World of Warcraft/_classic_beta_/World of Warcraft Beta.app/Contents/MacOS/World of Warcraft")
-        XCTAssertEqual(forever.infoPlistPath, "World of Warcraft/_classic_beta_/World of Warcraft Beta.app/Contents/Info.plist")
+        XCTAssertEqual(forever.documentsExecutable, "World of Warcraft/_forever_/World of Warcraft.app/Contents/MacOS/World of Warcraft")
+        XCTAssertEqual(forever.infoPlistPath, "World of Warcraft/_forever_/World of Warcraft.app/Contents/Info.plist")
         let heroes = try XCTUnwrap(profiles.first { $0.id == "heroes3-hota" })
         XCTAssertEqual(heroes.documentsExecutable, "Heroes 3 HotA/Wine/lib/wine/aarch64-unix/wine")
         XCTAssertNil(heroes.infoPlistPath)

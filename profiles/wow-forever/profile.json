@@ -1,9 +1,9 @@
 {
   "id": "wow-forever",
   "name": "World of Warcraft Forever",
-  "workingDirectory": "World of Warcraft/_classic_beta_",
-  "executable": "World of Warcraft Beta.app/Contents/MacOS/World of Warcraft",
-  "tested": "Classic beta 1.60.1, macOS arm64 client, iPad Pro M5; iPhone 16 Pro Max (experimental)",
+  "workingDirectory": "World of Warcraft/_forever_",
+  "executable": "World of Warcraft.app/Contents/MacOS/World of Warcraft",
+  "tested": "Release 1.60.1, macOS arm64 client (earlier: Classic beta 1.60.1 on iPad Pro M5 and iPhone 16 Pro Max)",
   "notes": "Copy your own installed 'World of Warcraft' folder into the app's Documents. Log in inside the game. See profiles/README.md.",
   "setup": {
     "source": "/Applications/World of Warcraft",
@@ -15,15 +15,15 @@
       "path": "/Applications/Battle.net.app",
       "steps": [
         "Install the Battle.net app on this Mac and sign in with your Blizzard account.",
-        "In Battle.net, install World of Warcraft Forever (the Classic beta) for Mac in its usual place, the Applications folder.",
+        "In Battle.net, install World of Warcraft Forever for Mac in its usual place, the Applications folder.",
         "Start the game once on this Mac and log in, so that it saves your region. Then quit the game and Battle.net."
       ]
     },
     "firstRun": {
-      "settings": "_classic_beta_/WTF/Config.wtf",
+      "settings": "_forever_/WTF/Config.wtf",
       "keys": ["portal", "textLocale", "audioLocale"],
       "steps": [
-        "Open **Battle.net** on this Mac and select World of Warcraft. Choose **World of Warcraft Forever** (the Classic beta) and the region your account plays in.",
+        "Open **Battle.net** on this Mac and select World of Warcraft. Choose **World of Warcraft Forever** and the region your account plays in.",
         "For a language other than the default, set it in Battle.net's Settings, under Game Settings, before you play.",
         "Click **Play** and wait for the character list. You don't need to enter the world.",
         "Quit the game. It saves your region and language as it closes."

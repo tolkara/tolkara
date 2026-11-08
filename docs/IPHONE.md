@@ -26,9 +26,10 @@ Use the application's profile install script, as on the iPad. Tolkara's
 Documents folder also appears in the Finder (your iPhone > Files) and in the
 Files app under On My iPhone.
 
-WoW Forever needs the settings of the beta's own installation: take `portal`,
-`textLocale` and `audioLocale` from `_classic_beta_/WTF/Config.wtf` after you
-have logged in on the Mac (the beta uses `portal "test"`), not from Classic Era.
+WoW Forever needs the settings of its own installation: `portal`,
+`textLocale` and `audioLocale` from `_forever_/WTF/Config.wtf` after you have
+logged in on the Mac, not from Classic Era (the earlier Classic beta used
+`portal "test"` from `_classic_beta_`).
 It also needs the public system root certificates that a build on your own Mac
 includes by default (`TOLKARA_SYSTEM_ROOTS=YES`; the published unsigned `.ipa`
 has none). Login was refused (`BLZ51900003`) until both were right.

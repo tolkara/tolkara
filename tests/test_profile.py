@@ -117,7 +117,7 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError): check(self.write({**good, 'setup': {'firstRun': {'keys': ['portal']}}}))
         with self.assertRaises(ValueError): check(self.write({**good, 'setup': {'firstRun': {'settings': 'Config.wtf'}}}))
         # Both WoW clients name their own Config.wtf.
-        for name, folder in (('wow-classic-era', '_classic_era_'), ('wow-forever', '_classic_beta_')):
+        for name, folder in (('wow-classic-era', '_classic_era_'), ('wow-forever', '_forever_')):
             block = check(ROOT / 'profiles' / name / 'profile.json')['setup']['firstRun']
             self.assertEqual(block['settings'], f'{folder}/WTF/Config.wtf')
             self.assertEqual(block['keys'], ['portal', 'textLocale', 'audioLocale'])

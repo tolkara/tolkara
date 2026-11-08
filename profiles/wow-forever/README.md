@@ -1,7 +1,9 @@
-# World of Warcraft Forever (Classic beta)
+# World of Warcraft Forever
 
-The macOS arm64 Classic beta client (1.60.1) from `_classic_beta_`. See
-[COMPATIBILITY.md](../../COMPATIBILITY.md) for what works.
+The released macOS arm64 client (1.60.1) from `_forever_` (Battle.net product
+`wowf`). Until November 2026 this profile ran the Classic beta from
+`_classic_beta_`; the results in [COMPATIBILITY.md](../../COMPATIBILITY.md) were
+made with that beta.
 
 It also logs in and plays on an iPhone (experimental); see
 [docs/IPHONE.md](../../docs/IPHONE.md).
@@ -12,7 +14,7 @@ account. Nothing from the game is included here.
 In `local.env`:
 
 ```
-GUEST_EXE="/Applications/World of Warcraft/_classic_beta_/World of Warcraft Beta.app/Contents/MacOS/World of Warcraft"
+GUEST_EXE="/Applications/World of Warcraft/_forever_/World of Warcraft.app/Contents/MacOS/World of Warcraft"
 ```
 
 Build, install and set up your execution mode as described in
@@ -30,7 +32,7 @@ credentials or add-ons. Pass `--source` if the game is installed elsewhere, and
 
 **Start the game once on the Mac first.** The client needs the region and
 languages it saves the first time Battle.net starts it (`portal`, `textLocale`
-and `audioLocale` in `_classic_beta_/WTF/Config.wtf`). A copy that never started on the
+and `audioLocale` in `_forever_/WTF/Config.wtf`). A copy that never started on the
 Mac has none, and on the device the game then asks for a region in a window the
 AppKit adapter cannot show yet, so it quits within a second. Before you copy:
 in Battle.net choose the game and your region, click Play, wait for the
