@@ -1669,9 +1669,22 @@ static bool leaf_absent(NSString *install_name) {
     NSString *leaf=install_name.lastPathComponent;
     return [absent_leaves containsObject:[leaf hasSuffix:@".dylib"]?[leaf stringByDeletingPathExtension]:leaf];
 }
-// Our adapter for an install name's leaf, if this build has one.
+// Adapters a generic build uses only for an application whose profile names
+// them in TOLKARA_ADAPTERS (Guest/opt-in.json; translation/<Leaf>/opt-in):
+// workarounds one application needs that would take something from others,
+// such as GameController hiding every controller for Cyberpunk 2077.
+static NSSet *opt_in_leaves;
+static bool adapter_wanted(NSString *leaf) {
+    if (![opt_in_leaves containsObject:leaf]) return true;
+    const char *named=getenv("TOLKARA_ADAPTERS");
+    NSArray *wanted=named?[@(named) componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@":, "]]:@[];
+    return [wanted containsObject:leaf];
+}
+// Our adapter for an install name's leaf, if this build has one (and, for an
+// opt-in adapter, the application asks for it).
 static NSString *adapter_path(NSString *install_name, const char *frameworks) {
     NSString *leaf=install_name.lastPathComponent;
+    if (!adapter_wanted([leaf hasSuffix:@".dylib"]?[leaf stringByDeletingPathExtension]:leaf)) return nil;
     NSString *adapter=[@(frameworks) stringByAppendingPathComponent:
         [NSString stringWithFormat:@"ak%@.dylib",[leaf hasSuffix:@".dylib"]?[leaf stringByDeletingPathExtension]:leaf]];
     return [NSFileManager.defaultManager fileExistsAtPath:adapter] ? adapter : nil;
@@ -2125,6 +2138,14 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             NSData *absent=[NSData dataWithContentsOfFile:list];
             NSArray *leaves=absent?[NSJSONSerialization JSONObjectWithData:absent options:0 error:NULL]:nil;
             if ([leaves isKindOfClass:NSArray.class]) absent_leaves=[NSSet setWithArray:leaves];
+            NSString *optional=[[@(library_map) stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"opt-in.json"];
+            NSData *opted=[NSData dataWithContentsOfFile:optional];
+            NSArray *opt=opted?[NSJSONSerialization JSONObjectWithData:opted options:0 error:NULL]:nil;
+            if ([opt isKindOfClass:NSArray.class]) {
+                opt_in_leaves=[NSSet setWithArray:opt];
+                for (NSString *leaf in opt) if ([leaf isKindOfClass:NSString.class])
+                    LOG("[native] opt-in adapter %s: %s\n",leaf.UTF8String,adapter_wanted(leaf)?"used (TOLKARA_ADAPTERS)":"not used; the iOS library instead");
+            }
         }
         NSString *support=[@(frameworks) stringByAppendingPathComponent:@"libAKSupport.dylib"];
         if (!dlopen(support.fileSystemRepresentation,RTLD_NOW|RTLD_GLOBAL)) { LOG("[native] support load failed: %s\n",dlerror()); goto done; }

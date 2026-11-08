@@ -31,6 +31,7 @@ def generic_build(out, **settings):
     (out / 'Guest').mkdir(parents=True)
     (out / 'Guest/libraries.json').write_text('{}')
     (out / 'Guest/absent.json').write_text('["Stale"]')
+    (out / 'Guest/opt-in.json').write_text('["Stale"]')
     # The build phase's own step, with no executable named.
     env = dict(os.environ, NATIVE_GUEST_SHIMS='GENERIC', PLATFORM_NAME='iphoneos', **settings)
     # The iOS SDK comes with Xcode, as for tools/run.sh and tools/install.sh.
@@ -63,6 +64,9 @@ class GenericBuildTests(unittest.TestCase):
     def test_nothing_presented_as_absent(self):
         self.assertFalse((OUT / 'Guest/absent.json').exists())
 
+    def test_no_opt_in_adapters(self):
+        self.assertFalse((OUT / 'Guest/opt-in.json').exists())
+
     def test_audio_unit_is_the_audio_toolbox_adapter(self):
         # iOS has no AudioUnit library; its adapter re-exports the AudioToolbox one.
         load = subprocess.run(['otool', '-l', str(OUT / 'Frameworks/akAudioUnit.dylib')], capture_output=True, text=True, check=True).stdout
@@ -88,6 +92,16 @@ class ExperimentalGenericBuildTests(unittest.TestCase):
         self.assertEqual(json.loads((EXPERIMENTAL_OUT / 'Guest/absent.json').read_text()), ['MetalFX'])
         self.assertFalse((EXPERIMENTAL_OUT / 'Frameworks/akMetalFX.dylib').exists())
         self.assertFalse((EXPERIMENTAL_OUT / 'Guest/libraries.json').exists())
+
+    def test_opt_in_adapters_listed_for_the_runtime(self):
+        # Built, but used only for a profile whose TOLKARA_ADAPTERS names it
+        # (Cyberpunk 2077's); World of Warcraft keeps iOS's GameController.
+        self.assertTrue((EXPERIMENTAL_OUT / 'Frameworks/akGameController.dylib').exists())
+        self.assertEqual(json.loads((EXPERIMENTAL_OUT / 'Guest/opt-in.json').read_text()), ['GameController'])
+        profiles = {path.parent.name: json.loads(path.read_text()) for path in (ROOT / 'profiles').glob('*/profile.json')}
+        users = {name for name, profile in profiles.items()
+                 if 'GameController' in profile.get('environment', {}).get('TOLKARA_ADAPTERS', '').replace(',', ':').split(':')}
+        self.assertEqual(users, {'cyberpunk-2077'})
 
 
 if __name__ == '__main__':

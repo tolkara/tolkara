@@ -6,6 +6,9 @@
   "caseAliases": {
     "archive/mac": "Mac"
   },
+  "environment": {
+    "TOLKARA_ADAPTERS": "GameController"
+  },
   "tested": "2.3.x (GOG, macOS arm64), iPad Pro M5: experimental opening cinematic; gameplay unverified",
   "notes": "Experimental software-memory startup reaches the opening cinematic and Space-to-continue prompt on the iPad. Startup is very slow; menu interaction and gameplay remain unverified. Copy your own installed 'Cyberpunk 2077' folder (GOG, macOS) with profiles/cyberpunk-2077/install.py. See profiles/cyberpunk-2077/README.md."
 }

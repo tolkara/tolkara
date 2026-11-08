@@ -8,7 +8,10 @@ translation/<Framework>/ directory, with no stubs for any one executable. That i
 what a build not made for a particular application ships; the runtime resolves
 libraries by name and synthesises whatever is still missing. A standalone adapter
 re-exports nothing, and the leaves marked absent are written to absent.json for
-the runtime, which then opens no library of that name. Directories marked
+the runtime, which then opens no library of that name. Leaves marked opt-in are
+written to opt-in.json beside it: the runtime uses such an adapter only for an
+application whose profile names it in TOLKARA_ADAPTERS, and the iOS library
+otherwise (a workaround one application needs and others must not get). Directories marked
 experimental take part only when TOLKARA_EXPERIMENTAL_ADAPTERS names them (see
 tools/classify.py).
 
@@ -164,8 +167,11 @@ if generic:
             continue
         build(leaf, f"@rpath/ak{leaf}.dylib", [], None if leaf in standalone else sdk_library(leaf))
     if absent_list:
-        if absent:
-            with open(absent_list, "w") as f:
-                json.dump(sorted(absent), f, indent=1)
-        elif os.path.exists(absent_list):
-            os.remove(absent_list)
+        opt_in = translation_leaves("opt-in") - absent
+        opt_in_list = os.path.join(os.path.dirname(absent_list), "opt-in.json")
+        for leaves, path in ((absent, absent_list), (opt_in, opt_in_list)):
+            if leaves:
+                with open(path, "w") as f:
+                    json.dump(sorted(leaves), f, indent=1)
+            elif os.path.exists(path):
+                os.remove(path)

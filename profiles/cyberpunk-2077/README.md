@@ -32,7 +32,9 @@ The build classifies the executable together with the libraries in its
 `Contents/Frameworks`, so the compatibility libraries cover all of them. The
 two experimental adapters present a Mac with no game controllers (the game's
 connect handlers crashed) and MetalFX as unavailable (its initializer crashed
-startup), so the game takes its non-MetalFX path. Build, install and set up
+startup), so the game takes its non-MetalFX path. In the generic build the
+device runs, the GameController adapter is used only for this game: its profile
+sets `TOLKARA_ADAPTERS=GameController` (other games keep their controllers). Build, install and set up
 your execution mode as described in [docs/BUILDING.md](../../docs/BUILDING.md),
 then copy your installation:
 

@@ -1,0 +1,7 @@
+Opt-in per application: a generic build carries this adapter (when
+TOLKARA_EXPERIMENTAL_ADAPTERS names GameController) but the runtime uses it only
+for an application whose profile sets TOLKARA_ADAPTERS to include GameController,
+today Cyberpunk 2077. Every other application, World of Warcraft among them,
+links the iOS GameController framework and sees real controllers, which the
+WoW clients read through their bundled SDL (its GameController backend).
+A build made for one executable (with a library map) ignores this marker.

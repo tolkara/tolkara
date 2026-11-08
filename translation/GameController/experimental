@@ -1,6 +1,6 @@
 Experimental, off by default: this directory takes part in a build only when
 TOLKARA_EXPERIMENTAL_ADAPTERS names GameController (see tools/classify.py).
 It was written to get one game past a crash in its controller-connect handler.
-It hides every controller from every application in the build, including
-real gamepads a validated application such as World of Warcraft would use,
-so it must stay opt-in. Not yet validated on a device beyond that game.
+It hides every controller from the application that uses it, so in a generic
+build it is also opt-in per application (see the "opt-in" marker): only
+Cyberpunk 2077's profile asks for it, and World of Warcraft keeps its gamepads. Not yet validated on a device beyond that game.

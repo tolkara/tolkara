@@ -40,8 +40,9 @@ mkdir -p "$OUT/Guest"
 # Remove resources left by older builds, including the proprietary executable.
 rm -f "$OUT/Guest/OriginalExecutable.bin" "$OUT/Guest/manifest.json"
 # A library map left by a build for one executable would turn a generic build's stubs off.
-# absent.json: libraries a generic build presents as unavailable (translation/<Leaf>/absent).
-rm -f "$OUT/Guest/libraries.json" "$OUT/Guest/absent.json"
+# absent.json: libraries a generic build presents as unavailable (translation/<Leaf>/absent);
+# opt-in.json: adapters it uses only for profiles that name them (translation/<Leaf>/opt-in).
+rm -f "$OUT/Guest/libraries.json" "$OUT/Guest/absent.json" "$OUT/Guest/opt-in.json"
 rm -rf "$OUT/Guest/Nibs"
 # Adapters left by a build for other executables or other experimental adapters:
 # every one would be signed into the app, and a generic build opens ak<Leaf>.dylib by name.

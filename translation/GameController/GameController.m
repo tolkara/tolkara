@@ -1,5 +1,7 @@
 // GameController adapter: a Mac without gamepads. Experimental and opt-in
-// (TOLKARA_EXPERIMENTAL_ADAPTERS=GameController; see the "experimental" marker).
+// (TOLKARA_EXPERIMENTAL_ADAPTERS=GameController; see the "experimental" marker),
+// and in a generic build used only for a profile with TOLKARA_ADAPTERS naming
+// it (the "opt-in" marker): Cyberpunk 2077. Other applications get iOS's.
 // The AppKit adapter links the real framework for GCMouse raw input, and iOS
 // then activates a legacy device session that reports the host's keyboard and
 // mouse (in the simulator even a virtual MFi controller) and posts connect
@@ -8,7 +10,7 @@
 // stands alone (see the "standalone" marker): the guest gets stub classes that
 // report no controllers, and its notification constants use names nothing
 // posts, so its observers never fire, as on a Mac with no controller. Real
-// gamepads are hidden too: an application built with it loses gamepad input.
+// gamepads are hidden too: an application using it loses gamepad input.
 // Not yet validated on a device beyond that game's startup.
 #import "AKSupport.h"
 

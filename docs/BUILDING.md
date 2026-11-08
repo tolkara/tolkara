@@ -72,8 +72,10 @@ xcrun devicectl list devices
   `experimental` under `translation/` take part only when named here, separated
   by `:`. Today `GameController` (reports no controllers, real gamepads
   included) and `MetalFX` (presented as absent), both written for one game's
-  crashes and not yet validated on a device. They affect every application in
-  the build.
+  crashes and not yet validated on a device. `MetalFX` affects every
+  application in the build; `GameController` is also marked `opt-in`, so a
+  generic build uses it only for a profile whose `TOLKARA_ADAPTERS` names it
+  (Cyberpunk 2077), and other games keep their controllers.
 
 Xcode signs automatically (`CODE_SIGN_STYLE: Automatic`). The first build
 registers the bundle IDs and the iPad with your team and creates the profiles.
