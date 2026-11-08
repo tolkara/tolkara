@@ -48,6 +48,16 @@ unknown status after helper loss remains uncertain and preserves the arena.
   TCP reachability of 127.0.0.1:49152 or request or stop our optional route.
   Starting it is an explicit action that may require iPadOS's VPN
   configuration consent. It never starts automatically at launch.
+- The developer service's port is 49152 unless iOS started it elsewhere: an
+  iPhone on iOS 27.2 advertised 54059 while 49152 refused connections, and
+  every launch failed with "Packet-flow TCP connection failed". The app tries
+  49152 through the route first; if no Remote Pairing handshake answers, it
+  browses `_remotepairing._tcp` (`authorization/App/ServicePort.m`), keeps the
+  instance whose host resolves to one of this device's own addresses, and
+  sends that port to the extension as `servicePort` (49152 to 65535 only).
+  Finding it needs Local Network access, asked once. The port carries no
+  trust: pair-verify against the enrolled identity still authenticates the
+  service. `tests/test_service_port.m` checks the address match on the Mac.
 - `--direct-authorization-probe` runs the same bounded, credentials-free TCP check
   and writes Documents/direct-authorization-probe.txt. A failed connection only
   rejects that one endpoint at that moment. A successful connection proves

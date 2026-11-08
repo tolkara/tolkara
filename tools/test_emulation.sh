@@ -143,6 +143,11 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -g -fsanitize=address,undefined \
     authorization/Control/ArenaControl.c authorization/App/LocalArenaPoller.m tests/test_local_arena_poller.m \
     -o build/emulation/test_local_arena_poller
 build/emulation/test_local_arena_poller
+# Needs mDNSResponder (Bonjour): registers a test _remotepairing._tcp service on this Mac.
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -g -fsanitize=address,undefined \
+    -Iauthorization -Iauthorization/App -framework Foundation \
+    authorization/App/ServicePort.m tests/test_service_port.m -o build/emulation/test_service_port
+build/emulation/test_service_port
 "${CC[@]}" runtime/GuestWait.c tests/test_guest_wait.c -o build/emulation/test_guest_wait
 build/emulation/test_guest_wait
 "${CC[@]}" runtime/GuestWait.c tests/test_guest_wait_runloop.c -framework CoreFoundation -o build/emulation/test_guest_wait_runloop

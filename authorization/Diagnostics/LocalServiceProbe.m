@@ -26,16 +26,20 @@ static BOOL TKProbeTransfer(int fd,void *bytes,size_t size,BOOL writing,CFTimeIn
 
 @implementation TKLocalServiceProbe
 + (void)probeService:(BOOL)remotePairing address:(NSString *)host completion:(void (^)(NSString *))completion {
-    if(![host isEqual:@"127.0.0.1"] && ![host isEqual:@"10.7.0.1"]) {
-        dispatch_async(dispatch_get_main_queue(),^{completion(@"Diagnostic endpoint rejected.");});return;
+    [self probeService:remotePairing address:host port:49152 completion:^(NSString *report,BOOL answered) { (void)answered;completion(report); }];
+}
++ (void)probeService:(BOOL)remotePairing address:(NSString *)host port:(uint16_t)port completion:(void (^)(NSString *,BOOL))completion {
+    if((![host isEqual:@"127.0.0.1"] && ![host isEqual:@"10.7.0.1"]) || port<49152) {
+        dispatch_async(dispatch_get_main_queue(),^{completion(@"Diagnostic endpoint rejected.",NO);});return;
     }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
         NSString *result=@"Local service query failed.";
+        BOOL answered=NO;
         int fd=socket(AF_INET,SOCK_STREAM,0);
         if(fd>=0) {
             int one=1;setsockopt(fd,SOL_SOCKET,SO_NOSIGPIPE,&one,sizeof one);
             int flags=fcntl(fd,F_GETFL,0);
-            struct sockaddr_in address={.sin_len=sizeof address,.sin_family=AF_INET,.sin_port=htons(49152)};
+            struct sockaddr_in address={.sin_len=sizeof address,.sin_family=AF_INET,.sin_port=htons(port)};
             inet_pton(AF_INET,host.UTF8String,&address.sin_addr);
             BOOL connected=NO;
             if(flags>=0 && !fcntl(fd,F_SETFL,flags|O_NONBLOCK)) {
@@ -68,7 +72,8 @@ static BOOL TKProbeTransfer(int fd,void *bytes,size_t size,BOOL writing,CFTimeIn
                                 id value=valid?object:nil;
                                 for(NSString *key in @[@"message",@"plain",@"_0",@"response",@"_1",@"handshake",@"_0"])
                                     value=[value isKindOfClass:NSDictionary.class]?value[key]:nil;
-                                result=[value isKindOfClass:NSDictionary.class]?@"Direct service returned a Remote Pairing handshake. Device identity and execution permission remain unverified.":@"Direct service returned RPPairing framing but an unexpected handshake schema.";
+                                answered=[value isKindOfClass:NSDictionary.class];
+                                result=answered?@"Direct service returned a Remote Pairing handshake. Device identity and execution permission remain unverified.":@"Direct service returned RPPairing framing but an unexpected handshake schema.";
                             } else result=@"Remote Pairing reply body closed or timed out.";
                         } else result=@"Remote Pairing reply exceeded the diagnostic size limit.";
                     } else result=[NSString stringWithFormat:@"Direct connection opened, but Remote Pairing handshake failed (socket error %d).",errno];
@@ -86,6 +91,7 @@ static BOOL TKProbeTransfer(int fd,void *bytes,size_t size,BOOL writing,CFTimeIn
                             id value=[NSPropertyListSerialization propertyListWithData:reply options:NSPropertyListImmutable format:NULL error:NULL];
                             BOOL lockdown=[value isKindOfClass:NSDictionary.class] && [value[@"Type"] isEqual:@"com.apple.mobile.lockdown"];
                             // Only emit our classifications, never arbitrary service data.
+                            answered=lockdown;
                             result=lockdown?@"Direct service answered QueryType as com.apple.mobile.lockdown. Pairing and execution permission remain unverified.":@"Direct service returned a bounded reply, but it was not the expected lockdown QueryType response.";
                         } else result=@"Direct service closed or timed out while reading the query reply.";
                     } else result=@"Direct service reply does not use the expected bounded plist framing.";
@@ -94,8 +100,8 @@ static BOOL TKProbeTransfer(int fd,void *bytes,size_t size,BOOL writing,CFTimeIn
             } else result=@"Direct service connection could not be established.";
             close(fd);
         }
-        NSString *report=[NSString stringWithFormat:@"Endpoint %@:49152. %@",host,result];
-        dispatch_async(dispatch_get_main_queue(),^{completion(report);});
+        NSString *report=[NSString stringWithFormat:@"Endpoint %@:%u. %@",host,(unsigned)port,result];
+        dispatch_async(dispatch_get_main_queue(),^{completion(report,answered);});
     });
 }
 @end

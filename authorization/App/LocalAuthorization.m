@@ -1,5 +1,6 @@
 #import "LocalAuthorization.h"
 #import "Diagnostics/LocalServiceProbe.h"
+#import "ServicePort.h"
 #import "Protocol.h"
 #import "LocalArenaPublisher.h"
 #import "LocalArenaPoller.h"
@@ -65,7 +66,7 @@ static void TKWaitForStoppedRoute(NETunnelProviderManager *manager,CFTimeInterva
             if(!connected) {
                 completion([NSString stringWithFormat:@"Route did not connect (status %ld). %@",(long)self.manager.connection.status,startResult]);return;
             }
-            [TKLocalAuthorization probeLocalRouteService:^(NSString *result) {
+            [TKLocalAuthorization findServicePort:^(uint16_t port,NSString *result) {
                 __block BOOL delivered=NO;
                 void (^finish)(NSString *,BOOL)=^(NSString *report,BOOL ready) {
                     void (^deliver)(void)=^{
@@ -87,7 +88,8 @@ static void TKWaitForStoppedRoute(NETunnelProviderManager *manager,CFTimeInterva
                 if (device.length) [shared setObject:device forKey:@"TKEnrolledDeviceIdentifier"];
                 else device=[shared stringForKey:@"TKEnrolledDeviceIdentifier"]?:@"";
                 NSData *request=[NSJSONSerialization dataWithJSONObject:@{@"version":@TK_AUTH_PROTOCOL_VERSION,
-                    @"operation":mode==3?@"prepareAuthorization":mode==2?@"verifyTunnel":mode==1?@"verifyPairing":@"probeService",@"deviceIdentifier":device} options:0 error:NULL];
+                    @"operation":mode==3?@"prepareAuthorization":mode==2?@"verifyTunnel":mode==1?@"verifyPairing":@"probeService",@"deviceIdentifier":device,
+                    @"servicePort":@(port)} options:0 error:NULL];
                 NSError *error=nil;
                 BOOL sent=[(NETunnelProviderSession *)self.manager.connection sendProviderMessage:request returnError:&error responseHandler:^(NSData *data) {
                     // The provider replies nil when it declines or fails; nil.length is 0,
@@ -113,7 +115,25 @@ static void TKWaitForStoppedRoute(NETunnelProviderManager *manager,CFTimeInterva
     [TKLocalServiceProbe probeService:YES address:@"127.0.0.1" completion:completion];
 }
 + (void)probeLocalRouteService:(void (^)(NSString *))completion {
-    [TKLocalServiceProbe probeService:YES address:TK_AUTH_PEER completion:completion];
+    [self findServicePort:^(uint16_t port,NSString *report) { (void)port;completion(report); }];
+}
+// The developer service usually answers on 49152 through the route; that is
+// tried first, so a device where it does never needs Local Network access.
+// Otherwise the port this device advertises over Bonjour is tried
+// (ServicePort.h). Completes on the main queue with the port to use and the
+// probes' report; 49152 when nothing better was found.
++ (void)findServicePort:(void (^)(uint16_t port,NSString *report))completion {
+    [TKLocalServiceProbe probeService:YES address:TK_AUTH_PEER port:TK_AUTH_SERVICE_PORT completion:^(NSString *first,BOOL answered) {
+        if(answered) {completion(TK_AUTH_SERVICE_PORT,first);return;}
+        // Long enough for the one-time Local Network question to be answered.
+        [TKServicePort discoverWithTimeout:30 completion:^(uint16_t port,NSString *note) {
+            if(!port || port==TK_AUTH_SERVICE_PORT) {completion(TK_AUTH_SERVICE_PORT,[first stringByAppendingFormat:@" %@",note]);return;}
+            [TKLocalServiceProbe probeService:YES address:TK_AUTH_PEER port:port completion:^(NSString *second,BOOL found) {
+                (void)found;
+                completion(port,[NSString stringWithFormat:@"%@ %@ %@",first,note,second]);
+            }];
+        }];
+    }];
 }
 + (void)probeDirectAccess:(void (^)(NSString *))completion {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{

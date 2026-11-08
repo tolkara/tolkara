@@ -135,6 +135,13 @@ private address to the iPad's own developer service and carries no other
 traffic; nothing leaves the device. How it works is documented in
 [LOCAL_AUTHORIZATION.md](LOCAL_AUTHORIZATION.md).
 
+The developer service usually listens on port 49152. iOS sometimes starts it on
+another port (an iPhone on iOS 27.2 used 54059). Tolkara then looks up the port
+the device advertises for itself over Bonjour, so the first such launch asks
+for **Local Network** access. If you decline, Developer service cannot connect
+until the service is back on 49152, which a restart of the device may bring
+about.
+
 After enrolment the Mac is no longer needed: launches, relaunches and reboots
 work on the iPad alone. You need to repeat steps 3 and 4 only when your
 provisioning profile expires or you change the bundle ID or Keychain group.

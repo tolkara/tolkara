@@ -6,6 +6,8 @@
 #define TK_AUTH_PROVIDER_ID [NSBundle.mainBundle.bundleIdentifier stringByAppendingString:@".authorization"]
 #define TK_AUTH_INTERFACE @"10.7.0.2"
 #define TK_AUTH_PEER @"10.7.0.1"
+// The device's Remote Pairing port, unless iOS moved it (App/ServicePort.h).
+#define TK_AUTH_SERVICE_PORT 49152
 
 // A connected route is never evidence that guest code may execute. The status
 // explicitly reports authorization separately until the real protocol succeeds.

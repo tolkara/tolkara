@@ -66,6 +66,14 @@
 - (void)stopTunnelWithReason:(NEProviderStopReason)reason completionHandler:(void (^)(void))completion {
     (void)reason;self.running=NO;self.generation++;[self.arenaService invalidate];[self.packetProbe cancel];completion();
 }
+// The device's Remote Pairing port, as the app found it (TKServicePort): 49152
+// unless iOS moved the service, and always within the dynamic port range.
+static uint16_t TKRequestedServicePort(NSDictionary *request) {
+    NSNumber *port=request[@"servicePort"];
+    if(![port isKindOfClass:NSNumber.class])return TK_AUTH_SERVICE_PORT;
+    NSInteger value=port.integerValue;
+    return value>=49152 && value<=65535 ? (uint16_t)value : TK_AUTH_SERVICE_PORT;
+}
 - (void)handleAppMessage:(NSData *)message completionHandler:(void (^)(NSData *))completion {
     if(!completion)return;
     if(message.length>=4 && !memcmp(message.bytes,"TKAR",4)) {
@@ -89,17 +97,20 @@
             response[@"readyForPreparation"]=@(self.packetProbe.authorizationReady);
             completion([NSJSONSerialization dataWithJSONObject:response options:0 error:NULL]);
         };
+        uint16_t port=TKRequestedServicePort(request);
         if([request[@"operation"] isEqual:@"prepareAuthorization"])
-            [self.packetProbe startAuthorizationWithDeviceIdentifier:device output:output completion:reply];
+            [self.packetProbe startAuthorizationWithDeviceIdentifier:device servicePort:port output:output completion:reply];
         else if([request[@"operation"] isEqual:@"verifyTunnel"])
-            [self.packetProbe startVerifiedTunnelWithDeviceIdentifier:device output:output completion:reply];
-        else [self.packetProbe startAuthenticatedWithDeviceIdentifier:device output:output completion:reply];
+            [self.packetProbe startVerifiedTunnelWithDeviceIdentifier:device servicePort:port output:output completion:reply];
+        else [self.packetProbe startAuthenticatedWithDeviceIdentifier:device servicePort:port output:output completion:reply];
         return;
     }
     if([request isKindOfClass:NSDictionary.class] && [request[@"version"] isEqual:@TK_AUTH_PROTOCOL_VERSION] && [request[@"operation"] isEqual:@"probeService"]) {
-        [TKLocalServiceProbe probeService:YES address:TK_AUTH_PEER completion:^(NSString *report) {
+        uint16_t port=TKRequestedServicePort(request);
+        [TKLocalServiceProbe probeService:YES address:TK_AUTH_PEER port:port completion:^(NSString *report,BOOL answered) {
+            (void)answered;
             __weak TKLocalPacketProvider *weakSelf=self;
-            [self.packetProbe startWithOutput:^BOOL(NSData *packet) {
+            [self.packetProbe startWithServicePort:port output:^BOOL(NSData *packet) {
                 TKLocalPacketProvider *provider=weakSelf;
                 return provider.running && [provider.packetFlow writePackets:@[packet] withProtocols:@[@AF_INET]];
             } completion:^(NSString *packetReport) {

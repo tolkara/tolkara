@@ -8,8 +8,11 @@ import Network
 @objc(TKPacketServiceProbe) final class PacketServiceProbe: NSObject {
     private let queue = DispatchQueue(label:"local.tolkara.packet-service-probe")
     @objc private(set) var arenaService: ArenaPreparationService!
-    private let codec: LocalTCPIPv4
-    private let reservedPortFD: Int32
+    // The synthetic tuple: our reserved port and the device service's port
+    // (49152 unless iOS moved it; TKServicePort finds it in the app).
+    private var codec: LocalTCPIPv4?
+    private var reservedPortFD: Int32
+    private var reservedPort: UInt16
     private var tcp: TunnelTCP?
     private var decoder = PairingFrameDecoder()
     private var timer: DispatchSourceTimer?
@@ -34,7 +37,13 @@ import Network
 
     override init() {
         // Reserve an unused kernel port so a concurrent host socket cannot
-        // accidentally share the diagnostic's synthetic TCP tuple.
+        // accidentally share the diagnostic's synthetic TCP tuple. The
+        // service's own port is known only when a request names it.
+        (reservedPortFD,reservedPort) = Self.reservePort()
+        super.init()
+        arenaService = ArenaPreparationService(queue:queue)
+    }
+    private static func reservePort() -> (Int32,UInt16) {
         let fd = socket(AF_INET,SOCK_STREAM,0)
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -45,35 +54,37 @@ import Network
                 Darwin.bind(fd,$0,length) == 0 && getsockname(fd,$0,&length) == 0
             }
         }
-        let port = UInt16(bigEndian:address.sin_port)
-        if bound && port != 49152 {
-            reservedPortFD = fd; codec = LocalTCPIPv4(clientPort:port,servicePort:49152)
-        } else {
-            if fd >= 0 { Darwin.close(fd) }
-            reservedPortFD = -1; codec = LocalTCPIPv4(clientPort:0,servicePort:49152)
-        }
-        super.init()
-        arenaService = ArenaPreparationService(queue:queue)
+        if bound { return (fd,UInt16(bigEndian:address.sin_port)) }
+        if fd >= 0 { Darwin.close(fd) }
+        return (-1,0)
     }
 
-    @objc func start(output: @escaping (Data)->Bool, completion: @escaping (String)->Void) {
-        start(deviceIdentifier:nil,makeTunnel:false,output:output,completion:completion)
+    @objc func start(servicePort: UInt16, output: @escaping (Data)->Bool, completion: @escaping (String)->Void) {
+        start(deviceIdentifier:nil,servicePort:servicePort,makeTunnel:false,output:output,completion:completion)
     }
-    @objc func startAuthenticated(deviceIdentifier: String, output: @escaping (Data)->Bool, completion: @escaping (String)->Void) {
-        start(deviceIdentifier:deviceIdentifier,makeTunnel:false,output:output,completion:completion)
+    @objc func startAuthenticated(deviceIdentifier: String, servicePort: UInt16, output: @escaping (Data)->Bool, completion: @escaping (String)->Void) {
+        start(deviceIdentifier:deviceIdentifier,servicePort:servicePort,makeTunnel:false,output:output,completion:completion)
     }
-    @objc func startVerifiedTunnel(deviceIdentifier: String, output: @escaping (Data)->Bool, completion: @escaping (String)->Void) {
-        start(deviceIdentifier:deviceIdentifier,makeTunnel:true,output:output,completion:completion)
+    @objc func startVerifiedTunnel(deviceIdentifier: String, servicePort: UInt16, output: @escaping (Data)->Bool, completion: @escaping (String)->Void) {
+        start(deviceIdentifier:deviceIdentifier,servicePort:servicePort,makeTunnel:true,output:output,completion:completion)
     }
-    @objc func startAuthorization(deviceIdentifier: String, output: @escaping (Data)->Bool, completion: @escaping (String)->Void) {
-        start(deviceIdentifier:deviceIdentifier,makeTunnel:true,retainAuthorization:true,output:output,completion:completion)
+    @objc func startAuthorization(deviceIdentifier: String, servicePort: UInt16, output: @escaping (Data)->Bool, completion: @escaping (String)->Void) {
+        start(deviceIdentifier:deviceIdentifier,servicePort:servicePort,makeTunnel:true,retainAuthorization:true,output:output,completion:completion)
     }
-    private func start(deviceIdentifier: String?, makeTunnel: Bool, retainAuthorization: Bool = false, output: @escaping (Data)->Bool, completion: @escaping (String)->Void) {
+    private func start(deviceIdentifier: String?, servicePort: UInt16, makeTunnel: Bool, retainAuthorization: Bool = false, output: @escaping (Data)->Bool, completion: @escaping (String)->Void) {
         queue.async { [self] in
             guard !used else { completion("Packet probe already used; restart route for another test.");return }
             used = true; self.output = output; self.completion = completion; self.makeTunnel = makeTunnel; deadline = clock+(makeTunnel ? 45 : 8)
             self.retainAuthorization = retainAuthorization
-            guard reservedPortFD >= 0 else { finish("Could not reserve the packet probe's local port.");return }
+            if reservedPortFD >= 0 && reservedPort == servicePort {
+                // Our port must differ from the service's in the tuple.
+                let previous = reservedPortFD
+                (reservedPortFD,reservedPort) = Self.reservePort()
+                Darwin.close(previous)
+            }
+            guard servicePort > 0, reservedPortFD >= 0, reservedPort != servicePort else { finish("Could not reserve the packet probe's local port.");return }
+            let codec = LocalTCPIPv4(clientPort:reservedPort,servicePort:servicePort)
+            self.codec = codec
             do {
                 if let deviceIdentifier {
                     guard let enrollment = try PairingKeychain().load(deviceIdentifier:deviceIdentifier) else {
@@ -100,7 +111,7 @@ import Network
         // completion; delayed packets must never enter the reflector.
         return queue.sync {
             if let proxy, proxy.consume(packet) { return true }
-            guard codec.matches(packet) else { return false }
+            guard let codec, codec.matches(packet) else { return false }
             guard used, !finished, let tcp, let incoming = try? codec.incoming(packet) else { return true }
             process(tcp.receive(incoming,now:clock))
             return true
@@ -112,7 +123,7 @@ import Network
         // Send protocol ACKs before consuming application data.
         for event in events {
             if case .packet(let data) = event {
-                guard let packet = try? codec.outgoing(data), output?(packet) == true else {
+                guard let packet = try? codec?.outgoing(data), output?(packet) == true else {
                     finish("Packet-flow injection failed.");return
                 }
             }
@@ -269,7 +280,7 @@ import Network
         discovery?.cancel();discovery = nil;manager?.cancel();manager = nil;proxy?.cancel()
         timer?.cancel(); timer = nil
         if let tcp { for event in tcp.abort() {
-            if case .packet(let data) = event, let packet = try? codec.outgoing(data) { _ = output?(packet) }
+            if case .packet(let data) = event, let packet = try? codec?.outgoing(data) { _ = output?(packet) }
         } }
         tcp = nil; output = nil; ephemeral = nil; authentication?.close(); authentication = nil;enrollment = nil
         let detail = proxy.map { " \($0.diagnostic)." } ?? ""

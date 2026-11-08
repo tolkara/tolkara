@@ -16,6 +16,12 @@
 	<string>group.$(TOLKARA_GROUP_BASE).shared</string>
 	<key>TKPairingKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)$(TOLKARA_KEYCHAIN_GROUP)</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Tolkara looks up which port this device's own developer service uses, so it can prepare memory for the apps you start. Nothing is sent to other devices.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_remotepairing._tcp</string>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Allow the app you run in Tolkara to use the microphone, for example for in-game voice chat.</string>
 </dict>
