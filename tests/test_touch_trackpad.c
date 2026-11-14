@@ -22,9 +22,11 @@ int main(void) {
     update(&pad, &trace, 1, 120, 80, 1.1);
     update(&pad, &trace, 0, 0, 0, 1.2);
     assert(trace.count == 1 && trace.events[0].action == AKTrackpadMove);
-    double gain = AKTrackpadGain(hypot(20, 20) / 0.1);
-    assert(gain > 1 && gain < 1.5);
-    assert(fabs(trace.events[0].x - 20 * gain) < 1e-9 && fabs(trace.events[0].y + 20 * gain) < 1e-9);
+    // The first step iOS reports comes late and all at once: it is eased in
+    // (the start step, at a slow finger's gain), in the finger's direction.
+    double first = hypot(trace.events[0].x, trace.events[0].y);
+    assert(first >= AKTouchStartStep * 0.8 && first <= AKTouchStartStep);
+    assert(fabs(trace.events[0].x + trace.events[0].y) < 1e-9 && trace.events[0].x > 0);
     // Lifting and placing somewhere else does not teleport the cursor.
     trace.count = 0;
     update(&pad, &trace, 1, 500, 400, 2);
@@ -110,7 +112,28 @@ int main(void) {
     for (unsigned i = 1; i <= 9; i++) update(&pad, &trace, 1, 0, 0, 15 + i / 100.0);
     update(&pad, &trace, 1, 10, 0, 15.1);
     update(&pad, &trace, 0, 0, 0, 15.2);
-    assert(trace.count == 1 && fabs(trace.events[0].x - 10 * AKTrackpadGain(100)) < 1e-9);
+    assert(trace.count == 1 && trace.events[0].x >= AKTouchStartStep * 0.8 && trace.events[0].x <= AKTouchStartStep);
+    // After the start, steps pass whole and the gain follows the speed: a
+    // steady slow slide stays under the finger's motion, a fast one exceeds it.
+    for (unsigned fast = 0; fast < 2; fast++) {
+        trace.count = 0;
+        double step = fast ? 12 : 1;
+        update(&pad, &trace, 1, 0, 0, 16);
+        for (unsigned i = 1; i <= 40; i++) update(&pad, &trace, 1, i * step, 0, 16 + i / 100.0);
+        update(&pad, &trace, 0, 0, 0, 17);
+        assert(trace.count == 40);
+        double last = trace.events[39].x / step;
+        assert(fast ? last > 2 && last <= 2.5 : last >= 0.8 && last < 1);
+        for (unsigned i = 12; i < 40; i++) assert(fabs(trace.events[i].x - trace.events[i - 1].x) < 0.05 * step);
+    }
+    // Samples that arrive unevenly (two at once after a slow frame) do not
+    // make the pointer lurch: the gain comes from a smoothed speed.
+    trace.count = 0;
+    update(&pad, &trace, 1, 0, 0, 18);
+    for (unsigned i = 1; i <= 30; i++) update(&pad, &trace, 1, i * 2, 0, 18 + i / 100.0);
+    update(&pad, &trace, 1, 62, 0, 18.301);
+    update(&pad, &trace, 0, 0, 0, 18.5);
+    assert(trace.count == 31 && trace.events[30].x / trace.events[29].x < 1.15);
     // Double tap and hold: a tap and an immediate second touch presses the
     // right button (e.g. to steer a camera) as soon as that touch lands, before
     // any movement, and holds it until the finger lifts. Even motion within

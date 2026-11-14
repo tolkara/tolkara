@@ -54,31 +54,43 @@ pointer to steer:
 | Slide two fingers | Scroll (zoom the camera) |
 | Tap two fingers | Left click between them |
 
-The pointer goes to where the finger landed, and the right button goes down
-with the finger's first movement (past 4 points; the motion so far is sent
-along, so none is lost). It is not pressed at the touch itself: a two-finger
-gesture whose second finger lands a moment later would otherwise right-click
-whatever was under the first. The camera turns three times the finger's
-motion, as with the trackpad's right drag. For menus, bags and dragging
+The pointer goes to the finger as it lands, so the game knows what is under
+it before any click, and the right button goes down with the first movement
+iOS reports. It is not pressed at the touch itself: a two-finger gesture whose
+second finger lands a moment later would otherwise right-click whatever was
+under the first. No pointer is drawn in camera mode. The camera turns three
+times the finger's motion, as with the trackpad's right drag. For menus, bags and dragging
 spells to the action bars, the hand button (a camera icon in camera mode)
 switches to cursor mode, the trackpad below (a cyan pointer icon), and back;
 the choice is kept. The stick works in both. Other games have no camera mode:
 for them the hand button turns the trackpad on and off, as below.
+
+**How motion starts.** iOS reports nothing while a finger that has just
+landed moves a short way, and then reports its position all at once: that is
+how the system tells a tap from a drag, and an app cannot turn it off. Tolkara
+therefore adds almost no threshold of its own (3 points in camera mode, none
+for the pointer) and does not pass that first jump on: a gesture's first step
+is limited to 2 points and each following step to twice the one before, for
+0.08 s. A slide starts gently instead of standing still and then jerking; a
+slow slide loses nothing. Motion is never collected to be sent later: each
+step reaches the game as it happens, as a mouse's would, also in the frame or
+so before a game captures the pointer for its camera. A tap's click lasts at
+least 0.06 s, long enough for a game that reads the buttons once a frame.
+Tolkara logs each of a session's first gestures (when iOS first reported
+movement, the size of the first steps, how far it went) and each right-button
+drag (its steps, total, largest step, the game's pointer warps and how long
+the capture took), in points and milliseconds, never what is on screen.
 
 **Trackpad.** The hand button turns trackpad mode on (cyan) or off; the choice
 is kept. The finger moves the pointer by its motion, like a laptop's trackpad:
 where it lands does not matter, and a tap clicks where the pointer is, not
 under the finger. Motion is accelerated with the finger's speed: slow motion
 moves the pointer a little less than the finger, for aiming, and a quick flick
-up to two and a half times as far. While the right button is held (double tap
-and slide, or two fingers held then slid), which turns a game's camera, motion
-is instead three times the finger's at any speed, so the camera turns evenly.
-A game captures the pointer a frame or so after the right button goes down;
-motion before that is held back (up to a quarter of a second) and sent with
-the captured motion, so it is neither clamped at the window's edge nor
-counted twice. Tolkara logs each such drag's motion in points (its steps,
-total, largest step, the game's pointer warps and how long the capture took),
-never what is on screen.
+up to two and a half times as far; the speed is averaged over about a
+twentieth of a second, so touch samples that arrive unevenly do not make the
+pointer lurch. While the right button is held (double tap and slide, or two
+fingers held then slid), which turns a game's camera, motion is instead three
+times the finger's at any speed, so the camera turns evenly.
 Long-press the hand button for a menu with left, right and middle click.
 
 | In trackpad mode (the right half, with the stick) | Mouse input |

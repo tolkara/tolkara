@@ -6,26 +6,20 @@ void AKTouchCameraCancel(AKTouchCamera *camera, AKTrackpadEmit emit, void *conte
     if (camera->pressed) emit(context, AKTrackpadUp, 0, 0, 1);
     camera->pressed = false;
     camera->blocked = true;
-    camera->heldX = camera->heldY = camera->scrollX = camera->scrollY = 0;
+    camera->scrollX = camera->scrollY = 0;
 }
 
-static void press(AKTouchCamera *camera, AKTrackpadEmit emit, void *context) {
-    emit(context, AKTrackpadPoint, camera->originX, camera->originY, 0);
-    emit(context, AKTrackpadDown, 0, 0, 1);
-    camera->pressed = true;
-}
-
-void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, double y,
+void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, double y, double time,
                          AKTrackpadEmit emit, void *context) {
     if (!fingers) {
         if (camera->pressed) emit(context, AKTrackpadUp, 0, 0, 1);
-        else if (camera->fingers && !camera->blocked && camera->travelled <= AKTouchCameraSlop) {
-            // A tap: one finger right-clicks where it landed, two left-click
-            // between them; three do nothing.
+        else if (camera->fingers && !camera->blocked) {
+            // A tap: one finger right-clicks where it landed (the pointer is
+            // there already), two left-click between them; three do nothing.
             if (camera->peak == 1) {
-                press(camera, emit, context);
+                emit(context, AKTrackpadDown, 0, 0, 1);
                 emit(context, AKTrackpadUp, 0, 0, 1);
-            } else if (camera->peak == 2) {
+            } else if (camera->peak == 2 && camera->reach <= AKTouchCameraTapSlop) {
                 emit(context, AKTrackpadPoint, camera->originX, camera->originY, 0);
                 emit(context, AKTrackpadDown, 0, 0, 0);
                 emit(context, AKTrackpadUp, 0, 0, 0);
@@ -34,7 +28,7 @@ void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, doub
         memset(camera, 0, sizeof *camera);
         return;
     }
-    if (fingers > 3 || !isfinite(x) || !isfinite(y)) {
+    if (fingers > 3 || !isfinite(x) || !isfinite(y) || !isfinite(time)) {
         AKTouchCameraCancel(camera, emit, context);
         camera->fingers = fingers;
         return;
@@ -42,6 +36,8 @@ void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, doub
     if (!camera->fingers) {
         camera->x = camera->originX = x;
         camera->y = camera->originY = y;
+        // The game learns what is under the finger while it rests there.
+        if (fingers == 1) emit(context, AKTrackpadPoint, x, y, 0);
     }
     if (camera->fingers && camera->fingers != fingers) {
         // A finger joined or left: the centroid jumps, so no motion from it.
@@ -51,8 +47,8 @@ void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, doub
         if (camera->pressed) AKTouchCameraCancel(camera, emit, context);
         camera->x = x; camera->y = y;
         camera->scrollX = camera->scrollY = 0;
-        // A two-finger gesture's tap position is between the fingers.
-        if (fingers == 2 && camera->travelled <= AKTouchCameraSlop) { camera->originX = x; camera->originY = y; }
+        // A two-finger gesture is judged from between the fingers.
+        if (fingers > camera->peak) { camera->originX = x; camera->originY = y; camera->reach = 0; }
     }
     camera->fingers = fingers;
     if (fingers > camera->peak) camera->peak = fingers;
@@ -62,18 +58,16 @@ void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, doub
     double distance = hypot(dx, dy);
     if (!isfinite(distance) || distance > 10000) { AKTouchCameraCancel(camera, emit, context); return; }
     if (!distance) return;
-    camera->travelled += distance;
+    camera->reach = fmax(camera->reach, hypot(x - camera->originX, y - camera->originY));
     if (fingers == 1) {
         if (!camera->pressed) {
-            // Motion inside the slop is kept and sent once the button is down.
-            camera->heldX += dx; camera->heldY += dy;
-            if (camera->travelled <= AKTouchCameraSlop) return;
-            press(camera, emit, context);
-            dx = camera->heldX; dy = camera->heldY;
-            camera->heldX = camera->heldY = 0;
+            if (camera->reach <= AKTouchCameraSlop) return;
+            emit(context, AKTrackpadDown, 0, 0, 1);
+            camera->pressed = true;
         }
-        emit(context, AKTrackpadMove, dx * AKTrackpadRightDragGain, dy * AKTrackpadRightDragGain, 1);
-    } else if (fingers == 2 && camera->travelled > AKTouchCameraSlop) {
+        double scale = AKTouchStartLimit(&camera->start, distance, time) / distance * AKTrackpadRightDragGain;
+        emit(context, AKTrackpadMove, dx * scale, dy * scale, 1);
+    } else if (fingers == 2 && camera->reach > AKTouchCameraTapSlop) {
         // As the trackpad's two-finger scroll: sub-line motion is kept.
         camera->scrollX += dx / 12;
         camera->scrollY += dy / 12;

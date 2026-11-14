@@ -300,37 +300,25 @@ int main(void) { @autoreleasepool {
     assert(next_input().clickCount == 1); (void)next_input();
     [host touchButton:0 pressed:YES]; [host touchButton:0 pressed:NO];
     assert(next_input().clickCount == 2); (void)next_input();
-    // A touch camera drag holds its motion until the game captures the
-    // pointer and then sends it as captured motion; with no capture it goes
-    // out as a drag after a quarter of a second, or before the release.
+    // A touch drag with the right button held reaches the game as a mouse's
+    // would, step by step as it happens: as drags before the game captures
+    // the pointer and as captured motion after. Nothing is held back.
     [host touchButton:1 pressed:YES];
     assert(next_input().type == NSEventTypeRightMouseDown);
     [host touchMoveBy:CGPointMake(12, -4)];
-    [host touchMoveBy:CGPointMake(6, 0)];
-    assert(![NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:NO]);
-    AKMouseSetCaptured(true);
     move = next_input();
-    assert(move.type == NSEventTypeRightMouseDragged && move.deltaX == 18 && move.deltaY == -4);
+    assert(move.type == NSEventTypeRightMouseDragged && move.deltaX == 12 && move.deltaY == -4);
+    [host touchMoveBy:CGPointMake(6, 0)];
+    move = next_input();
+    assert(move.type == NSEventTypeRightMouseDragged && move.deltaX == 6 && move.deltaY == 0);
+    AKMouseSetCaptured(true);
+    assert(![NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:NO]);
     [host touchMoveBy:CGPointMake(3, 0)];
     move = next_input();
     assert(move.type == NSEventTypeRightMouseDragged && move.deltaX == 3);
     [host touchButton:1 pressed:NO];
     assert(next_input().type == NSEventTypeRightMouseUp);
     AKMouseSetCaptured(false);
-    [host touchButton:1 pressed:YES]; (void)next_input();
-    [host touchMoveBy:CGPointMake(5, 0)];
-    [NSThread sleepForTimeInterval:0.3];
-    [host touchMoveBy:CGPointMake(5, 0)];
-    move = next_input();
-    assert(move.type == NSEventTypeRightMouseDragged && move.deltaX == 10);
-    [host touchButton:1 pressed:NO];
-    assert(next_input().type == NSEventTypeRightMouseUp);
-    [host touchButton:1 pressed:YES]; (void)next_input();
-    [host touchMoveBy:CGPointMake(-7, 0)];
-    [host touchButton:1 pressed:NO];
-    move = next_input();
-    assert(move.type == NSEventTypeRightMouseDragged && move.deltaX == -7);
-    assert(next_input().type == NSEventTypeRightMouseUp);
     // With the Duo's strip the game gets the space between the two columns.
     Class hostClass = NSClassFromString(@"AKHostView");
     assert(CGRectEqualToRect([hostClass gameFrameIn:CGRectMake(0, 0, 951, 669) strip:CGRectMake(867, 132, 84, 537)], CGRectMake(84, 0, 783, 669)));
@@ -372,7 +360,11 @@ int main(void) { @autoreleasepool {
     NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
     [controls padFingers:1 at:CGPointMake(180, 90) time:now];
     [controls padFingers:0 at:CGPointZero time:now + 0.05];
-    NSEvent *tapDown = next_input(), *tapUp = next_input();
+    // A tap's release follows its press after a click's length, not at once.
+    NSEvent *tapDown = next_input();
+    assert(![NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:NO]);
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]];
+    NSEvent *tapUp = next_input();
     assert(tapDown.type == NSEventTypeLeftMouseDown && tapUp.type == NSEventTypeLeftMouseUp);
     assert(CGPointEqualToPoint(tapDown.locationInWindow, CGPointMake(0, 1)) && CGPointEqualToPoint(tapUp.locationInWindow, CGPointMake(0, 1)));
     // The side strip: a column in it and one mirroring it at the other edge.

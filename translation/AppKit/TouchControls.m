@@ -26,16 +26,54 @@ static NSString *const AKTouchCursorModeDefaultsKey = @"AKTouchCursorMode";
     // left-half touches that arrive while it is held, never reach the trackpad.
     __weak UITouch *_stickTouch;
     NSHashTable<UITouch *> *_ignoredTouches;
+    // A click lasts long enough for a game that polls the buttons once a
+    // frame: a release sooner than that after its press waits here.
+    NSTimeInterval _pressedAt[3];
+    NSTimer *_release[3];
+    // What iOS reported for the gesture in progress, for the log: sizes and
+    // times only (when the first movement came and how large its steps were).
+    struct { BOOL active; NSTimeInterval began, firstMove, last; CGPoint origin, previous; double reach, steps[6]; unsigned count, peak; } _trace;
+    unsigned _traceReports;
+}
+
+static const NSTimeInterval AKTouchClickTime = 0.06;
+- (void)flushReleases {
+    for (unsigned button = 0; button < 3; button++) {
+        if (!_release[button]) continue;
+        [_release[button] invalidate]; _release[button] = nil;
+        [self.delegate touchButton:button pressed:NO];
+    }
+}
+- (void)button:(unsigned)button pressed:(BOOL)pressed {
+    if (button > 2) return;
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime, held = now - _pressedAt[button];
+    if (pressed || held >= AKTouchClickTime) {
+        [self flushReleases];
+        if (pressed) _pressedAt[button] = now;
+        [self.delegate touchButton:button pressed:pressed];
+        return;
+    }
+    if (_release[button]) return;
+    __weak AKTouchControls *weakSelf = self;
+    _release[button] = [NSTimer timerWithTimeInterval:AKTouchClickTime - held repeats:NO block:^(NSTimer *timer) {
+        (void)timer;
+        AKTouchControls *controls = weakSelf;
+        if (!controls || !controls->_release[button]) return;
+        controls->_release[button] = nil;
+        [controls.delegate touchButton:button pressed:NO];
+    }];
+    [NSRunLoop.mainRunLoop addTimer:_release[button] forMode:NSRunLoopCommonModes];
 }
 
 static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double y, unsigned button) {
     AKTouchControls *controls = (__bridge AKTouchControls *)context;
     switch (action) {
-        case AKTrackpadMove: [controls.delegate touchMoveBy:CGPointMake(x, y)]; break;
-        case AKTrackpadScroll: [controls.delegate touchScrollBy:CGPointMake(x, y)]; break;
-        case AKTrackpadDown: [controls.delegate touchButton:button pressed:YES]; break;
-        case AKTrackpadUp: [controls.delegate touchButton:button pressed:NO]; break;
-        case AKTrackpadPoint: [controls.delegate touchPointAt:CGPointMake(x, y)]; break;
+        // A click still waiting for its release ends before the pointer moves on.
+        case AKTrackpadMove: [controls flushReleases]; [controls.delegate touchMoveBy:CGPointMake(x, y)]; break;
+        case AKTrackpadScroll: [controls flushReleases]; [controls.delegate touchScrollBy:CGPointMake(x, y)]; break;
+        case AKTrackpadDown: [controls button:button pressed:YES]; break;
+        case AKTrackpadUp: [controls button:button pressed:NO]; break;
+        case AKTrackpadPoint: [controls flushReleases]; [controls.delegate touchPointAt:CGPointMake(x, y)]; break;
     }
 }
 
@@ -247,6 +285,8 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
     [self cancelTouches];
     _cursorMode = cursorMode;
     [self updateTrackpadButton];
+    // The host draws a pointer in cursor mode only.
+    [self.delegate touchTrackpadChanged:self.trackpadEnabled];
 }
 // For a camera-mode game the hand button shows the mode: a camera while
 // touches turn the camera, a cyan pointer in cursor mode.
@@ -387,15 +427,45 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
     if (count) { center.x /= count; center.y /= count; }
     [self padFingers:count at:center time:event.timestamp];
 }
+// One line per gesture for the first of a session: how long after landing
+// iOS reported the first movement, how large that and the next steps were,
+// and how far the gesture went. Sizes in points and times only.
+- (void)traceFingers:(unsigned)fingers at:(CGPoint)center time:(NSTimeInterval)time {
+    if (_traceReports >= 80) return;
+    if (!fingers) {
+        if (!_trace.active) return;
+        NSMutableString *steps = [NSMutableString new];
+        for (unsigned i = 0; i < MIN(_trace.count, 6u); i++) [steps appendFormat:@"%s%.1f", i ? "," : "", _trace.steps[i]];
+        _traceReports++;
+        AKLog(@"touch gesture mode=%s fingers=%u ms=%.0f first_move_ms=%.0f steps=%u first=[%@] reach=%.0f",
+              _cursorMode ? "cursor" : "camera", _trace.peak, (time - _trace.began) * 1000,
+              _trace.count ? (_trace.firstMove - _trace.began) * 1000 : -1, _trace.count, steps, _trace.reach);
+        _trace.active = NO;
+        return;
+    }
+    if (!_trace.active) {
+        memset(&_trace, 0, sizeof _trace);
+        _trace.active = YES; _trace.began = time; _trace.origin = _trace.previous = center;
+    }
+    if (fingers != _trace.peak && fingers > _trace.peak) { _trace.peak = fingers; _trace.previous = center; return; }
+    double step = hypot(center.x - _trace.previous.x, center.y - _trace.previous.y);
+    _trace.previous = center;
+    if (!(step > 0) || fingers != _trace.peak) return;
+    if (!_trace.count) _trace.firstMove = time;
+    if (_trace.count < 6) _trace.steps[_trace.count] = step;
+    _trace.count++;
+    _trace.reach = MAX(_trace.reach, hypot(center.x - _trace.origin.x, center.y - _trace.origin.y));
+}
 - (void)padFingers:(unsigned)fingers at:(CGPoint)center time:(NSTimeInterval)time {
+    [self traceFingers:fingers at:center time:time];
     if (!_cursorMode) {
-        if (fingers || _camera.fingers) AKTouchCameraUpdate(&_camera, fingers, center.x, center.y, AKEmitTouch, (__bridge void *)self);
+        if (fingers || _camera.fingers) AKTouchCameraUpdate(&_camera, fingers, center.x, center.y, time, AKEmitTouch, (__bridge void *)self);
         return;
     }
     if (!fingers && !_pad.fingers && !_pad.dragging) return;
     AKTrackpadUpdate(&_pad, fingers, center.x, center.y, time, AKEmitTouch, (__bridge void *)self);
     [_holdTimer invalidate]; _holdTimer = nil;
-    if (_pad.fingers && !_pad.blocked && !_pad.lifting && !_pad.dragging && _pad.travelled <= 8) {
+    if (_pad.fingers && !_pad.blocked && !_pad.lifting && !_pad.dragging && _pad.reach <= 8) {
         __weak AKTouchControls *weakSelf = self;
         _holdTimer = [NSTimer timerWithTimeInterval:MAX(0.01, _pad.started + 0.46 - NSProcessInfo.processInfo.systemUptime)
                                           repeats:NO block:^(NSTimer *timer) {
@@ -453,6 +523,8 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
     if (_stickTouch) [_ignoredTouches addObject:_stickTouch];
     _stickTouch = nil;
     if (_stick.active) [self stickPhase:UITouchPhaseCancelled at:CGPointZero];
+    [self flushReleases];
+    _trace.active = NO;
 }
 - (void)hardwareKeyboardChanged:(NSNotification *)notification {
     AKLog(@"hardware keyboard %@ (any connected=%d)", [notification.name isEqual:GCKeyboardDidConnectNotification] ? @"connected" : @"disconnected",
@@ -476,6 +548,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
 }
 - (void)dealloc {
     [_holdTimer invalidate];
+    for (unsigned button = 0; button < 3; button++) [_release[button] invalidate];
     [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 @end

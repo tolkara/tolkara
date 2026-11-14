@@ -328,10 +328,10 @@ static BOOL AKWindowInputDiagnostics(void) {
     NSArray<NSLayoutConstraint *> *_touchRow, *_touchColumn;
     CGRect _touchStrip;
     CGSize _touchStripSize;
-    // A touch camera drag (right button held) waits for the game to capture
-    // the pointer before its motion goes out; then counts what it sent.
-    BOOL _cameraWaiting, _cameraDragging;
-    CGPoint _cameraHeld, _cameraTotal;
+    // A touch drag with the right button held (a game's camera): what it
+    // sent and when the game captured the pointer, for the log.
+    BOOL _cameraDragging;
+    CGPoint _cameraTotal;
     NSTimeInterval _cameraPressed, _cameraCaptured;
     CGFloat _cameraLargestStep;
     unsigned _cameraSteps, _cameraWarps, _cameraReports;
@@ -504,26 +504,14 @@ static BOOL AKWindowInputDiagnostics(void) {
     if (!_touchCursorActive) { _touchCursorActive = YES; [self cursorChanged:nil]; }
     _pointerInside = YES;
 }
-// Holding the right button turns a game's camera once the game captures the
-// pointer, which it does a frame or so after the button goes down. Motion in
-// between would arrive as absolute drags, clamped at the window's edges and
-// reported again once the capture starts; it is held back instead and sent
-// with the captured motion (or as a plain drag if no capture comes).
-static const NSTimeInterval AKCameraCaptureWait = 0.25;
-- (void)sendHeldCameraMotion {
-    _cameraWaiting = NO;
-    CGPoint held = _cameraHeld; _cameraHeld = CGPointZero;
-    if (held.x || held.y) [self sendTouchMotion:held];
-}
+// Touch motion reaches the game as a mouse's would, as it happens: a button
+// press, then drags, each with its delta. A game that captures the pointer a
+// frame after the right button goes down takes the drags before that as any
+// Mac game does. Nothing is held back to be sent later in one piece: that
+// made a camera stand still and then jump.
 - (void)touchMoveBy:(CGPoint)delta {
     if (!isfinite(delta.x) || !isfinite(delta.y)) return;
     [self activateTouchCursor];
-    if (_cameraWaiting) {
-        _cameraHeld.x += delta.x; _cameraHeld.y += delta.y;
-        if (!AKMouseIsCaptured() && NSProcessInfo.processInfo.systemUptime - _cameraPressed < AKCameraCaptureWait) return;
-        [self sendHeldCameraMotion];
-        return;
-    }
     [self sendTouchMotion:delta];
 }
 - (void)sendTouchMotion:(CGPoint)delta {
@@ -587,15 +575,13 @@ static const NSTimeInterval AKCameraCaptureWait = 0.25;
     NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
     if (pressed) {
         _cameraDragging = YES;
-        _cameraWaiting = !AKMouseIsCaptured();
         _cameraPressed = now;
         _cameraCaptured = AKMouseIsCaptured() ? now : 0;
-        _cameraHeld = _cameraTotal = CGPointZero;
+        _cameraTotal = CGPointZero;
         _cameraLargestStep = 0; _cameraSteps = _cameraWarps = 0;
         return;
     }
     if (!_cameraDragging) return;
-    if (_cameraWaiting) [self sendHeldCameraMotion];
     _cameraDragging = NO;
     // Motion sizes only, in points, for the first drags of a session.
     if (_cameraReports++ < 40)
@@ -637,7 +623,6 @@ static const NSTimeInterval AKCameraCaptureWait = 0.25;
     [self.window.rootViewController setNeedsUpdateOfPrefersPointerLocked];
     AKLog(@"mouse capture requested=%d raw_devices=%lu",AKMouseIsCaptured(),(unsigned long)GCMouse.mice.count);
     if (_cameraDragging && AKMouseIsCaptured() && !_cameraCaptured) _cameraCaptured = NSProcessInfo.processInfo.systemUptime;
-    if (_cameraWaiting && AKMouseIsCaptured()) [self sendHeldCameraMotion];
 }
 - (void)lockChanged:(NSNotification *)notification { (void)notification; AKLog(@"pointer lock active=%d",self.window.windowScene.pointerLockState.locked); }
 - (void)anchorChanged:(NSNotification *)notification {
@@ -745,7 +730,9 @@ static const NSTimeInterval AKCameraCaptureWait = 0.25;
     [CATransaction setDisableActions:YES];
     _cursorView.frame=(CGRect){CGPointMake(_last.x-_cursorHotSpot.x,_last.y-_cursorHotSpot.y),_cursorView.bounds.size};
     unsigned reasons=(!_pointerInside?1:0) | (AKCursorIsHidden()?2:0) | (!_cursorView.image?4:0);
-    _cursorView.hidden=!(_softwareCursor || _touchCursorActive) || reasons!=0;
+    // Camera mode touches the game where the finger is: no pointer is drawn.
+    BOOL cameraMode=_touchCursorActive && _touchControls.trackpadEnabled && !_touchControls.cursorMode;
+    _cursorView.hidden=!(_softwareCursor || _touchCursorActive) || reasons!=0 || cameraMode;
     if(reasons!=_cursorVisibilityReasons) { _cursorVisibilityReasons=reasons; AKLog(@"cursor visibility hidden=%d outside=%d game_hidden=%d no_image=%d",reasons!=0,!!(reasons&1),!!(reasons&2),!!(reasons&4)); }
     [CATransaction commit];
     // The desktop client owns a nested event loop. UIKit's outer-loop commit

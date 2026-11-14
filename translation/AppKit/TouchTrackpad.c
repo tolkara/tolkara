@@ -14,6 +14,19 @@ double AKTrackpadGain(double speed) {
     return 1 + 1.5 * fmin(1, (speed - 150) / 1050);
 }
 
+double AKTouchStartLimit(AKTouchStart *start, double distance, double time) {
+    if (!(distance > 0) || !isfinite(time)) return 0;
+    double limit = distance;
+    if (!start->moving) {
+        start->moving = true;
+        start->firstMove = time;
+        limit = AKTouchStartStep;
+    } else if (time - start->firstMove < AKTouchStartTime) {
+        limit = fmax(AKTouchStartStep, 2 * start->previous);
+    }
+    return start->previous = fmin(distance, limit);
+}
+
 void AKTrackpadCancel(AKTrackpad *pad, AKTrackpadEmit emit, void *context) {
     if (pad->dragging) emit(context, AKTrackpadUp, 0, 0, pad->button);
     pad->dragging = false;
@@ -23,7 +36,7 @@ void AKTrackpadCancel(AKTrackpad *pad, AKTrackpadEmit emit, void *context) {
 
 void AKTrackpadHold(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *context) {
     if (!isfinite(time) || pad->blocked || pad->lifting || pad->dragging ||
-        pad->fingers < 1 || pad->fingers > 2 || pad->travelled > AKTrackpadSlop ||
+        pad->fingers < 1 || pad->fingers > 2 || pad->reach > AKTrackpadSlop ||
         time - pad->started < AKTrackpadHoldTime) return;
     if (pad->fingers == 1) {
         // The rest of the touch is consumed: lifting it is not also a left click.
@@ -42,7 +55,7 @@ void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, dou
     if (!fingers) {
         bool tapped = false;
         if (pad->dragging) emit(context, AKTrackpadUp, 0, 0, pad->button);
-        else if (pad->fingers && !pad->blocked && pad->travelled <= AKTrackpadSlop &&
+        else if (pad->fingers && !pad->blocked && pad->reach <= AKTrackpadSlop &&
                  isfinite(time) && time >= pad->started && time - pad->started <= AKTrackpadTapTime) {
             unsigned button = pad->peak == 3 ? 2 : pad->peak == 2 ? 1 : 0;
             emit(context, AKTrackpadDown, 0, 0, button);
@@ -81,6 +94,8 @@ void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, dou
         if (pad->dragging) AKTrackpadCancel(pad, emit, context);
         pad->x = x; pad->y = y; pad->last = time;
         pad->scrollX = pad->scrollY = 0;
+        // A tap of several fingers is judged from where they all were down.
+        if (fingers > pad->peak && pad->reach <= AKTrackpadSlop) { pad->originX = x; pad->originY = y; pad->reach = 0; }
     }
     pad->fingers = fingers;
     if (fingers > pad->peak) pad->peak = fingers;
@@ -103,15 +118,17 @@ void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, dou
         AKTrackpadCancel(pad, emit, context);
         return;
     }
-    pad->travelled += distance;
+    pad->reach = fmax(pad->reach, hypot(x - pad->originX, y - pad->originY));
     if (!distance) return;
     if (fingers == 1 || pad->dragging) {
+        double passed = AKTouchStartLimit(&pad->start, distance, time), scale = passed / distance;
         // A held right button turns a game's camera: linear, so it turns
-        // evenly with the finger; accelerated, uneven touch timing made it jump.
-        double gain = pad->dragging && pad->button == 1 ? AKTrackpadRightDragGain :
-                      AKTrackpadGain(distance / fmax(interval, 1.0 / 240));
-        emit(context, AKTrackpadMove, dx * gain, dy * gain, pad->button);
-    } else if (fingers == 2 && pad->travelled > AKTrackpadSlop) {
+        // evenly with the finger. The pointer's gain follows a smoothed speed.
+        double sample = passed / fmax(interval, 1.0 / 240);
+        pad->speed += (sample - pad->speed) * (1 - exp(-fmax(interval, 1.0 / 240) / 0.05));
+        double gain = pad->dragging && pad->button == 1 ? AKTrackpadRightDragGain : AKTrackpadGain(pad->speed);
+        emit(context, AKTrackpadMove, dx * scale * gain, dy * scale * gain, pad->button);
+    } else if (fingers == 2 && pad->reach > AKTrackpadSlop) {
         // Keep sub-line motion: the Quartz adapter exposes integer wheel ticks.
         pad->scrollX += dx / 12;
         pad->scrollY += dy / 12;
