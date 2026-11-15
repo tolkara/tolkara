@@ -165,17 +165,16 @@ int main(void) {
     assert(trace.events[0].x == 700);
     expect(&trace.events[1], AKTrackpadDown, 1);
 
-    // Held still, then slid: the left button goes down where the finger
-    // rested and the pointer follows the finger, whole steps, until it lifts.
+    // With `left` (the on-screen Shift is held) one finger uses the left
+    // button where it is: a slide presses it where the finger landed and the
+    // pointer follows the finger, whole steps, until it lifts.
+    camera.left = true;
     trace.count = 0;
     update(&camera, &trace, 1, 200, 500, 10);
-    assert(!AKTouchCameraHold(&camera, 10.2));
-    assert(AKTouchCameraHold(&camera, 10.41));
-    assert(!AKTouchCameraHold(&camera, 10.5));
-    assert(trace.count == 1);
-    update(&camera, &trace, 1, 214, 500, 10.6);     // iOS's late first report, whole
-    update(&camera, &trace, 1, 260, 450, 10.7);
-    update(&camera, &trace, 0, 0, 0, 10.8);
+    update(&camera, &trace, 1, 214, 500, 10.1);     // iOS's late first report, whole
+    camera.left = false;                             // Shift let go mid-drag: still the left button
+    update(&camera, &trace, 1, 260, 450, 10.2);
+    update(&camera, &trace, 0, 0, 0, 10.3);
     assert(trace.count == 6);
     expect(&trace.events[1], AKTrackpadPoint, 0);
     assert(trace.events[1].x == 200 && trace.events[1].y == 500);
@@ -185,28 +184,31 @@ int main(void) {
     assert(trace.events[4].x == 260 && trace.events[4].y == 450);
     expect(&trace.events[5], AKTrackpadUp, 0);
 
-    // Held and lifted without sliding: nothing, so a resting thumb never
-    // clicks. A slide cannot become a hold; a second finger ends a left drag once.
+    // With `left` a tap left-clicks where it touched; a second finger ends a
+    // left drag once. Without it a slide is a camera drag again.
+    camera.left = true;
     trace.count = 0;
     update(&camera, &trace, 1, 200, 500, 11);
-    assert(AKTouchCameraHold(&camera, 11.5));
-    update(&camera, &trace, 0, 0, 0, 11.6);
-    assert(trace.count == 1);
-    update(&camera, &trace, 1, 200, 500, 12);
-    update(&camera, &trace, 1, 240, 500, 12.1);
-    assert(!AKTouchCameraHold(&camera, 12.6));
-    update(&camera, &trace, 0, 0, 0, 12.7);
+    update(&camera, &trace, 0, 0, 0, 11.1);
+    assert(trace.count == 3 && camera.left);
+    expect(&trace.events[1], AKTrackpadDown, 0);
+    expect(&trace.events[2], AKTrackpadUp, 0);
     trace.count = 0;
     update(&camera, &trace, 1, 200, 500, 13);
-    assert(AKTouchCameraHold(&camera, 13.5));
-    update(&camera, &trace, 1, 220, 500, 13.6);
-    update(&camera, &trace, 2, 230, 500, 13.7);
-    update(&camera, &trace, 2, 230, 560, 13.8);
-    update(&camera, &trace, 0, 0, 0, 13.9);
+    update(&camera, &trace, 1, 220, 500, 13.1);
+    update(&camera, &trace, 2, 230, 500, 13.2);
+    update(&camera, &trace, 2, 230, 560, 13.3);
+    update(&camera, &trace, 0, 0, 0, 13.4);
     assert(trace.count == 5);
     expect(&trace.events[2], AKTrackpadDown, 0);
     expect(&trace.events[4], AKTrackpadUp, 0);
+    camera.left = false;
+    trace.count = 0;
+    update(&camera, &trace, 1, 200, 500, 14);
+    update(&camera, &trace, 1, 220, 500, 14.1);
+    update(&camera, &trace, 0, 0, 0, 14.2);
+    expect(&trace.events[2], AKTrackpadDown, 1);
 
-    puts("touch camera: pointer at the touch, tap right-clicks, slide holds the right button from the first movement with an eased start, pressed at the anchor, hold then slide drags with the left button, two-finger scroll and tap, cancellation and invalid traces: PASS");
+    puts("touch camera: pointer at the touch, tap right-clicks, slide holds the right button from the first movement with an eased start, pressed at the anchor, the left button with Shift, two-finger scroll and tap, cancellation and invalid traces: PASS");
     return 0;
 }

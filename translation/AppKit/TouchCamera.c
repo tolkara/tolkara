@@ -5,16 +5,9 @@
 void AKTouchCameraCancel(AKTouchCamera *camera, AKTrackpadEmit emit, void *context) {
     if (camera->pressed) emit(context, AKTrackpadUp, 0, 0, 1);
     if (camera->held) emit(context, AKTrackpadUp, 0, 0, 0);
-    camera->pressed = camera->held = camera->armed = false;
+    camera->pressed = camera->held = false;
     camera->blocked = true;
     camera->scrollX = camera->scrollY = 0;
-}
-
-bool AKTouchCameraHold(AKTouchCamera *camera, double time) {
-    if (!isfinite(time) || camera->blocked || camera->lifting || camera->pressed || camera->armed ||
-        camera->fingers != 1 || camera->peak != 1 || camera->reach > AKTouchCameraSlop ||
-        time - camera->started < AKTouchHoldTime) return false;
-    return camera->armed = true;
 }
 
 void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, double y, double time,
@@ -22,22 +15,24 @@ void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, doub
     if (!fingers) {
         if (camera->pressed) emit(context, AKTrackpadUp, 0, 0, 1);
         else if (camera->held) emit(context, AKTrackpadUp, 0, 0, 0);
-        else if (camera->fingers && !camera->blocked && !camera->armed) {
+        else if (camera->fingers && !camera->blocked) {
             // A tap: one finger right-clicks where it landed (the pointer is
-            // there already), two left-click between them; three do nothing.
+            // there already; a left click with `left`), two left-click
+            // between them; three do nothing.
             if (camera->peak == 1) {
-                emit(context, AKTrackpadDown, 0, 0, 1);
-                emit(context, AKTrackpadUp, 0, 0, 1);
+                unsigned button = camera->left ? 0 : 1;
+                emit(context, AKTrackpadDown, 0, 0, button);
+                emit(context, AKTrackpadUp, 0, 0, button);
             } else if (camera->peak == 2 && camera->reach <= AKTouchCameraTapSlop) {
                 emit(context, AKTrackpadPoint, camera->originX, camera->originY, 0);
                 emit(context, AKTrackpadDown, 0, 0, 0);
                 emit(context, AKTrackpadUp, 0, 0, 0);
             }
         }
-        bool anchored = camera->anchored;
+        bool anchored = camera->anchored, left = camera->left;
         double anchorX = camera->anchorX, anchorY = camera->anchorY;
         memset(camera, 0, sizeof *camera);
-        camera->anchored = anchored; camera->anchorX = anchorX; camera->anchorY = anchorY;
+        camera->anchored = anchored; camera->anchorX = anchorX; camera->anchorY = anchorY; camera->left = left;
         return;
     }
     if (fingers > 3 || !isfinite(x) || !isfinite(y) || !isfinite(time)) {
@@ -48,7 +43,6 @@ void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, doub
     if (!camera->fingers) {
         camera->x = camera->originX = x;
         camera->y = camera->originY = y;
-        camera->started = time;
         // The game learns what is under the finger while it rests there.
         if (fingers == 1) emit(context, AKTrackpadPoint, x, y, 0);
     }
@@ -58,7 +52,6 @@ void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, doub
         // fingers than before means the gesture is ending.
         if (camera->fingers > fingers) camera->lifting = true;
         if (camera->pressed || camera->held) AKTouchCameraCancel(camera, emit, context);
-        camera->armed = false;
         camera->x = x; camera->y = y;
         camera->scrollX = camera->scrollY = 0;
         // A two-finger gesture is judged from between the fingers.
@@ -73,10 +66,11 @@ void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, doub
     if (!isfinite(distance) || distance > 10000) { AKTouchCameraCancel(camera, emit, context); return; }
     if (!distance) return;
     camera->reach = fmax(camera->reach, hypot(x - camera->originX, y - camera->originY));
-    if (fingers == 1 && (camera->armed || camera->held)) {
-        // Held, then slid: the left button goes down where the finger rested
-        // and the pointer stays under the finger, whole steps and no gain.
+    if (fingers == 1 && !camera->pressed && (camera->left || camera->held)) {
+        // With `left`: the left button goes down where the finger landed and
+        // the pointer stays under the finger, whole steps and no gain.
         if (!camera->held) {
+            if (camera->reach <= AKTouchCameraSlop) return;
             emit(context, AKTrackpadPoint, camera->originX, camera->originY, 0);
             emit(context, AKTrackpadDown, 0, 0, 0);
             camera->held = true;

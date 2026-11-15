@@ -9,10 +9,10 @@
 // view) when one is set, not under the finger: a slide that happens to start
 // on something of the game's interface (a quest list at the screen's edge)
 // then turns the camera all the same and clicks nothing. One finger lifted
-// without sliding right-clicks where it landed (attack, talk, loot). One
-// finger held still for AKTouchHoldTime and then slid drags with the left
-// button, the pointer under the finger (to move a spell or an item); held and
-// lifted without sliding it does nothing. Two fingers slide to scroll (zoom a
+// without sliding right-clicks where it landed (attack, talk, loot). With
+// `left` set (the on-screen Shift is held) one finger uses the left button
+// where it is: a slide drags with it, the pointer under the finger (to move a
+// spell or an item), and a tap left-clicks. Two fingers slide to scroll (zoom a
 // camera) or tap for a left click between them. Pressing at the first movement
 // rather than at touch-down keeps a two-finger gesture whose second finger
 // lands a moment late from right-clicking first.
@@ -26,15 +26,17 @@
 // trackpad's actions, AKTrackpadPoint moves the pointer to (x, y).
 typedef struct {
     unsigned fingers, peak;
-    double x, y, originX, originY, started, reach, scrollX, scrollY;
-    // pressed: the right button is held (a camera drag). armed: held still
-    // long enough for a left drag. held: the left button is down in one.
-    bool pressed, blocked, lifting, armed, held;
+    double x, y, originX, originY, reach, scrollX, scrollY;
+    // pressed: the right button is held (a camera drag). held: the left
+    // button is, in a drag that began with `left` set.
+    bool pressed, blocked, lifting, held;
     AKTouchStart start;
     // Where a camera drag presses the right button; the caller sets it before
     // each update. Without one it presses where the pointer is (the finger).
     bool anchored;
     double anchorX, anchorY;
+    // Set by the caller before each update: one finger uses the left button.
+    bool left;
 } AKTouchCamera;
 
 // One finger nearer than this to where it landed has not slid yet.
@@ -43,8 +45,5 @@ typedef struct {
 #define AKTouchCameraTapSlop 8.0
 void AKTouchCameraUpdate(AKTouchCamera *camera, unsigned fingers, double x, double y, double time,
                          AKTrackpadEmit emit, void *context);
-// Call once a still touch has lasted AKTouchHoldTime: one finger is armed for
-// a left drag. Returns whether it was just armed (for a haptic tick).
-bool AKTouchCameraHold(AKTouchCamera *camera, double time);
 // Release a held button and ignore the rest of the gesture until every finger lifts.
 void AKTouchCameraCancel(AKTouchCamera *camera, AKTrackpadEmit emit, void *context);

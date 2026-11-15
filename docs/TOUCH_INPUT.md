@@ -51,7 +51,8 @@ pointer to steer:
 | --- | --- |
 | Slide one finger | Holds the right button and turns the camera with the finger, until it lifts |
 | Tap one finger | Right click where it touched (attack, talk, loot) |
-| Hold one finger still 0.4 s (a tick), then slide | Drags with the left button, the pointer under the finger, until it lifts: moves a spell or an item |
+| Slide one finger with Shift held | Drags with the left button, the pointer under the finger, until it lifts: moves a spell or an item |
+| Tap one finger with Shift held | Left click where it touched |
 | Slide two fingers | Scroll (zoom the camera) |
 | Tap two fingers | Left click between them |
 
@@ -63,8 +64,7 @@ under the first. It goes down in the middle of the game's view, not under the
 finger: a slide that starts on a part of the game's interface (a quest list
 where the thumb rests) turns the camera all the same and clicks nothing. No
 pointer is drawn in camera mode, except during a left drag, when the game
-shows what is being carried on it. A finger held still and lifted without
-sliding does nothing, so a resting thumb clicks nothing. The camera turns three
+shows what is being carried on it. The camera turns three
 times the finger's motion, as with the trackpad's right drag. For menus and
 bags, the hand button (a camera icon in camera mode)
 switches to cursor mode, the trackpad below (a cyan pointer icon), and back;
@@ -107,21 +107,23 @@ Long-press the hand button for a menu with left, right and middle click.
 | Slide one finger | Moves the pointer by the finger's motion; lifting and placing the finger elsewhere does not move it. |
 | Tap | Left click |
 | Double tap and hold, or double tap and slide | Holds the right button from the second touch until the finger lifts, e.g. to steer the camera |
-| Hold one finger still 0.4 s (a tick), then slide | Drags with the left button from where the pointer is, until the finger lifts |
+| Double tap and slide with Shift held | Holds the left button instead, from where the pointer is: drags a spell or an item |
+| Hold one finger still about half a second | Right click |
 | Tap with two fingers | Right click |
 | Tap with three fingers | Middle click |
 | Slide two fingers | Scroll, vertically or horizontally |
-| Hold two fingers 0.4 s, then slide | Drag with the right button held |
+| Hold two fingers about half a second, then slide | Drag with the right button held |
 
 A double tap's second touch must start within 0.3 s of the first tap and near
 it. The right button goes down as that touch lands, so the camera turns with
 the first movement; lifting it again quickly is therefore a right click, not a
 double click. In
 the Windows App, a one-finger double tap and hold drags with the left button;
-here it holds the right button, which a game's camera needs more often; the
-left drag is hold, then slide. A finger held and lifted without sliding does
-nothing. The Shift button (in the column layout) holds Shift while touched,
-for the mouse as for keys: with a drag it moves a spell on a locked bar.
+here it holds the right button, which a game's camera needs more often. The
+Shift button (in the column layout) holds Shift while touched, for the mouse
+as for keys, and while it is held the same double tap and hold uses the left
+button: Shift and drag, which moves a spell on a locked bar. Which button is
+decided as the second touch lands; letting Shift go during the drag keeps it.
 
 A cancelled touch, a rotation, switching apps or turning trackpad mode off
 releases a button the trackpad was holding and every key the stick, Jump or a

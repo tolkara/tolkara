@@ -25,10 +25,11 @@ typedef struct {
     double x, y, originX, originY, started, last, reach, speed, scrollX, scrollY;
     AKTouchStart start;
     bool blocked, lifting, dragging;
-    // One finger held still long enough: its next movement drags with the
-    // left button (AKTrackpadHold).
-    bool armed;
     unsigned button;
+    // Set by the caller before each update (the on-screen Shift is held): a
+    // double tap and hold then holds the left button, to drag a spell or an
+    // item, in place of the right.
+    bool leftDrag;
     // The one-finger tap just before this gesture, and whether this touch
     // followed it closely enough to be a double tap and hold.
     bool tapped, doubleTap;
@@ -46,14 +47,10 @@ double AKTrackpadGain(double speed);
 #define AKTrackpadRightDragGain 3.0
 void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, double time,
                      AKTrackpadEmit emit, void *context);
-// A touch held still this long is a hold, in the trackpad and in camera mode.
-#define AKTouchHoldTime 0.4
-// Call once a still touch has lasted AKTouchHoldTime. One finger: the touch is
-// armed, and sliding it from there drags with the left button until it lifts
-// (to move a spell or an item); lifting it without sliding does nothing. Two
-// fingers start a right-button drag. Returns whether one finger was just
-// armed, for the caller to tell the user (a haptic tick). (After a one-finger
-// tap, a second touch holds the right button at once, in AKTrackpadUpdate.)
-bool AKTrackpadHold(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *context);
+// About half a second after a still touch: one finger right-clicks; two
+// fingers start a right-button drag. (After a one-finger tap, a second touch
+// holds a button at once, in AKTrackpadUpdate: the right one, or the left
+// with leftDrag.)
+void AKTrackpadHold(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *context);
 // Suppress the remainder of a cancelled gesture until every finger is lifted.
 void AKTrackpadCancel(AKTrackpad *pad, AKTrackpadEmit emit, void *context);

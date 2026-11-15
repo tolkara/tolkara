@@ -15,7 +15,6 @@ static NSString *const AKTouchCursorModeDefaultsKey = @"AKTouchCursorMode";
 @implementation AKTouchControls {
     UIButton *_keyboardButton, *_trackpadButton, *_stickButton, *_jumpButton, *_escapeButton, *_tabButton, *_shiftButton;
     BOOL _shiftHeld;
-    UIImpactFeedbackGenerator *_haptic;   // a tick when a held touch is ready to drag
     NSArray<UIButton *> *_quickButtons;
     unsigned _quickHeld;   // bit i: the key of the held button tagged i is down
     UIView *_accessory, *_stickBase, *_stickKnob;
@@ -137,7 +136,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         _cameraProfile = mode && !strcmp(mode, "camera");
         _trackpadButton = [self buttonWithSymbol:@"hand.draw" label:@"Enable touch trackpad" action:@selector(toggleTrackpad)];
         _trackpadButton.accessibilityIdentifier = @"tolkara.trackpad";
-        _trackpadButton.accessibilityHint = @"One finger moves the pointer; tap to click. Hold, then slide to drag with the left button. Double-tap and hold for the right button. Tap two fingers for right click. Two fingers scroll. Three fingers tap for middle click. Long-press this button for mouse buttons.";
+        _trackpadButton.accessibilityHint = @"One finger moves the pointer; tap to click. Double-tap and hold for the right button, or with Shift held for a left drag. Hold one finger or tap two for right click. Two fingers scroll. Three fingers tap for middle click. Long-press this button for mouse buttons.";
         __weak AKTouchControls *weakSelf = self;
         NSMutableArray<UIAction *> *actions = [NSMutableArray new];
         NSArray<NSString *> *buttons = @[@"Left click", @"Right click", @"Middle click"];
@@ -173,13 +172,13 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         _escapeButton.accessibilityIdentifier = @"tolkara.escape";
         _tabButton = [self heldKeyButtonWithSymbol:@"arrow.right.to.line" label:@"Tab" tag:AKTabTag];
         _tabButton.accessibilityIdentifier = @"tolkara.tab";
-        // Shift, held while touched: with a drag it moves a spell on a locked
-        // bar or splits a stack. In the column layout only.
+        // Shift, held while touched. While it is held the touch drag uses the
+        // left button (double tap and slide on the trackpad, a slide in camera
+        // mode): Shift and drag moves a spell on a locked bar. Column layout only.
         _shiftButton = [self heldKeyButtonWithSymbol:@"shift" label:@"Shift" tag:AKShiftTag];
         _shiftButton.accessibilityIdentifier = @"tolkara.shift";
         _shiftButton.accessibilityHint = @"Holds Shift while touched.";
         _escapeButton.hidden = _tabButton.hidden = _shiftButton.hidden = YES;
-        _haptic = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchTrackpadDefaultsKey];
         BOOL phone = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
         // Camera mode needs the controls to take touches; it starts in camera
@@ -314,7 +313,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         _trackpadButton.accessibilityLabel = @"Cursor mode";
         _trackpadButton.accessibilityValue = _cursorMode ? @"On" : @"Off";
         _trackpadButton.accessibilityHint = _cursorMode ? @"One finger moves the pointer; tap to click. Turn off for camera mode." :
-            @"Slide one finger to turn the camera; tap to right-click where you touch. Hold, then slide to drag with the left button. Two fingers scroll or tap to left-click. Turn on for a pointer.";
+            @"Slide one finger to turn the camera; tap to right-click where you touch. With Shift held, slide to drag with the left button. Two fingers scroll or tap to left-click. Turn on for a pointer.";
         return;
     }
     BOOL enabled = self.trackpadEnabled;
@@ -475,41 +474,30 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
 }
 - (void)padFingers:(unsigned)fingers at:(CGPoint)center time:(NSTimeInterval)time {
     [self traceFingers:fingers at:center time:time];
-    [_holdTimer invalidate]; _holdTimer = nil;
-    BOOL waiting;
-    NSTimeInterval started;
     if (!_cursorMode) {
         if (!fingers && !_camera.fingers) return;
         // A camera drag presses the right button in the middle of the game.
         UIView *host = self.gameView ?: self.superview;
         _camera.anchored = host != nil;
         _camera.anchorX = host.bounds.size.width / 2; _camera.anchorY = host.bounds.size.height / 2;
+        _camera.left = _shiftHeld;
         AKTouchCameraUpdate(&_camera, fingers, center.x, center.y, time, AKEmitTouch, (__bridge void *)self);
-        waiting = _camera.fingers == 1 && _camera.peak == 1 && !_camera.blocked && !_camera.lifting && !_camera.pressed &&
-                  !_camera.armed && _camera.reach <= AKTouchCameraSlop;
-        started = _camera.started;
-    } else {
-        if (!fingers && !_pad.fingers && !_pad.dragging) return;
-        AKTrackpadUpdate(&_pad, fingers, center.x, center.y, time, AKEmitTouch, (__bridge void *)self);
-        waiting = _pad.fingers && !_pad.blocked && !_pad.lifting && !_pad.dragging && !_pad.armed && _pad.reach <= 8;
-        started = _pad.started;
+        return;
     }
-    if (!waiting) return;
-    // A touch still resting when the hold time is up: one finger is then
-    // ready to drag with the left button, which a tick tells the hand.
-    [_haptic prepare];
-    __weak AKTouchControls *weakSelf = self;
-    _holdTimer = [NSTimer timerWithTimeInterval:MAX(0.01, started + AKTouchHoldTime + 0.01 - NSProcessInfo.processInfo.systemUptime)
-                                      repeats:NO block:^(NSTimer *timer) {
-        (void)timer;
-        AKTouchControls *controls = weakSelf;
-        if (!controls) return;
-        NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
-        BOOL armed = controls->_cursorMode ? AKTrackpadHold(&controls->_pad, now, AKEmitTouch, (__bridge void *)controls)
-                                           : AKTouchCameraHold(&controls->_camera, now);
-        if (armed) [controls->_haptic impactOccurred];
-    }];
-    [NSRunLoop.mainRunLoop addTimer:_holdTimer forMode:NSRunLoopCommonModes];
+    if (!fingers && !_pad.fingers && !_pad.dragging) return;
+    _pad.leftDrag = _shiftHeld;
+    AKTrackpadUpdate(&_pad, fingers, center.x, center.y, time, AKEmitTouch, (__bridge void *)self);
+    [_holdTimer invalidate]; _holdTimer = nil;
+    if (_pad.fingers && !_pad.blocked && !_pad.lifting && !_pad.dragging && _pad.reach <= 8) {
+        __weak AKTouchControls *weakSelf = self;
+        _holdTimer = [NSTimer timerWithTimeInterval:MAX(0.01, _pad.started + 0.46 - NSProcessInfo.processInfo.systemUptime)
+                                          repeats:NO block:^(NSTimer *timer) {
+            (void)timer;
+            AKTouchControls *controls = weakSelf;
+            if (controls) AKTrackpadHold(&controls->_pad, NSProcessInfo.processInfo.systemUptime, AKEmitTouch, (__bridge void *)controls);
+        }];
+        [NSRunLoop.mainRunLoop addTimer:_holdTimer forMode:NSRunLoopCommonModes];
+    }
 }
 - (UIView *)stickCircle:(CGFloat)diameter alpha:(CGFloat)alpha {
     UIView *circle = [[UIView alloc] initWithFrame:CGRectMake(0, 0, diameter, diameter)];
