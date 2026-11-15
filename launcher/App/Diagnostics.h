@@ -10,6 +10,10 @@ NS_ASSUME_NONNULL_BEGIN
 // None of them runs application code.
 
 NSString *TKDocumentsPath(NSString *name);
+// Before a launch replaces Documents/native-guest.log: the last three runs'
+// logs stay beside it as native-guest.1.log (the latest) to native-guest.3.log,
+// so a run that ended in a crash can still be read after the next start.
+void TKKeepEarlierLogs(void);
 
 // Main thread. Process and memory facts (debugger, code signing, footprint,
 // arena limit); no probe sample runs and no code is executed.

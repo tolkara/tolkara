@@ -334,7 +334,10 @@ static BOOL AKWindowInputDiagnostics(void) {
     CGPoint _cameraTotal;
     NSTimeInterval _cameraPressed, _cameraCaptured;
     CGFloat _cameraLargestStep;
-    unsigned _cameraSteps, _cameraWarps, _cameraReports;
+    unsigned _cameraSteps, _cameraWarps, _cameraReports, _cameraEdgeSteps;
+    // A touch step's own motion, for the event that carries it (postMouse).
+    BOOL _motionGiven;
+    CGPoint _motion;
 }
 - (instancetype)initWithFrame:(CGRect)f {
     if ((self = [super initWithFrame:f])) {
@@ -527,9 +530,16 @@ static BOOL AKWindowInputDiagnostics(void) {
         [self positionCursor];
     } else {
         NSEventType type = _pressedRight ? NSEventTypeRightMouseDragged : _pressedLeft ? NSEventTypeLeftMouseDragged : _pressedMiddle ? NSEventTypeOtherMouseDragged : NSEventTypeMouseMoved;
-        CGPoint point = CGPointMake(MAX(0, MIN(self.bounds.size.width - 1, _last.x + delta.x)),
-                                   MAX(0, MIN(self.bounds.size.height - 1, _last.y + delta.y)));
+        CGPoint wanted = CGPointMake(_last.x + delta.x, _last.y + delta.y);
+        CGPoint point = CGPointMake(MAX(0, MIN(self.bounds.size.width - 1, wanted.x)),
+                                   MAX(0, MIN(self.bounds.size.height - 1, wanted.y)));
+        if (_cameraDragging && !CGPointEqualToPoint(point, wanted)) _cameraEdgeSteps++;
+        // As a Mac's mouse: the pointer stops at the window's edge, but the
+        // event still carries the motion. A game that turns its camera by the
+        // deltas without capturing the pointer keeps turning there.
+        _motionGiven = YES; _motion = delta;
         [self postMouse:type at:point button:_pressedRight ? 1 : _pressedMiddle ? 2 : 0];
+        _motionGiven = NO;
     }
 }
 - (void)touchScrollBy:(CGPoint)delta {
@@ -578,16 +588,16 @@ static BOOL AKWindowInputDiagnostics(void) {
         _cameraPressed = now;
         _cameraCaptured = AKMouseIsCaptured() ? now : 0;
         _cameraTotal = CGPointZero;
-        _cameraLargestStep = 0; _cameraSteps = _cameraWarps = 0;
+        _cameraLargestStep = 0; _cameraSteps = _cameraWarps = _cameraEdgeSteps = 0;
         return;
     }
     if (!_cameraDragging) return;
     _cameraDragging = NO;
     // Motion sizes only, in points, for the first drags of a session.
-    if (_cameraReports++ < 40)
-        AKLog(@"touch camera drag capture_ms=%.0f steps=%u total=(%.0f,%.0f) largest_step=%.0f warps=%u captured=%d",
+    if (_cameraReports++ < 150)
+        AKLog(@"touch camera drag capture_ms=%.0f steps=%u total=(%.0f,%.0f) largest_step=%.0f warps=%u captured=%d edge_steps=%u",
               _cameraCaptured ? (_cameraCaptured - _cameraPressed) * 1000 : -1, _cameraSteps, _cameraTotal.x, _cameraTotal.y,
-              _cameraLargestStep, _cameraWarps, AKMouseIsCaptured());
+              _cameraLargestStep, _cameraWarps, AKMouseIsCaptured(), _cameraEdgeSteps);
 }
 - (void)postTextKey:(unsigned short)code characters:(NSString *)characters unmodified:(NSString *)unmodified modifiers:(NSEventModifierFlags)modifiers {
     for (unsigned index = 0; index < 2; index++) {
@@ -606,6 +616,17 @@ static BOOL AKWindowInputDiagnostics(void) {
 }
 - (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters {
     [self postTextKey:code characters:characters unmodified:characters modifiers:0];
+}
+// The on-screen Shift: the left Shift key's press and release, and the
+// modifier on every mouse and key event while it is held.
+- (void)touchShift:(BOOL)pressed {
+    NSEventModifierFlags now = AKModifiersAfterKey(_mods, 0xE1, pressed);
+    if (now == _mods) return;
+    _mods = now;
+    NSEvent *event = [NSEvent new];
+    event.type = NSEventTypeFlagsChanged; event.window = self.nsWindow; event.keyCode = 56; event.modifierFlags = _mods;
+    event.timestamp = NSProcessInfo.processInfo.systemUptime;
+    [NSApp postEvent:event atStart:NO];
 }
 // A held key from the movement stick, with the hardware keyboard's modifiers.
 - (void)touchKey:(unsigned short)code characters:(NSString *)characters pressed:(BOOL)pressed {
@@ -698,7 +719,7 @@ static BOOL AKWindowInputDiagnostics(void) {
     e.timestamp = NSProcessInfo.processInfo.systemUptime;
     e.locationInWindow = CGPointMake(p.x, self.bounds.size.height - p.y); self.nsWindow.ak_mouseLocation=e.locationInWindow;   // AppKit: bottom-left origin
     mouseScreenLocation=[self.nsWindow convertPointToScreen:e.locationInWindow];
-    e.deltaX = p.x - _last.x; e.deltaY = p.y - _last.y; _last = p;
+    e.deltaX = _motionGiven ? _motion.x : p.x - _last.x; e.deltaY = _motionGiven ? _motion.y : p.y - _last.y; _last = p;
     NSView *view=self.nsWindow.contentView;
     NSCursor *cursor=[view ak_cursorAtPoint:[view convertPoint:e.locationInWindow fromView:nil]];
     if(cursor && cursor!=NSCursor.currentCursor) [cursor set];
@@ -730,8 +751,9 @@ static BOOL AKWindowInputDiagnostics(void) {
     [CATransaction setDisableActions:YES];
     _cursorView.frame=(CGRect){CGPointMake(_last.x-_cursorHotSpot.x,_last.y-_cursorHotSpot.y),_cursorView.bounds.size};
     unsigned reasons=(!_pointerInside?1:0) | (AKCursorIsHidden()?2:0) | (!_cursorView.image?4:0);
-    // Camera mode touches the game where the finger is: no pointer is drawn.
-    BOOL cameraMode=_touchCursorActive && _touchControls.trackpadEnabled && !_touchControls.cursorMode;
+    // Camera mode touches the game where the finger is: no pointer is drawn,
+    // except in a left drag, where the game shows what is being carried on it.
+    BOOL cameraMode=_touchCursorActive && _touchControls.trackpadEnabled && !_touchControls.cursorMode && !_pressedLeft;
     _cursorView.hidden=!(_softwareCursor || _touchCursorActive) || reasons!=0 || cameraMode;
     if(reasons!=_cursorVisibilityReasons) { _cursorVisibilityReasons=reasons; AKLog(@"cursor visibility hidden=%d outside=%d game_hidden=%d no_image=%d",reasons!=0,!!(reasons&1),!!(reasons&2),!!(reasons&4)); }
     [CATransaction commit];

@@ -20,6 +20,18 @@ NSString *TKDocumentsPath(NSString *name) {
     return [[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"] stringByAppendingPathComponent:name];
 }
 
+void TKKeepEarlierLogs(void) {
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSString *current = TKDocumentsPath(@"native-guest.log");
+    if (![files fileExistsAtPath:current]) return;
+    for (int index = 3; index >= 1; index--) {
+        NSString *to = TKDocumentsPath([NSString stringWithFormat:@"native-guest.%d.log", index]);
+        NSString *from = index == 1 ? current : TKDocumentsPath([NSString stringWithFormat:@"native-guest.%d.log", index - 1]);
+        [files removeItemAtPath:to error:NULL];
+        [files moveItemAtPath:from toPath:to error:NULL];
+    }
+}
+
 NSString *TKHostDiagnosticsReport(void) {
     HostDiagnostics report;
     hd_collect(&report,false,NULL);

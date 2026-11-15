@@ -369,7 +369,7 @@ int main(void) { @autoreleasepool {
     assert(CGPointEqualToPoint(tapDown.locationInWindow, CGPointMake(0, 1)) && CGPointEqualToPoint(tapUp.locationInWindow, CGPointMake(0, 1)));
     // The side strip: a column in it and one mirroring it at the other edge.
     // On the right Escape, Tab, keys 1 to 5 and Jump; on the left keyboard,
-    // stick, trackpad and keys 6 to 0. Shrunk, then hidden from the bottom
+    // stick, trackpad, Shift and keys 6 to 0. Shrunk, then hidden from the bottom
     // when they do not fit; a key button holds its key while touched.
     // (UIControl actions need a UIApplication, so the handlers are called directly.)
     assert(!controls.vertical && CGRectIsNull(controls.sideStrip));
@@ -388,7 +388,23 @@ int main(void) { @autoreleasepool {
     assert(quick[0].frame.origin.y == 80 && quick[1].frame.origin.y == 120 && quick[4].frame.origin.y == 240 && CGRectGetMidX(quick[4].frame) == 378);
     assert(jump.hidden && jump.frame.origin.y == 280 && CGRectGetMidX(jump.frame) == 378);
     assert(CGRectGetMidX(keyboardButton.frame) == 22 && keyboardButton.frame.origin.y == 0);
-    assert(CGRectGetMidX(quick[5].frame) == 22 && quick[5].frame.origin.y == 120 && !quick[8].hidden && quick[9].hidden);
+    UIButton *shift = [controls valueForKey:@"_shiftButton"];
+    assert(!shift.hidden && CGRectGetMidX(shift.frame) == 22 && shift.frame.origin.y == 120);
+    assert(CGRectGetMidX(quick[5].frame) == 22 && quick[5].frame.origin.y == 160 && !quick[7].hidden && quick[8].hidden);
+    // Shift is held while touched: the key's press and release, once each,
+    // with the modifier on what is sent meanwhile.
+    [(id)controls quickKeyDown:shift];
+    [(id)controls quickKeyDown:shift];
+    NSEvent *shiftKey = next_input();
+    assert(shiftKey.type == NSEventTypeFlagsChanged && shiftKey.keyCode == 56 && (shiftKey.modifierFlags & NSEventModifierFlagShift));
+    [(id)controls quickKeyDown:quick[5]];
+    shiftKey = next_input();
+    assert(shiftKey.type == NSEventTypeKeyDown && (shiftKey.modifierFlags & NSEventModifierFlagShift));
+    [(id)controls quickKeyUp:quick[5]];
+    (void)next_input();
+    [(id)controls quickKeyUp:shift];
+    shiftKey = next_input();
+    assert(shiftKey.type == NSEventTypeFlagsChanged && !(shiftKey.modifierFlags & NSEventModifierFlagShift));
     assert([controls pointInside:CGPointMake(378, 130) withEvent:nil] && ![controls pointInside:CGPointMake(378, 157) withEvent:nil]);
     assert(![controls pointInside:CGPointMake(378, 290) withEvent:nil] && ![controls pointInside:CGPointMake(200, 150) withEvent:nil]);
     assert([controls pointInside:CGPointMake(22, 20) withEvent:nil]);
@@ -411,8 +427,8 @@ int main(void) { @autoreleasepool {
     // The toggles are not key buttons.
     [(id)controls quickKeyDown:keyboardButton];
     assert(![NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:NO]);
-    // Room for all eight at full size: Jump at the bottom of the right column, holding Space.
-    controls.frame = CGRectMake(0, 0, 400, 420); [controls layoutIfNeeded];
+    // Room for all at full size (nine on the left): Jump at the bottom of the right column, holding Space.
+    controls.frame = CGRectMake(0, 0, 400, 480); [controls layoutIfNeeded];
     assert(!jump.hidden && CGRectEqualToRect(jump.frame, CGRectMake(356, 364, 44, 44)) && !quick[9].hidden);
     [(id)controls quickKeyDown:jump];
     quickKey = next_input();
@@ -425,7 +441,7 @@ int main(void) { @autoreleasepool {
     [(id)controls quickKeyUp:quick[9]];
     assert(next_input().type == NSEventTypeKeyUp);
     // With the strip on the left the columns keep their sides.
-    controls.sideStrip = CGRectMake(0, 0, 44, 420); [controls layoutIfNeeded];
+    controls.sideStrip = CGRectMake(0, 0, 44, 480); [controls layoutIfNeeded];
     assert(CGRectGetMidX(jump.frame) == 378 && CGRectGetMidX(keyboardButton.frame) == 22);
     [(id)controls quickKeyDown:quick[0]];
     assert(next_input().keyCode == 18);

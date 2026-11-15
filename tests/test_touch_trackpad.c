@@ -59,18 +59,33 @@ int main(void) {
     update(&pad, &trace, 2, 176, 188, 5.1);
     assert(trace.count == 1 && trace.events[0].x == -2 && trace.events[0].y == -1);
     update(&pad, &trace, 0, 0, 0, 5.2);
-    // Holding one still finger is a right click (as in the Windows App); the
-    // rest of that touch neither moves nor clicks. Two fingers held right-drag.
+    // One finger held still is armed, once, and presses nothing; sliding it
+    // then drags with the left button until it lifts.
     trace.count = 0;
     update(&pad, &trace, 1, 0, 0, 6);
-    AKTrackpadHold(&pad, 6.3, emit, &trace);
+    assert(!AKTrackpadHold(&pad, 6.3, emit, &trace));
+    assert(AKTrackpadHold(&pad, 6.41, emit, &trace));
+    assert(!AKTrackpadHold(&pad, 6.5, emit, &trace));
     assert(!trace.count);
-    AKTrackpadHold(&pad, 6.46, emit, &trace);
-    AKTrackpadHold(&pad, 6.5, emit, &trace);
     update(&pad, &trace, 1, 50, 0, 6.6);
-    update(&pad, &trace, 0, 0, 0, 6.8);
-    assert(trace.count == 2 && trace.events[0].action == AKTrackpadDown && trace.events[0].button == 1);
-    assert(trace.events[1].action == AKTrackpadUp && trace.events[1].button == 1);
+    update(&pad, &trace, 1, 50, 30, 6.9);
+    update(&pad, &trace, 0, 0, 0, 7);
+    assert(trace.count == 4 && trace.events[0].action == AKTrackpadDown && trace.events[0].button == 0);
+    assert(trace.events[1].action == AKTrackpadMove && trace.events[1].x > 0 && trace.events[1].button == 0);
+    assert(trace.events[2].action == AKTrackpadMove && trace.events[2].y > 0);
+    assert(trace.events[3].action == AKTrackpadUp && trace.events[3].button == 0);
+    // Held and lifted without sliding: nothing, so a resting finger never
+    // clicks. A second finger disarms it.
+    trace.count = 0;
+    update(&pad, &trace, 1, 0, 0, 6);
+    assert(AKTrackpadHold(&pad, 6.5, emit, &trace));
+    update(&pad, &trace, 0, 0, 0, 6.6);
+    update(&pad, &trace, 1, 0, 0, 6.7);
+    assert(AKTrackpadHold(&pad, 7.2, emit, &trace));
+    update(&pad, &trace, 2, 10, 0, 7.3);
+    update(&pad, &trace, 2, 10, 4, 7.35);
+    update(&pad, &trace, 0, 0, 0, 7.4);
+    assert(!trace.count);
     // Two-finger hold supports a right drag (e.g. camera); interruption releases it once.
     trace.count = 0;
     update(&pad, &trace, 2, 10, 10, 7);
@@ -230,5 +245,5 @@ int main(void) {
     update(&pad, &trace, 0, 0, 0, 70.35);
     assert(trace.count == 4 && trace.events[2].action == AKTrackpadDown && trace.events[2].button == 1);
     assert(trace.events[3].action == AKTrackpadUp && !pad.dragging);
-    puts("touch trackpad: relative motion with gain, three buttons, long-press right click, double tap and hold for the right button, scroll, right drag, cancellation and invalid traces: PASS");
+    puts("touch trackpad: relative motion with gain, three buttons, hold then slide for a left drag, double tap and hold for the right button, scroll, right drag, cancellation and invalid traces: PASS");
 }

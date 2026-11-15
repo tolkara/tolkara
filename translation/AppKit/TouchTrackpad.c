@@ -3,7 +3,7 @@
 #include <string.h>
 
 enum { AKTrackpadSlop = 8 };
-static const double AKTrackpadTapTime = 0.35, AKTrackpadHoldTime = 0.45;
+static const double AKTrackpadTapTime = 0.35;
 // A second touch this soon after a one-finger tap, and this close to it,
 // holds the right button from the moment it lands.
 static const double AKTrackpadDoubleTapGap = 0.3, AKTrackpadDoubleTapReach = 70;
@@ -34,20 +34,17 @@ void AKTrackpadCancel(AKTrackpad *pad, AKTrackpadEmit emit, void *context) {
     pad->scrollX = pad->scrollY = 0;
 }
 
-void AKTrackpadHold(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *context) {
-    if (!isfinite(time) || pad->blocked || pad->lifting || pad->dragging ||
+bool AKTrackpadHold(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *context) {
+    if (!isfinite(time) || pad->blocked || pad->lifting || pad->dragging || pad->armed ||
         pad->fingers < 1 || pad->fingers > 2 || pad->reach > AKTrackpadSlop ||
-        time - pad->started < AKTrackpadHoldTime) return;
-    if (pad->fingers == 1) {
-        // The rest of the touch is consumed: lifting it is not also a left click.
-        emit(context, AKTrackpadDown, 0, 0, 1);
-        emit(context, AKTrackpadUp, 0, 0, 1);
-        pad->blocked = true;
-        return;
-    }
+        time - pad->started < AKTouchHoldTime) return false;
+    // One finger: nothing is pressed until it slides, so a finger that only
+    // rests on the screen clicks nothing.
+    if (pad->fingers == 1) return pad->armed = true;
     pad->dragging = true;
     pad->button = 1;
     emit(context, AKTrackpadDown, 0, 0, pad->button);
+    return false;
 }
 
 void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, double time,
@@ -91,6 +88,7 @@ void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, dou
         // Once lifting starts, consume the remaining fingers without moving.
         if (pad->fingers > fingers) pad->lifting = true;
         if (pad->fingers) pad->doubleTap = false;
+        pad->armed = false;
         if (pad->dragging) AKTrackpadCancel(pad, emit, context);
         pad->x = x; pad->y = y; pad->last = time;
         pad->scrollX = pad->scrollY = 0;
@@ -121,6 +119,12 @@ void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, dou
     pad->reach = fmax(pad->reach, hypot(x - pad->originX, y - pad->originY));
     if (!distance) return;
     if (fingers == 1 || pad->dragging) {
+        if (pad->armed && !pad->dragging) {
+            // Held, then slid: the left button goes down where the pointer is.
+            pad->dragging = true;
+            pad->button = 0;
+            emit(context, AKTrackpadDown, 0, 0, pad->button);
+        }
         double passed = AKTouchStartLimit(&pad->start, distance, time), scale = passed / distance;
         // A held right button turns a game's camera: linear, so it turns
         // evenly with the finger. The pointer's gain follows a smoothed speed.

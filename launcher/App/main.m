@@ -640,6 +640,7 @@ static void TKScheduleSnapshots(NSArray<NSString *> *arguments, FILE *log) {
 
 // Refuse a native startup before it begins; the runtime log says why.
 - (void)refuseNativeGame:(NSString *)reason {
+    TKKeepEarlierLogs();
     FILE *log=fopen(TKDocumentsPath(@"native-guest.log").fileSystemRepresentation,"w");
     if (log) { fprintf(log,"[host] native startup refused: %s\n",reason.UTF8String); fclose(log); }
     self.status.text=reason;
@@ -786,6 +787,7 @@ static void TKScheduleSnapshots(NSArray<NSString *> *arguments, FILE *log) {
     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
     UIApplication.sharedApplication.idleTimerDisabled = YES;
     NSString *logPath = TKDocumentsPath(@"native-guest.log");
+    TKKeepEarlierLogs();
     FILE *log = fopen(logPath.fileSystemRepresentation, "w");
     if (!log) { self.status.text = @"Cannot open native runtime log."; [self showStartStopped]; return; }
     // Line-buffered: an early return must not leave its message stuck in the buffer.

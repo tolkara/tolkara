@@ -18,7 +18,7 @@ buttons stand in a column in that strip and in one mirroring it at the other
 edge. Each column is only as wide as the buttons need (56 points, against the
 screen's edge; the strip itself is 84), so the game keeps the rest. Both
 start below the status bar as Apple's own bars do: on the right Escape, Tab (e.g. to select a target), **1** to **5** and Jump at the bottom; on
-the left the keyboard, stick and trackpad buttons and **6** to **0**. Key
+the left the keyboard, stick, trackpad and Shift buttons and **6** to **0**. Key
 buttons hold their key (a US keyboard's) for as long as they are touched. The
 buttons shrink, down to 34 points, to fit; with the iOS keyboard open, those
 that no longer fit are hidden from the bottom up. Once found, the strip stays
@@ -51,6 +51,7 @@ pointer to steer:
 | --- | --- |
 | Slide one finger | Holds the right button and turns the camera with the finger, until it lifts |
 | Tap one finger | Right click where it touched (attack, talk, loot) |
+| Hold one finger still 0.4 s (a tick), then slide | Drags with the left button, the pointer under the finger, until it lifts: moves a spell or an item |
 | Slide two fingers | Scroll (zoom the camera) |
 | Tap two fingers | Left click between them |
 
@@ -58,9 +59,14 @@ The pointer goes to the finger as it lands, so the game knows what is under
 it before any click, and the right button goes down with the first movement
 iOS reports. It is not pressed at the touch itself: a two-finger gesture whose
 second finger lands a moment later would otherwise right-click whatever was
-under the first. No pointer is drawn in camera mode. The camera turns three
-times the finger's motion, as with the trackpad's right drag. For menus, bags and dragging
-spells to the action bars, the hand button (a camera icon in camera mode)
+under the first. It goes down in the middle of the game's view, not under the
+finger: a slide that starts on a part of the game's interface (a quest list
+where the thumb rests) turns the camera all the same and clicks nothing. No
+pointer is drawn in camera mode, except during a left drag, when the game
+shows what is being carried on it. A finger held still and lifted without
+sliding does nothing, so a resting thumb clicks nothing. The camera turns three
+times the finger's motion, as with the trackpad's right drag. For menus and
+bags, the hand button (a camera icon in camera mode)
 switches to cursor mode, the trackpad below (a cyan pointer icon), and back;
 the choice is kept. The stick works in both. Other games have no camera mode:
 for them the hand button turns the trackpad on and off, as below.
@@ -90,7 +96,10 @@ up to two and a half times as far; the speed is averaged over about a
 twentieth of a second, so touch samples that arrive unevenly do not make the
 pointer lurch. While the right button is held (double tap and slide, or two
 fingers held then slid), which turns a game's camera, motion is instead three
-times the finger's at any speed, so the camera turns evenly.
+times the finger's at any speed, so the camera turns evenly. A game that does not capture the pointer for its
+camera (World of Warcraft) reads each event's motion, which is therefore sent
+whole even when the pointer has reached the window's edge, as a Mac's mouse
+does; the camera does not stop there.
 Long-press the hand button for a menu with left, right and middle click.
 
 | In trackpad mode (the right half, with the stick) | Mouse input |
@@ -98,19 +107,21 @@ Long-press the hand button for a menu with left, right and middle click.
 | Slide one finger | Moves the pointer by the finger's motion; lifting and placing the finger elsewhere does not move it. |
 | Tap | Left click |
 | Double tap and hold, or double tap and slide | Holds the right button from the second touch until the finger lifts, e.g. to steer the camera |
-| Hold one finger still about half a second | Right click |
+| Hold one finger still 0.4 s (a tick), then slide | Drags with the left button from where the pointer is, until the finger lifts |
 | Tap with two fingers | Right click |
 | Tap with three fingers | Middle click |
 | Slide two fingers | Scroll, vertically or horizontally |
-| Hold two fingers about half a second, then slide | Drag with the right button held |
+| Hold two fingers 0.4 s, then slide | Drag with the right button held |
 
 A double tap's second touch must start within 0.3 s of the first tap and near
 it. The right button goes down as that touch lands, so the camera turns with
 the first movement; lifting it again quickly is therefore a right click, not a
 double click. In
 the Windows App, a one-finger double tap and hold drags with the left button;
-here it holds the right button, which a game's camera needs more often, and
-there is no one-finger left drag (the hand button's menu still clicks).
+here it holds the right button, which a game's camera needs more often; the
+left drag is hold, then slide. A finger held and lifted without sliding does
+nothing. The Shift button (in the column layout) holds Shift while touched,
+for the mouse as for keys: with a drag it moves a spell on a locked bar.
 
 A cancelled touch, a rotation, switching apps or turning trackpad mode off
 releases a button the trackpad was holding and every key the stick, Jump or a

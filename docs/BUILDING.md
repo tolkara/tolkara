@@ -267,7 +267,8 @@ while it prepares memory (about 3 MB per second: 33 seconds for Heroes III). One
 session: to start another, open Tolkara again. When an app closes cleanly,
 Tolkara ends itself after a short note, so the next tap on its icon opens the
 library ready to start another app.
-Runtime output goes to `Documents/native-guest.log`; the Diagnostics menu
+Runtime output goes to `Documents/native-guest.log` (the three runs before it
+stay beside it as `native-guest.1.log`, the latest, to `native-guest.3.log`); the Diagnostics menu
 (stethoscope) shows it and the other logs, and holds the development checks.
 
 ## Developing without a device

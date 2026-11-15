@@ -8,6 +8,8 @@
 - (void)touchSpecialKey:(unsigned short)code characters:(NSString *)characters;
 // The movement stick holds a key down until it reports the release.
 - (void)touchKey:(unsigned short)code characters:(NSString *)characters pressed:(BOOL)pressed;
+// The Shift button: held while touched, for the mouse and keys alike.
+- (void)touchShift:(BOOL)pressed;
 - (void)touchTrackpadChanged:(BOOL)enabled;
 // Camera mode: the pointer goes to this point of the game's view (a touch's).
 - (void)touchPointAt:(CGPoint)point;
@@ -41,7 +43,7 @@ extern NSString *const AKTouchControlsDefaultsKey;   // "AKTouchControls"
 // the row. With a strip this view covers the screen, taking touches only on its
 // buttons, in a column in the strip and one mirroring it at the other edge:
 // on the right Escape, Tab, keys 1 to 5 and Jump; on the left the keyboard,
-// stick and trackpad buttons and keys 6 to 0. Without a strip the row is Jump,
+// stick, trackpad and Shift buttons and keys 6 to 0. Without a strip the row is Jump,
 // stick, trackpad and keyboard. Key buttons hold their key while touched.
 @property (nonatomic) CGRect sideStrip;
 // A column's width at most: the largest button (44 points) and 6 on each side.
