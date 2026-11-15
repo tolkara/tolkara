@@ -107,57 +107,141 @@
             AKTouchControls *controls = [host valueForKey:@"_touchControls"];
             [host.superview setNeedsLayout]; [host.superview layoutIfNeeded];
             CGSize originalSize = host.bounds.size;
+            NSArray<NSValue *> *columns = [self checkColumns:host controls:controls];
             [controls toggleKeyboard];
             if (!selfTest) return;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                [host layoutIfNeeded];
+                [host.superview layoutIfNeeded];
                 assert(controls.keyboardVisible && CGSizeEqualToSize(originalSize, host.bounds.size));
-                assert(host.keyboardLayoutGuide.layoutFrame.size.height > 100);
-                assert(CGRectGetMaxY(controls.frame) <= CGRectGetMinY(host.keyboardLayoutGuide.layoutFrame));
+                CGFloat keyboardTop = CGRectGetMinY(host.superview.keyboardLayoutGuide.layoutFrame);
+                // An iPad simulator counts the Mac's keyboard as a hardware
+                // keyboard, and iOS then shows only the row above its own.
+                CGFloat keyboardHeight = host.keyboardLayoutGuide.layoutFrame.size.height;
+                BOOL pad = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad;
+                assert(keyboardHeight > 100 || (pad && keyboardHeight >= 44));
+                if (keyboardHeight <= 100) NSLog(@"touch controls: iOS showed only the row above its keyboard (%.0f points)", keyboardHeight);
+                assert(CGRectGetMaxY(controls.frame) <= keyboardTop);
                 assert(CGRectGetMinY(controls.frame) >= 0);
+                // With the keyboard open the game and every button stay where
+                // they were; the buttons it would cover are hidden.
+                NSArray<NSValue *> *open = [self columnFrames:host controls:controls hidden:keyboardTop];
+                assert([open isEqual:columns]);
                 [controls insertText:@"Fixture @ñ🙂"];
                 [controls deleteBackward];
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                     assert([((AKInputFixtureView *)self.guest.contentView).text isEqual:@"Fixture @ñ"]);
                     [controls dismissKeyboard];
                     assert(!controls.keyboardVisible && host.isFirstResponder);
-                    [self stickAndTrackpadSelfTest:host controls:controls];
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                        [host.superview layoutIfNeeded];
+                        assert([[self columnFrames:host controls:controls hidden:CGFLOAT_MAX] isEqual:columns]);
+                        [self stickAndTrackpadSelfTest:host controls:controls];
+                    });
                 });
             });
         });
     }
 }
+// The game's frame, then the column buttons' frames, in the container. In a
+// column layout the buttons that reach below `hidden` (the iOS keyboard's top)
+// or the columns' own lower limit must be hidden and the others shown. The
+// row gives the game's frame alone.
+- (NSArray<NSValue *> *)columnFrames:(UIView *)host controls:(AKTouchControls *)controls hidden:(CGFloat)hidden {
+    NSMutableArray<NSValue *> *frames = [NSMutableArray arrayWithObject:[NSValue valueWithCGRect:host.frame]];
+    if (!controls.vertical) return frames;
+    assert(controls.superview == host.superview && CGPointEqualToPoint(controls.frame.origin, CGPointZero));
+    NSArray<UIButton *> *buttons = [controls valueForKey:@"_columnButtons"];
+    assert(buttons.count == AKTouchButtonCount);
+    unsigned shown = 0;
+    hidden = MIN(hidden, controls.layout.bottom);
+    for (UIButton *button in buttons) {
+        assert(button.hidden == (CGRectGetMaxY(button.frame) > hidden));
+        shown += !button.hidden;
+        [frames addObject:[NSValue valueWithCGRect:button.frame]];
+    }
+    // The keyboard button is among those that stay, to close the keyboard.
+    assert(shown >= 2 && !buttons[0].hidden);
+    return frames;
+}
+// The layout this screen must get: an iPhone on its side two columns a side,
+// an iPad or the iPhone Duo's inner display one. Every button on the screen,
+// clear of the others and of the game, which lies between the columns and is
+// the display the game is told. Returns columnFrames with the keyboard closed.
+- (NSArray<NSValue *> *)checkColumns:(UIView *)host controls:(AKTouchControls *)controls {
+    UIView *container = host.superview;
+    CGRect bounds = container.bounds, game = host.frame;
+    BOOL duo = !CGRectIsNull([[host valueForKey:@"_touchStrip"] CGRectValue]);
+    BOOL phone = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
+    NSUInteger expected = bounds.size.width < bounds.size.height && phone ? 0 : phone && !duo ? 2 : 1;
+    NSLog(@"touch controls: %lu column(s) a side, container %@ safe %@ game %@", (unsigned long)controls.layout.columns,
+          NSStringFromCGSize(bounds.size), NSStringFromUIEdgeInsets(container.safeAreaInsets), NSStringFromCGRect(game));
+    assert(controls.layout.columns == expected);
+    NSArray<NSValue *> *frames = [self columnFrames:host controls:controls hidden:CGFLOAT_MAX];
+    if (!expected) { assert(CGRectEqualToRect(game, bounds)); return frames; }
+    UIEdgeInsets safe = container.safeAreaInsets;
+    NSMutableSet<NSNumber *> *left = [NSMutableSet new], *right = [NSMutableSet new];
+    NSArray<UIButton *> *buttons = [controls valueForKey:@"_columnButtons"];
+    for (NSUInteger i = 1; i < frames.count; i++) {
+        CGRect frame = frames[i].CGRectValue;
+        // Only the Duo's short columns may have more buttons than fit.
+        assert(duo || !buttons[i - 1].hidden);
+        if (buttons[i - 1].hidden) continue;
+        assert(CGRectContainsRect(bounds, frame) && frame.size.width >= 34 && frame.size.width == frame.size.height);
+        assert(!CGRectIntersectsRect(frame, game));
+        // Clear of the home indicator's inset and, but for the outer column's
+        // buttons at the top, of the side insets.
+        assert(CGRectGetMaxY(frame) <= bounds.size.height - safe.bottom && CGRectGetMinY(frame) >= safe.top);
+        BOOL leftSide = i <= AKTouchLeftButtons;
+        assert(leftSide == (CGRectGetMaxX(frame) <= CGRectGetMinX(game)) && leftSide != (CGRectGetMinX(frame) >= CGRectGetMaxX(game)));
+        if (!duo && (CGRectGetMinX(frame) < safe.left || CGRectGetMaxX(frame) > bounds.size.width - safe.right))
+            assert(expected == 2 && CGRectGetMaxY(frame) < bounds.size.height / 2 - 70);
+        [leftSide ? left : right addObject:@(CGRectGetMidX(frame))];
+        for (NSUInteger j = 1; j < i; j++) assert(!CGRectIntersectsRect(CGRectInset(frame, -4, -4), frames[j].CGRectValue));
+    }
+    assert(left.count == expected && right.count == expected);
+    // The game: the full height, in the middle where the insets are equal, and
+    // no narrower than one column past each inset (two where there is none).
+    assert(game.origin.y == 0 && game.size.height == bounds.size.height);
+    if (safe.left == safe.right) assert(CGRectGetMidX(game) == CGRectGetMidX(bounds));
+    if (!duo) assert(game.origin.x == AKTouchControlsColumnWidth + MAX(safe.left, (expected - 1) * AKTouchControlsColumnWidth));
+    assert(CGSizeEqualToSize(NSScreen.mainScreen.frame.size, game.size));
+    assert(CGSizeEqualToSize(self.guest.contentView.frame.size, game.size));
+    return frames;
+}
 // Drives the two halves' routing directly with synthetic points on this
 // test screen; the fixture view counts what arrived through the event queue.
 - (void)stickAndTrackpadSelfTest:(UIView *)host controls:(AKTouchControls *)controls {
     AKInputFixtureView *view = (AKInputFixtureView *)self.guest.contentView;
-    // On iPhone Duo the buttons stand in two columns from below the status
-    // bar: on the right Escape, Tab, 1 to 5 and Jump; on the left the toggles
-    // and 6 to 0. Elsewhere they stand in a row.
+    // In a column layout the right side has Escape, Tab, 1 to 5 and Jump
+    // and the left the toggles, Shift and 6 to 0. Elsewhere they stand in a row.
     [host layoutIfNeeded];
     NSArray<UIButton *> *quick = [controls valueForKey:@"_quickButtons"];
     UIButton *jump = [controls valueForKey:@"_jumpButton"], *escape = [controls valueForKey:@"_escapeButton"];
-    for (UIButton *button in [quick arrayByAddingObject:escape]) assert(button.hidden == !controls.vertical);
+    for (UIButton *button in [quick arrayByAddingObject:escape])
+        assert(button.hidden == (!controls.vertical || CGRectGetMaxY(button.frame) > controls.layout.bottom));
     assert(!jump.hidden);
     if (controls.vertical) {
-        CGRect strip = controls.sideStrip;
-        CGFloat middle = host.superview.bounds.size.width / 2;
-        assert(strip.size.width >= 44 && strip.origin.y > 40);
+        UIView *container = host.superview;
+        CGFloat middle = container.bounds.size.width / 2;
         assert(CGRectGetMidX(escape.frame) > middle && CGRectGetMidX(quick[4].frame) > middle && CGRectGetMidX(quick[9].frame) < middle);
         assert(CGRectGetMidX(jump.frame) == CGRectGetMidX(quick[4].frame) && CGRectGetMinY(jump.frame) > CGRectGetMaxY(quick[4].frame));
-        assert(CGRectGetMaxY(jump.frame) <= controls.bounds.size.height);
-        // The game draws between the columns and sees a display that size.
-        UIView *container = host.superview;
-        CGFloat side = CGRectGetMidX(strip) > middle ? container.bounds.size.width - CGRectGetMinX(strip) : CGRectGetMaxX(strip);
         assert(controls.superview == container && controls.gameView == host);
+    }
+    CGRect strip = [[host valueForKey:@"_touchStrip"] CGRectValue];
+    if (!CGRectIsNull(strip)) {
+        // The iPhone Duo: the columns start below the status bar, in the strip
+        // and mirroring it, and the game has the space between them.
+        UIView *container = host.superview;
+        CGFloat middle = container.bounds.size.width / 2;
+        assert(controls.layout.columns == 1 && strip.size.width >= 44 && strip.origin.y > 40);
+        assert(escape.frame.origin.y == strip.origin.y && CGRectGetMidX(escape.frame) == MAX(CGRectGetMidX(strip), 2 * middle - CGRectGetMidX(strip)));
+        CGFloat side = CGRectGetMidX(strip) > middle ? container.bounds.size.width - CGRectGetMinX(strip) : CGRectGetMaxX(strip);
         assert(CGRectEqualToRect(host.frame, CGRectInset(container.bounds, side, 0)));
-        assert(CGSizeEqualToSize(NSScreen.mainScreen.frame.size, host.bounds.size));
-        assert(CGSizeEqualToSize(self.guest.contentView.frame.size, host.bounds.size));
-        assert(CGRectGetMinX([container convertRect:escape.bounds fromView:escape]) >= CGRectGetMaxX(host.frame));
-        assert(CGRectGetMaxX([container convertRect:quick[9].bounds fromView:quick[9]]) <= CGRectGetMinX(host.frame));
         // The strip stays when UIKit stops reporting it (the status bar hides).
+        AKTouchLayout before = controls.layout, after;
         [container setNeedsLayout]; [container layoutIfNeeded];
-        assert(CGRectEqualToRect(controls.sideStrip, strip));
+        after = controls.layout;
+        assert(CGRectEqualToRect([[host valueForKey:@"_touchStrip"] CGRectValue], strip) && !memcmp(&before, &after, sizeof after));
     }
     controls.stickEnabled = YES;
     assert(controls.trackpadEnabled);
@@ -190,7 +274,8 @@
             assert(view.leftDowns == 1 && view.leftUps == 1 && view.lastClickCount == 1);
             assert(view.rightDowns == 2 && view.rightUps == 2 && view.rightDrags >= 1 && view.scrolls >= 1);
             NSLog(@"TOUCH_UI_SELF_TEST_PASS: keyboard layout, text delivery, delete and focus restoration; "
-                  "stick keys and drawing, tap, double tap and hold, two-finger tap and scroll; %@ layout", controls.vertical ? @"side-strip column" : @"row");
+                  "stick keys and drawing, tap, double tap and hold, two-finger tap and scroll; %@ layout, unmoved by the keyboard",
+                  @[@"row", @"one column a side", @"two columns a side"][controls.layout.columns]);
             exit(EXIT_SUCCESS);
         });
     });

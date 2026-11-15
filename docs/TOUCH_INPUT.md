@@ -9,27 +9,64 @@ a touch is a left click where the finger is; the pointer moves there before
 the button goes down, so a game that highlights what is under the pointer (a
 login button) takes the tap.
 
-Four translucent buttons sit at the bottom right of the game: Jump, the
-movement stick, the trackpad and the keyboard. Jump holds Space for as long as
-it is touched. Only the buttons take touches; the rest
-of the screen belongs to the game.
+The buttons stand in columns at the left and right edges of the screen, and
+the game draws between them. On the right, from the top: Escape, Tab (e.g. to
+select a target), **1** to **5** and Jump; on the left: the keyboard, stick,
+trackpad and Shift buttons and **6** to **0**. Jump holds Space, and each key
+button its key (a US keyboard's), for as long as it is touched. Only the
+buttons take touches. The columns keep a black background; the game sees a
+display as large as the space between them (`NSScreen`, `CGDisplayBounds`), as
+a Mac whose screen ends where the columns begin.
+
+Which layout a screen gets is decided from its size and safe area alone
+(`AKTouchLayoutFor` in `translation/AppKit/TouchControls.m`), not from the
+kind of device:
+
+| Screen | Layout | The game loses, at each edge |
+| --- | --- | --- |
+| Nine buttons fit the height at full size: an iPad, upright or on its side | One column a side | 56 points |
+| Shorter: an iPhone on its side | Two columns a side | 56 points beyond the side inset (the Dynamic Island's), or 112 where the inset is narrower than a column |
+| iPhone Duo, unfolded | One column in the status-bar strip and one mirroring it | The column's width, 56 points |
+| The columns would leave the game under 400 points of width: an iPhone upright, a narrow iPad window | A row of four buttons over the game | Nothing |
+
+Buttons are 44 points across on a 52-point pitch, and a column is 56 points
+wide. Where the height is short they shrink together, down to 34 points on a
+40-point pitch; buttons that still do not fit are hidden from the bottom up.
+The columns end 8 points above the bottom inset (the home indicator's).
+Except on the Duo, both sides share one grid of rows, standing in the middle
+of the height: the rows are level on both sides, and the right side, one
+button shorter, stands at the bottom, so Jump is beside key **0**.
+
+**iPad.** One column a side: nine buttons on the left, eight on the right. A
+13-inch iPad on its side (1376 by 1032 points) gives the game 1264 by 1032.
+The controls stay off on iPad until **On-Screen Controls** turns them on.
+
+**iPhone.** On its side an iPhone is too short for nine full-size buttons in
+one column (402 points on an iPhone 17 Pro), so each side has two. The inner
+column, next to the game, has the buttons a thumb uses in play: the trackpad
+and Shift buttons and **6** to **0** on the left, **1** to **5** and Jump on
+the right. It stands just past the side inset, where the Dynamic Island or a
+rounded corner would hide part of the game. The outer column stands in that inset and has only each side's
+first two buttons, in the top two rows, above the island: the keyboard and
+stick buttons on the left, Escape and Tab on the right. On a screen with side
+insets the rows start 20 points from the top, clear of the rounded corners.
+An iPhone 17 Pro (874 by 402 points, 62-point side insets) gives the game 638
+by 402, and all buttons are full size. The launcher runs on iPhone only on
+its side (`UISupportedInterfaceOrientations_iPhone` in `project.yml` lists
+the two landscape orientations), so the upright row is not reached there.
 
 **iPhone Duo.** Unfolded, the inner display keeps a strip at one side for the
 status bar (UIKit reports it as an occlusion reserved region, iOS 27.1). The
 buttons stand in a column in that strip and in one mirroring it at the other
 edge. Each column is only as wide as the buttons need (56 points, against the
 screen's edge; the strip itself is 84), so the game keeps the rest. Both
-start below the status bar as Apple's own bars do: on the right Escape, Tab (e.g. to select a target), **1** to **5** and Jump at the bottom; on
-the left the keyboard, stick, trackpad and Shift buttons and **6** to **0**. Key
-buttons hold their key (a US keyboard's) for as long as they are touched. The
-buttons shrink, down to 34 points, to fit; with the iOS keyboard open, those
-that no longer fit are hidden from the bottom up. Once found, the strip stays
-for that screen size: on the device UIKit stops reporting it when the game
-hides the status bar. The game draws only between the two columns, which keep
-a black background, and sees a display that size (`NSScreen`,
-`CGDisplayBounds`), as a Mac whose screen ends where the columns begin; with
-the iOS keyboard open it keeps that size. Other screens keep the row over the
-game, without number, Escape and Tab buttons.
+start below the status bar as Apple's own bars do, each with its own pitch.
+Once found, the strip stays for that screen size: on the device UIKit stops
+reporting it when the game hides the status bar.
+
+**The row.** Jump, the movement stick, the trackpad and the keyboard, at the
+bottom right over the game, which keeps the whole screen. It has no number,
+Escape, Tab or Shift buttons, and it moves up with the iOS keyboard.
 
 **Movement stick.** The stick button turns it on (cyan) or off; the choice is
 kept, and it is on by default on iPhone. With it on, a touch that lands on the
@@ -122,7 +159,7 @@ the first movement; lifting it again quickly is therefore a right click, not a
 double click. In
 the Windows App, a one-finger double tap and hold drags with the left button;
 here it holds the right button, which a game's camera needs more often. The
-Shift button (in the column layout) holds Shift while touched, for the mouse
+Shift button (in the column layouts) holds Shift while touched, for the mouse
 as for keys, and while it is held the same double tap and hold uses the left
 button: Shift and drag, which moves a spell on a locked bar. Which button is
 decided as the second touch lands; letting Shift go during the drag keeps it.
@@ -131,7 +168,10 @@ A cancelled touch, a rotation, switching apps or turning trackpad mode off
 releases a button the trackpad was holding and every key the stick, Jump or a
 number button was holding. A keyboard and mouse work at the same time as before.
 
-**Keyboard.** Opens and closes the iOS keyboard; the game keeps its size. A row
+**Keyboard.** Opens and closes the iOS keyboard. The game keeps its size and
+place, and in the column layouts so does every button: those the keyboard
+would cover are hidden while it is open (the keyboard button, in the top row,
+never is) and come back when it closes. A row
 above the keyboard has Escape, Tab, left and right arrows, Return and a button
 to close it. Select a text field in the game first: Tolkara does not detect
 the game's text fields, and it does not read the game's text or selection, so
@@ -154,5 +194,12 @@ opens our own test screen (never a game) in the simulator; `--self-test`
 checks the keyboard's placement, typing and returning focus, then drives the
 stick and the trackpad's tap, double tap and hold, two-finger tap and scroll
 with synthetic points, and `--show-keyboard` opens the keyboard to look at.
-With `SIMULATOR` naming an iPhone Duo simulator (iOS 27.2 runtime), it also
-checks the two side-strip columns and that the game gets the space between them.
+It also checks the layout of the simulator it runs in (`SIMULATOR`: an iPhone
+gets two columns a side, an iPad one, an iPhone Duo simulator of the iOS 27.2
+runtime the strip's column and its mirror): every button on the screen, clear
+of the others and of the insets, the game between the columns and told that
+size, and neither the game nor a button moved by opening and closing the
+keyboard. `tools/test_translation_sim.sh` checks the layout decision itself
+for iPad, iPhone, Duo and small sizes. An iPad simulator counts the Mac's
+keyboard as a hardware keyboard, so there only the row above the keyboard
+opens.

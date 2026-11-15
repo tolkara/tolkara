@@ -12,7 +12,58 @@ static NSString *const AKTouchStickDefaultsKey = @"AKTouchStickEnabled";
 // mode (TOLKARA_TOUCH_MODE=camera); other games always use the trackpad.
 static NSString *const AKTouchCursorModeDefaultsKey = @"AKTouchCursorMode";
 
+// A column of `count` buttons on a grid of `rows`: 44 points on a 52-point
+// pitch, shrunk (to 34 on 40) for the rows to fit between top and bottom. Rows
+// that still do not fit run past the bottom, and the controls hide their
+// buttons. The Duo's columns start at the top. Elsewhere the grid stands in
+// the middle of the height and a column shorter than it stands at the grid's
+// bottom (lowest), or, the outer of two columns, at its top.
+static void AKTouchColumn(CGRect *frames, NSUInteger count, NSUInteger rows, CGFloat centre, CGFloat top, CGFloat bottom, BOOL middle, BOOL lowest) {
+    CGFloat height = bottom - top;
+    CGFloat pitch = MAX(40, MIN(52, floor((height + 6) / rows))), size = MIN(44, pitch - 6);
+    CGFloat spare = height - (pitch * (rows - 1) + size);
+    CGFloat x = floor(centre - size / 2), y = (middle && spare > 0 ? top + floor(spare / 2) : top) + (lowest ? (rows - count) * pitch : 0);
+    for (NSUInteger i = 0; i < count; i++) frames[i] = CGRectMake(x, y + i * pitch, size, size);
+}
+
+AKTouchLayout AKTouchLayoutFor(CGSize size, UIEdgeInsets safe, CGRect strip) {
+    AKTouchLayout layout;
+    memset(&layout, 0, sizeof layout);
+    layout.game = CGRectMake(0, 0, size.width, size.height);
+    BOOL duo = !CGRectIsNull(strip);
+    // The columns end 8 points above the home indicator's inset and start 8
+    // from the top, or 20 on a screen with side insets, whose rounded corners
+    // would cut a button nearer the top.
+    CGFloat top = duo ? strip.origin.y : safe.top + (safe.left > 0 || safe.right > 0 ? 20 : 8), bottom = size.height - safe.bottom - 8;
+    CGFloat width = duo ? strip.size.width : AKTouchControlsColumnWidth;
+    NSUInteger columns = duo || bottom - top + 6 >= AKTouchLeftButtons * 50 ? 1 : 2, outer = columns == 2 ? AKTouchOuterButtons : 0;
+    // What the game gives up at each edge. The Duo's strip is mirrored. Elsewhere
+    // the inner column stands past the side inset, where the Dynamic Island
+    // or a rounded corner may be, and an outer column in it or beside it.
+    CGFloat left = duo ? width : width + MAX(safe.left, (columns - 1) * width);
+    CGFloat right = duo ? width : width + MAX(safe.right, (columns - 1) * width);
+    if (size.width - left - right < 400) return layout;
+    layout.columns = columns;
+    layout.bottom = bottom;
+    layout.game = CGRectMake(left, 0, size.width - left - right, size.height);
+    CGRect *buttons = layout.buttons;
+    for (unsigned side = 0; side < 2; side++, buttons += AKTouchLeftButtons) {
+        NSUInteger count = (side ? AKTouchRightButtons : AKTouchLeftButtons) - outer;
+        // Both sides share one grid, as tall as the longer (left) side's inner
+        // column, so that their rows are level and Jump is as low as key 0.
+        // On the Duo each column has its own, as it always had.
+        NSUInteger rows = duo ? count : AKTouchLeftButtons - outer;
+        CGFloat inset = side ? right : left, inner = inset - width / 2, outside = inset - width * 3 / 2;
+        // The outer column's two buttons stand in the grid's top rows, above
+        // the Dynamic Island.
+        if (outer) AKTouchColumn(buttons, outer, rows, side ? size.width - outside : outside, top, bottom, YES, NO);
+        AKTouchColumn(buttons + outer, count, rows, side ? size.width - inner : inner, top, bottom, !duo, !duo);
+    }
+    return layout;
+}
+
 @implementation AKTouchControls {
+    NSArray<UIButton *> *_columnButtons;   // in AKTouchLayout's order
     UIButton *_keyboardButton, *_trackpadButton, *_stickButton, *_jumpButton, *_escapeButton, *_tabButton, *_shiftButton;
     BOOL _shiftHeld;
     NSArray<UIButton *> *_quickButtons;
@@ -152,8 +203,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         _trackpadButton.menu = [UIMenu menuWithTitle:@"Mouse buttons" children:actions];
         _stickButton.tag = _keyboardButton.tag = _trackpadButton.tag = -1;   // not key buttons
         // Keys 1 to 9 and 0 (a game's action slots), held while touched. Shown
-        // only in the column layout, where the side strips have room for them.
-        _sideStrip = CGRectNull;
+        // only in the column layouts, which have room for them.
         NSMutableArray<UIButton *> *quick = [NSMutableArray new];
         for (NSInteger i = 0; i < 10; i++) {
             NSString *key = AKQuickKeyCharacters(i);
@@ -179,6 +229,12 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         _shiftButton.accessibilityIdentifier = @"tolkara.shift";
         _shiftButton.accessibilityHint = @"Holds Shift while touched.";
         _escapeButton.hidden = _tabButton.hidden = _shiftButton.hidden = YES;
+        NSMutableArray<UIButton *> *columns = [NSMutableArray arrayWithObjects:_keyboardButton, _stickButton, _trackpadButton, _shiftButton, nil];
+        [columns addObjectsFromArray:[quick subarrayWithRange:NSMakeRange(5, 5)]];
+        [columns addObjectsFromArray:@[_escapeButton, _tabButton]];
+        [columns addObjectsFromArray:[quick subarrayWithRange:NSMakeRange(0, 5)]];
+        [columns addObject:_jumpButton];
+        _columnButtons = columns;
         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchTrackpadDefaultsKey];
         BOOL phone = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
         // Camera mode needs the controls to take touches; it starts in camera
@@ -204,10 +260,10 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         if ([button isKindOfClass:UIButton.class] && !button.hidden && CGRectContainsPoint(button.frame, point)) return YES;
     return NO;
 }
-- (BOOL)vertical { return !CGRectIsNull(_sideStrip); }
-- (void)setSideStrip:(CGRect)strip {
-    if (CGRectEqualToRect(_sideStrip, strip)) return;
-    _sideStrip = strip;
+- (BOOL)vertical { return _layout.columns > 0; }
+- (void)setLayout:(AKTouchLayout)layout {
+    if (!memcmp(&_layout, &layout, sizeof layout)) return;
+    _layout = layout;
     [self releaseQuickKeys];
     [self setNeedsLayout];
 }
@@ -224,31 +280,20 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         [self quickKeyUp:_shiftButton];
         return;
     }
-    // One column in the strip and one mirroring it, both from below the status
-    // bar: on the right (wherever the strip is) Escape, Tab, 1 to 5 and Jump at
-    // the bottom; on the left the keyboard, stick, trackpad, Shift and 6 to 0.
-    CGRect strip = self.sideStrip;
-    CGFloat stripCentre = CGRectGetMidX(strip), otherCentre = self.bounds.size.width - stripCentre;
-    NSArray<UIButton *> *right = [[@[_escapeButton, _tabButton] arrayByAddingObjectsFromArray:[_quickButtons subarrayWithRange:NSMakeRange(0, 5)]]
-                                  arrayByAddingObject:_jumpButton];
-    NSArray<UIButton *> *left = [@[_keyboardButton, _stickButton, _trackpadButton, _shiftButton] arrayByAddingObjectsFromArray:[_quickButtons subarrayWithRange:NSMakeRange(5, 5)]];
-    [self layoutColumn:right centre:MAX(stripCentre, otherCentre) top:strip.origin.y];
-    [self layoutColumn:left centre:MIN(stripCentre, otherCentre) top:strip.origin.y];
-}
-// Top to bottom, shrunk (to 34 points) to fit; what still does not fit (above
-// the iOS keyboard) is hidden from the bottom up, so the keyboard button stays.
-- (void)layoutColumn:(NSArray<UIButton *> *)column centre:(CGFloat)centre top:(CGFloat)top {
-    if (!column.count) return;
-    CGFloat height = self.bounds.size.height - top;
-    CGFloat pitch = MAX(40, MIN(52, floor((height + 6) / column.count))), size = MIN(44, pitch - 6);
-    CGFloat x = floor(centre - size / 2), y = top;
-    for (UIButton *button in column) {
-        button.frame = CGRectMake(x, y, size, size);
-        button.layer.cornerRadius = size / 2;
-        BOOL fits = y + size <= self.bounds.size.height;
+    // The columns stand where the layout put them, whatever this view's
+    // height, and a button that reaches below their lower limit is hidden.
+    // While the iOS keyboard is open, this view's bottom edge is the
+    // keyboard's top, and that is the limit; the keyboard button, at the top,
+    // stays. Only while it is open: UIKit can leave that edge raised after
+    // the keyboard has closed.
+    CGFloat limit = self.keyboardVisible ? MIN(self.bounds.size.height, _layout.bottom) : _layout.bottom;
+    for (NSUInteger i = 0; i < AKTouchButtonCount; i++) {
+        UIButton *button = _columnButtons[i];
+        button.frame = _layout.buttons[i];
+        button.layer.cornerRadius = button.frame.size.width / 2;
+        BOOL fits = CGRectGetMaxY(button.frame) <= limit;
         if (!fits) [self quickKeyUp:button];
         button.hidden = !fits;
-        y += pitch;
     }
 }
 - (void)setShiftHeld:(BOOL)held {
@@ -347,6 +392,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
 - (void)updateKeyboardButton {
     [_keyboardButton setImage:[UIImage systemImageNamed:self.keyboardVisible ? @"keyboard.chevron.compact.down" : @"keyboard"] forState:UIControlStateNormal];
     _keyboardButton.accessibilityLabel = self.keyboardVisible ? @"Hide keyboard" : @"Show keyboard";
+    [self setNeedsLayout];   // the columns' buttons under the keyboard hide and return
 }
 - (void)toggleKeyboard {
     [self cancelTouches];

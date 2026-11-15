@@ -361,7 +361,7 @@ static BOOL AKWindowInputDiagnostics(void) {
         for(GCMouse *mouse in GCMouse.mice)[self installMouse:mouse];
         [self addGestureRecognizer:[[UIHoverGestureRecognizer alloc] initWithTarget:self action:@selector(hover:)]];
         // Optional on-screen keyboard and trackpad: on by default on iPhone,
-        // off on iPad, where they would cover part of the game.
+        // off on iPad, where their columns would take part of the screen.
         if (AKTouchControls.enabled) [self installTouchControls];
     }
     return self;
@@ -387,15 +387,17 @@ static BOOL AKWindowInputDiagnostics(void) {
         [_touchControls.trailingAnchor constraintEqualToAnchor:self.safeAreaLayoutGuide.trailingAnchor constant:-12],
         [_touchControls.bottomAnchor constraintEqualToAnchor:parent.keyboardLayoutGuide.topAnchor constant:-8],
     ];
-    // With a side strip the controls cover the container (they take touches
-    // only on their buttons) and place their columns themselves.
+    // In a column layout the controls cover the container (they take touches
+    // only on their buttons) down to the iOS keyboard's top. Only that edge
+    // moves with the keyboard: the buttons keep their places, and those the
+    // open keyboard would cover are hidden.
     _touchColumn = @[
         [_touchControls.leadingAnchor constraintEqualToAnchor:parent.leadingAnchor],
         [_touchControls.trailingAnchor constraintEqualToAnchor:parent.trailingAnchor],
         [_touchControls.topAnchor constraintEqualToAnchor:parent.topAnchor],
-        [_touchControls.bottomAnchor constraintEqualToAnchor:parent.keyboardLayoutGuide.topAnchor constant:-8],
+        [_touchControls.bottomAnchor constraintEqualToAnchor:parent.keyboardLayoutGuide.topAnchor],
     ];
-    [NSLayoutConstraint activateConstraints:CGRectIsNull(_touchStrip) ? _touchRow : _touchColumn];
+    [NSLayoutConstraint activateConstraints:_touchControls.vertical ? _touchColumn : _touchRow];
 }
 // The iPhone Duo's inner display keeps a column at one side for the status
 // bar, an occlusion region; Apple's own bars stack their buttons under it.
@@ -424,14 +426,6 @@ static BOOL AKWindowInputDiagnostics(void) {
     }
     return CGRectNull;
 }
-// The game's area in a container: all of it, or with a strip the part
-// between the strip's column and the one mirroring it at the other edge.
-+ (CGRect)gameFrameIn:(CGRect)bounds strip:(CGRect)strip {
-    if (CGRectIsNull(strip)) return bounds;
-    CGFloat side = CGRectGetMidX(strip) > CGRectGetMidX(bounds) ? CGRectGetMaxX(bounds) - CGRectGetMinX(strip)
-                                                               : CGRectGetMaxX(strip) - CGRectGetMinX(bounds);
-    return CGRectInset(bounds, side, 0);
-}
 // Called by the container (or, without one, by this view itself).
 - (void)layoutTouchControlsIn:(UIView *)parent {
     if (!_touchControls) {
@@ -446,17 +440,21 @@ static BOOL AKWindowInputDiagnostics(void) {
     // size even if UIKit stops reporting it; a new size looks again.
     BOOL kept = CGRectIsNull(strip) && !CGRectIsNull(_touchStrip) && CGSizeEqualToSize(_touchStripSize, size);
     if (kept) strip = _touchStrip;
-    CGRect game = parent == self ? self.bounds : [AKHostView gameFrameIn:parent.bounds strip:strip];
-    if (!CGRectEqualToRect(strip, _touchStrip) || !CGSizeEqualToSize(_touchStripSize, size)) {
-        _touchStrip = strip;
-        _touchStripSize = size;
+    _touchStrip = strip;
+    _touchStripSize = size;
+    // Row, one column a side or two: from the container's size, its safe area
+    // and the strip, never from the iOS keyboard, so that opening it moves
+    // neither the game nor a button.
+    AKTouchLayout layout = AKTouchLayoutFor(size, parent.safeAreaInsets, strip), old = _touchControls.layout;
+    CGRect game = parent == self ? self.bounds : layout.game;
+    if (memcmp(&layout, &old, sizeof layout)) {
         // Positions only: no screen contents or touches.
-        AKLog(@"touch controls layout=%@ strip=%@ game=%@ safe=%@ regions=%lu", CGRectIsNull(strip) ? @"row" : @"column",
-              NSStringFromCGRect(strip), NSStringFromCGRect(game), NSStringFromUIEdgeInsets(parent.safeAreaInsets), (unsigned long)regions);
-        BOOL column = !CGRectIsNull(strip);
-        [NSLayoutConstraint deactivateConstraints:column ? _touchRow : _touchColumn];
-        [NSLayoutConstraint activateConstraints:column ? _touchColumn : _touchRow];
-        _touchControls.sideStrip = strip;
+        AKLog(@"touch controls layout=%@ strip=%@ game=%@ size=%@ safe=%@ regions=%lu",
+              @[@"row", @"column", @"two columns"][layout.columns], NSStringFromCGRect(strip), NSStringFromCGRect(game),
+              NSStringFromCGSize(size), NSStringFromUIEdgeInsets(parent.safeAreaInsets), (unsigned long)regions);
+        [NSLayoutConstraint deactivateConstraints:layout.columns ? _touchRow : _touchColumn];
+        [NSLayoutConstraint activateConstraints:layout.columns ? _touchColumn : _touchRow];
+        _touchControls.layout = layout;
     }
     if (parent == self) return;
     // The game draws only between the columns, and sees a display that size,
@@ -877,6 +875,11 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
 - (void)layoutSubviews {
     [super layoutSubviews];
     [self.host layoutTouchControlsIn:self];
+}
+// The columns depend on the safe area, which UIKit sets after the first layout.
+- (void)safeAreaInsetsDidChange {
+    [super safeAreaInsetsDidChange];
+    [self setNeedsLayout];
 }
 @end
 
