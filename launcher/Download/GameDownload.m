@@ -424,10 +424,23 @@ static void index_visit(void *context, const uint8_t *ekey, uint32_t size, uint3
     NSArray<NSString *> *row = @[_region, @"1", version[@"BuildConfig"], version[@"CDNConfig"], @"", @"", cdn[@"Path"], cdn[@"Hosts"] ?: @"",
                                  cdn[@"Servers"] ?: @"", tagLine, @"", @"", version[@"VersionsName"], @"", product];
     for (NSString *cell in row) if ([cell containsString:@"|"] || [cell containsString:@"\n"]) { if (error) *error = download_error(@"The version server's answer was not understood."); return NO; }
-    NSString *buildInfo = [NSString stringWithFormat:@"%@\n%@\n", header, [row componentsJoinedByString:@"|"]];
+    // One install can hold several products (World of Warcraft's flavours share
+    // a folder): the other products' rows stay, this one's is replaced.
+    NSString *buildInfoPath = [_root stringByAppendingPathComponent:@".build.info"];
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:header], *columns = [NSMutableArray new];
+    for (NSString *column in [header componentsSeparatedByString:@"|"]) [columns addObject:[column componentsSeparatedByString:@"!"].firstObject];
+    NSData *existing = [NSData dataWithContentsOfFile:buildInfoPath];
+    for (NSDictionary<NSString *, NSString *> *old in existing ? table(existing) : @[]) {
+        if ([old[@"Product"] isEqual:product] || ![old[@"Product"] length]) continue;
+        NSMutableArray<NSString *> *cells = [NSMutableArray new];
+        for (NSString *column in columns) [cells addObject:old[column] ?: @""];
+        [lines addObject:[cells componentsJoinedByString:@"|"]];
+    }
+    [lines addObject:[row componentsJoinedByString:@"|"]];
+    NSString *buildInfo = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     if (![files createDirectoryAtPath:[_root stringByAppendingPathComponent:@"Data"] withIntermediateDirectories:YES attributes:nil error:error] ||
         ![files createDirectoryAtPath:_working withIntermediateDirectories:YES attributes:nil error:error] ||
-        ![buildInfo writeToFile:[_root stringByAppendingPathComponent:@".build.info"] atomically:YES encoding:NSUTF8StringEncoding error:error] ||
+        ![buildInfo writeToFile:buildInfoPath atomically:YES encoding:NSUTF8StringEncoding error:error] ||
         ![[NSString stringWithFormat:@"Product Flavor!STRING:0\n%@\n", product] writeToFile:[_working stringByAppendingPathComponent:@".flavor.info"]
                                                                                  atomically:YES encoding:NSUTF8StringEncoding error:error]) return NO;
     NSDictionary *file = _configuration[@"settings"];

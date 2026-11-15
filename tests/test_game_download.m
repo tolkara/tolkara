@@ -265,10 +265,19 @@ int main(void) {
         // Again with everything in place: only the lists are asked for, the
         // user's settings stay, and a file that changed is fetched again.
         [@"SET portal \"US\"\n" writeToFile:settingsPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        // Another product installed in the same folder keeps its row; this
+        // product's old row is replaced, not repeated.
+        NSString *otherRow = @"us|1|00000000000000000000000000000001|00000000000000000000000000000002|||tpr/test|h|s|OSX|||0.0.1||otherp";
+        NSString *staleRow = @"eu|1|00000000000000000000000000000003|00000000000000000000000000000004|||tpr/test|h|s|OSX|||0.0.0||testp";
+        NSString *buildInfoPath = [documents stringByAppendingPathComponent:@"Game/.build.info"];
+        [[NSString stringWithFormat:@"%@\n%@\n%@\n", [buildInfo componentsSeparatedByString:@"\n"][0], otherRow, staleRow]
+            writeToFile:buildInfoPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
         [asked removeAllObjects];
         download = [[TKGameDownload alloc] initWithConfiguration:block documents:documents workingDirectory:working region:@"eu" locale:@"enUS"];
         download.fetch = fetch;
         assert([download run:&error] && asked.count == 4);
+        NSArray<NSString *> *merged = [[NSString stringWithContentsOfFile:buildInfoPath encoding:NSUTF8StringEncoding error:NULL] componentsSeparatedByString:@"\n"];
+        assert(merged.count == 4 && [merged[1] isEqual:otherRow] && [[merged[2] stringByAppendingString:@"\n"] isEqual:row]);
         assert([[NSString stringWithContentsOfFile:settingsPath encoding:NSUTF8StringEncoding error:NULL] isEqual:@"SET portal \"US\"\n"]);
         [pattern(info.length, 7) writeToFile:[app stringByAppendingPathComponent:@"Info.plist"] atomically:YES];
         [asked removeAllObjects];
