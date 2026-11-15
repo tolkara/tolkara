@@ -24,7 +24,11 @@
     },
     "firstRun": {
       "settings": "_forever_/WTF/Config.wtf",
-      "keys": ["portal", "textLocale", "audioLocale"],
+      "keys": [
+        "portal",
+        "textLocale",
+        "audioLocale"
+      ],
       "steps": [
         "Open **Battle.net** on this Mac and select World of Warcraft. Choose **World of Warcraft Forever** and the region your account plays in.",
         "For a language other than the default, set it in Battle.net's Settings, under Game Settings, before you play.",
@@ -78,6 +82,55 @@
           "url": "https://github.com/tolkara/tolkara#online-games-and-account-risk"
         }
       ]
+    }
+  },
+  "download": {
+    "service": "blizzard",
+    "product": "wowf",
+    "regions": [
+      {
+        "id": "us",
+        "name": "Americas and Oceania",
+        "portal": "US"
+      },
+      {
+        "id": "eu",
+        "name": "Europe",
+        "portal": "EU"
+      },
+      {
+        "id": "kr",
+        "name": "Korea",
+        "portal": "KR"
+      },
+      {
+        "id": "tw",
+        "name": "Taiwan",
+        "portal": "TW"
+      }
+    ],
+    "locales": [
+      "enUS",
+      "deDE",
+      "esES",
+      "esMX",
+      "frFR",
+      "koKR",
+      "ptBR",
+      "ruRU",
+      "zhTW"
+    ],
+    "tags": [
+      "OSX",
+      "arm64"
+    ],
+    "folder": "World of Warcraft.app",
+    "root": "World of Warcraft",
+    "settings": {
+      "file": "WTF/Config.wtf",
+      "region": "portal",
+      "text": "textLocale",
+      "audio": "audioLocale"
     }
   }
 }

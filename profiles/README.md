@@ -84,6 +84,21 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   Keychain; sync state, backups and `sync.log` are in
   `Documents/SteamCloud/<id>/`. On a device with no sync state yet, the
   first sync takes the Cloud's files and backs up the local ones there.
+- `download` (experimental): what the launcher fetches for a user who has no
+  Mac to copy the application from. With it, **+** in the launcher offers
+  **Download <name>…** while the application is not in Documents. The
+  launcher fetches only the application itself, straight from its
+  publisher's content servers to the device, and checks each file against
+  the publisher's own file list; Tolkara hosts and bundles none of it. Its
+  keys: `service` (`"blizzard"`, the only one: Blizzard's public version and
+  content servers, which need no account), `product`, the `regions` on offer
+  (each `id`, `name` and the `portal` the game calls it), the `locales`, the
+  `tags` of the publisher's file list that select this system's files, the
+  list's `folder` that is the application, the install's top folder `root`
+  (the working directory or a folder above it), and optionally `settings`:
+  the game's settings `file` and the names of its `region`, `text` and
+  `audio` settings, written once with the user's choices. Not for a profile
+  with a `runtime`.
 
 Every profile in `profiles/` is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library

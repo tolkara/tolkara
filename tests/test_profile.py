@@ -79,6 +79,30 @@ class ProfileTests(unittest.TestCase):
                 check(self.write({**good, 'steamCloud': {k: v for k, v in cloud.items() if k != missing}}))
         with self.assertRaises(ValueError): check(self.write({**good, 'steamCloud': []}))
 
+    def test_download(self):
+        # What the launcher's experimental downloader fetches: data only, inside Documents.
+        block = {'service': 'blizzard', 'product': 'gamep',
+                 'regions': [{'id': 'eu', 'name': 'Europe', 'portal': 'EU'}], 'locales': ['enUS'], 'tags': ['OSX', 'arm64'],
+                 'folder': 'G.app', 'root': 'G',
+                 'settings': {'file': 'WTF/Config.wtf', 'region': 'portal', 'text': 'textLocale', 'audio': 'audioLocale'}}
+        good = {'id': 'g', 'name': 'G', 'workingDirectory': 'G/_flavor_', 'executable': 'G.app/Contents/MacOS/G', 'download': block}
+        check(self.write(good))
+        check(self.write({**good, 'download': {k: v for k, v in block.items() if k != 'settings'}}))
+        check(self.write({**good, 'workingDirectory': 'G'}))
+        for change in ({'service': 'other'}, {'product': '../x'}, {'product': 1}, {'regions': []},
+                       {'regions': [{'id': 'EU', 'name': 'E', 'portal': 'EU'}]}, {'regions': [{'id': 'eu', 'name': 'E'}]},
+                       {'regions': [{'id': 'eu', 'name': 'E', 'portal': 'EU', 'host': 'x'}]}, {'locales': ['english']}, {'locales': []},
+                       {'tags': []}, {'tags': ['a b']}, {'folder': '../G.app'}, {'folder': 'a/b'}, {'root': '/G'}, {'root': 'Other'},
+                       {'root': 'G/..'}, {'settings': {**block['settings'], 'file': '../Config.wtf'}},
+                       {'settings': {**block['settings'], 'region': 'por tal'}}, {'settings': {'file': 'c'}}, {'script': 'run.sh'}):
+            with self.assertRaises(ValueError, msg=repr(change)): check(self.write({**good, 'download': {**block, **change}}))
+        for missing in ('service', 'product', 'regions', 'locales', 'tags', 'folder', 'root'):
+            with self.assertRaises(ValueError, msg=missing):
+                check(self.write({**good, 'download': {k: v for k, v in block.items() if k != missing}}))
+        with self.assertRaises(ValueError): check(self.write({**good, 'download': []}))
+        # Not for a compatibility runtime's profile.
+        with self.assertRaises(ValueError): check(self.write({**good, 'runtime': 'G/Runtime'}))
+
     def test_setup(self):
         # What the Mac app reads: plain data, https links, the destination above the working directory.
         good = {'id': 'a', 'name': 'A', 'workingDirectory': 'Games/A', 'executable': 'A.app/Contents/MacOS/A',

@@ -1,5 +1,6 @@
 #import "LibraryViewController.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import "GameDownload.h"
 
 @interface TKLibraryViewController () <UIDocumentPickerDelegate>
 @end
@@ -30,6 +31,10 @@ static double TKPointerSpeed(void) {
     dispatch_queue_t _queue;
     BOOL _discovered, _importing;
     UIBarButtonItem *_addItem, *_controlsItem;
+    // The experimental download in progress, its alert and the bar in it.
+    TKGameDownload *_download;
+    UIAlertController *_downloadAlert;
+    UIProgressView *_downloadBar;
 }
 
 - (instancetype)initWithLibrary:(TKAppLibrary *)library {
@@ -73,6 +78,7 @@ static double TKPointerSpeed(void) {
 - (void)reload {
     _apps=_library.apps;
     _addItem.enabled=!_importing;
+    [self updateAddMenu];
     [self.tableView reloadData];
     [self updateEmptyState];
 }
@@ -307,6 +313,128 @@ static double TKPointerSpeed(void) {
     sheet.popoverPresentationController.sourceView=view;
     sheet.popoverPresentationController.sourceRect=view.bounds;
     [self presentViewController:sheet animated:YES completion:nil];
+}
+
+// The + button adds an app from Files. With a profile whose application can
+// be downloaded and is not here yet, it is a menu that offers that too.
+- (void)updateAddMenu {
+    NSArray<NSDictionary *> *offers=_library.downloadableProfiles;
+    // A bar button with an action shows its menu only on a long press: with
+    // something to offer, a tap opens the menu.
+    _addItem.action=offers.count ? nil : @selector(importApp);
+    if (!offers.count) { _addItem.menu=nil; return; }
+    __weak TKLibraryViewController *weakSelf=self;
+    NSMutableArray<UIMenuElement *> *items=[NSMutableArray arrayWithObject:
+        [UIAction actionWithTitle:@"Add from Files…" image:[UIImage systemImageNamed:@"folder"] identifier:nil handler:^(UIAction *a) {
+            (void)a; [weakSelf importApp];
+        }]];
+    for (NSDictionary *profile in offers) {
+        [items addObject:[UIAction actionWithTitle:[NSString stringWithFormat:@"Download %@… (Experimental)",profile[@"name"]]
+            image:[UIImage systemImageNamed:@"arrow.down.circle"] identifier:nil handler:^(UIAction *a) {
+                (void)a; [weakSelf offerDownloadOfProfile:profile];
+            }]];
+    }
+    _addItem.menu=[UIMenu menuWithChildren:items];
+}
+
+#pragma mark Download (experimental)
+
+// What is fetched and from whom, with the profile's own notice about the
+// application; then the region and language the game is set up for.
+- (void)offerDownloadOfProfile:(NSDictionary *)profile {
+    NSString *risk=[profile[@"setup"] isKindOfClass:NSDictionary.class] && [profile[@"setup"][@"risk"] isKindOfClass:NSDictionary.class]
+        ? profile[@"setup"][@"risk"][@"summary"] : nil;
+    NSMutableString *message=[NSMutableString stringWithFormat:@"Tolkara fetches %@'s own application from its publisher's servers, into Tolkara's folder on this device. "
+        @"Tolkara does not host or change it. The game then downloads its data itself when it first starts, which can be tens of gigabytes: "
+        @"use Wi-Fi and keep Tolkara open.\n\nThis is experimental.",profile[@"name"]];
+    if ([risk isKindOfClass:NSString.class] && risk.length) [message appendFormat:@"\n\n%@",risk];
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"Download %@?",profile[@"name"]]
+        message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a; [self chooseRegionForProfile:profile];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)chooseRegionForProfile:(NSDictionary *)profile {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Region" message:@"The region your account plays in."
+        preferredStyle:UIAlertControllerStyleAlert];
+    for (NSDictionary<NSString *,NSString *> *region in [TKGameDownload regionsOfConfiguration:profile[@"download"]]) {
+        [alert addAction:[UIAlertAction actionWithTitle:region[@"name"] style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            (void)a; [self chooseLanguageForProfile:profile region:region[@"id"]];
+        }]];
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)chooseLanguageForProfile:(NSDictionary *)profile region:(NSString *)region {
+    NSArray<NSString *> *locales=[TKGameDownload localesOfConfiguration:profile[@"download"]];
+    if (locales.count==1) { [self downloadProfile:profile region:region locale:locales[0]]; return; }
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Language" message:@"The game's text and speech."
+        preferredStyle:UIAlertControllerStyleAlert];
+    for (NSString *locale in locales) {
+        // "enUS" as "English (United States)", in the device's language.
+        NSString *identifier=[NSString stringWithFormat:@"%@_%@",[locale substringToIndex:2],[locale substringFromIndex:2]];
+        NSString *name=[NSLocale.currentLocale localizedStringForLocaleIdentifier:identifier]?:locale;
+        [alert addAction:[UIAlertAction actionWithTitle:name style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+            (void)a; [self downloadProfile:profile region:region locale:locale];
+        }]];
+    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)downloadProfile:(NSDictionary *)profile region:(NSString *)region locale:(NSString *)locale {
+    NSString *documents=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
+    // Room for the application; the game's own data needs far more and says so itself.
+    NSNumber *room=[[NSURL fileURLWithPath:documents] resourceValuesForKeys:@[NSURLVolumeAvailableCapacityForImportantUsageKey] error:NULL][NSURLVolumeAvailableCapacityForImportantUsageKey];
+    if (room && room.unsignedLongLongValue<(1ull<<30)) {
+        [self showError:[NSError errorWithDomain:TKGameDownloadErrorDomain code:2 userInfo:@{NSLocalizedDescriptionKey:
+            @"There is less than 1 GB free on this device."}] title:@"Cannot Download"];
+        return;
+    }
+    TKGameDownload *download=[[TKGameDownload alloc] initWithConfiguration:profile[@"download"] documents:documents
+        workingDirectory:profile[@"workingDirectory"] region:region locale:locale];
+    if (!download || _download) return;
+    _download=download;
+    _downloadAlert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"Downloading %@",profile[@"name"]]
+        message:@"Starting…\n\n" preferredStyle:UIAlertControllerStyleAlert];
+    [_downloadAlert addAction:[UIAlertAction actionWithTitle:@"Stop" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
+        (void)a; [download cancel];
+    }]];
+    _downloadBar=[[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    _downloadBar.translatesAutoresizingMaskIntoConstraints=NO;
+    [_downloadAlert.view addSubview:_downloadBar];
+    [NSLayoutConstraint activateConstraints:@[
+        [_downloadBar.leadingAnchor constraintEqualToAnchor:_downloadAlert.view.leadingAnchor constant:20],
+        [_downloadBar.trailingAnchor constraintEqualToAnchor:_downloadAlert.view.trailingAnchor constant:-20],
+        [_downloadBar.bottomAnchor constraintEqualToAnchor:_downloadAlert.view.bottomAnchor constant:-64]]];
+    [self presentViewController:_downloadAlert animated:YES completion:nil];
+    __weak TKLibraryViewController *weakSelf=self;
+    download.progress=^(NSString *phase,double fraction) {
+        dispatch_async(dispatch_get_main_queue(),^{
+            TKLibraryViewController *controller=weakSelf;
+            if (!controller || controller->_download!=download) return;
+            controller->_downloadAlert.message=[phase stringByAppendingString:@"\n\n"];
+            controller->_downloadBar.progress=(float)fraction;
+        });
+    };
+    // A long download: the screen stays on, as it does while a game runs.
+    UIApplication.sharedApplication.idleTimerDisabled=YES;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        NSError *error=nil;
+        BOOL done=[download run:&error];
+        dispatch_async(dispatch_get_main_queue(),^{
+            UIApplication.sharedApplication.idleTimerDisabled=NO;
+            UIAlertController *alert=self->_downloadAlert;
+            self->_download=nil; self->_downloadAlert=nil; self->_downloadBar=nil;
+            BOOL stopped=[error.domain isEqual:NSCocoaErrorDomain] && error.code==NSUserCancelledError;
+            void (^after)(void)=^{
+                [self refresh];
+                if (!done && !stopped) [self showError:error title:@"Download Failed"];
+            };
+            if (alert.presentingViewController) [alert dismissViewControllerAnimated:YES completion:after]; else after();
+        });
+    });
 }
 
 - (void)importApp {

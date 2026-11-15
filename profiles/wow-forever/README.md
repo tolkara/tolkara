@@ -43,6 +43,24 @@ device stay. To change region or language later, start the game once on the
 Mac again and run the script with `--skip-data` (in Tolkara Management:
 Library, then **Copy Again**). Tolkara Management checks this on its Game step.
 
+## Without a Mac (experimental)
+
+In the launcher, **+** offers **Download World of Warcraft Forever…** while
+the game is not in Tolkara's folder. After the notice about online games you
+choose your region and language, and Tolkara fetches the game's application
+(about 200 MB) from Blizzard's content servers, which need no account. It
+writes the region and languages itself, so nothing has to be started on a
+Mac. The game then downloads its data when it first starts and shows its
+progress; World of Warcraft's data is tens of gigabytes, so use Wi-Fi and
+keep Tolkara open. A download that was stopped continues where it left off.
+
+Tested so far: the fetched application is byte for byte the one Battle.net
+installs on a Mac (build 1.60.1.70938, Europe, enUS, 2026-11-15), and a copy
+with no data reached the login screen on an iPad Pro M5 after the game
+fetched its own. Not yet tried: a start from files the launcher fetched and
+wrote itself, logging in from such a copy, and any region or language but
+those.
+
 Open Tolkara, choose an execution mode if it asks, tap World of Warcraft Forever
 in the library (it appears once the files are copied), and log in inside the
 game as usual.
