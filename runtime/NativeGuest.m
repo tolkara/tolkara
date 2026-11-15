@@ -972,8 +972,22 @@ static void slot_dispatch_after(dispatch_time_t when, dispatch_queue_t queue, di
 static size_t guest_process_slot(void) {
     return gp_current_slot((uintptr_t)__builtin_return_address(0));
 }
+// iPadOS has CoreFoundation's user notifications (a dialog with buttons and a
+// progress bar, shown for the process) but refuses them to an app; a guest
+// reads that as its dialog being cancelled. The AppKit adapter presents them
+// (Alerts.m): CFUserNotificationCreate binds to its AKUserNotificationCreate,
+// and so on for each function it has.
+static void *user_notification_hook(const char *name) {
+    static const char prefix[]="CFUserNotification";
+    if (strncmp(name,prefix,sizeof prefix-1)) return NULL;
+    char adapter[96];
+    if (snprintf(adapter,sizeof adapter,"AKUserNotification%s",name+sizeof prefix-1)>=(int)sizeof adapter) return NULL;
+    return dlsym(RTLD_DEFAULT,adapter);
+}
 static void *hook(const char *name) {
 #define HOOK(n,f) if (!strcmp(name,n)) return (void *)&f
+    void *notification=user_notification_hook(name);
+    if (notification) return notification;
     HOOK("sigaction",guest_sigaction);
     if (gsv_enabled()) {
         HOOK("tolkara_software_reserve_aligned",gsv_reserve_aligned);
