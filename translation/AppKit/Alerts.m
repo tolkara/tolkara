@@ -237,7 +237,12 @@ static void AKUserNotificationScheduled(void *info, CFRunLoopRef loop, CFRunLoop
 // The callout runs on the run loop the source is added to, once, with the response.
 CFRunLoopSourceRef AKUserNotificationCreateRunLoopSource(CFAllocatorRef allocator, CFTypeRef reference, AKUserNotificationCallBack callout, CFIndex order) {
     AKUserNotification *notification = (__bridge AKUserNotification *)reference;
-    AKLog(@"user notification: run loop source for %@ callout=%d", [notification class], callout != NULL);
+    if (reference && ![notification isKindOfClass:AKUserNotification.class]) {
+        // Not one of ours: say what it is (its type only), for the log.
+        CFStringRef type = CFCopyTypeIDDescription(CFGetTypeID(reference));
+        AKLog(@"user notification: run loop source asked for a %@ (allocator=%p order=%ld)", (__bridge NSString *)type, allocator, (long)order);
+        if (type) CFRelease(type);
+    } else AKLog(@"user notification: run loop source for %@ callout=%d", [notification class], callout != NULL);
     if (![notification isKindOfClass:AKUserNotification.class] || !callout) return NULL;
     if (!notification->_source) {
         // The source does not retain the notification: the notification owns it.
