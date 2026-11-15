@@ -189,7 +189,8 @@ static NSString *AKUserNotificationKey(const char *symbol, NSString *value) {
 @end
 
 CFTypeRef AKUserNotificationCreate(CFAllocatorRef allocator, CFTimeInterval timeout, CFOptionFlags flags, SInt32 *error, CFDictionaryRef dictionary) {
-    (void)allocator; (void)flags;
+    (void)allocator;
+    AKLog(@"user notification: create flags=0x%lx dictionary=%d", (unsigned long)flags, dictionary != NULL);
     AKUserNotification *notification = [AKUserNotification new];
     [notification read:(__bridge NSDictionary *)dictionary];
     AKLog(@"user notification created: header=%d message=%d progress=%d timeout=%.0f",
@@ -236,6 +237,7 @@ static void AKUserNotificationScheduled(void *info, CFRunLoopRef loop, CFRunLoop
 // The callout runs on the run loop the source is added to, once, with the response.
 CFRunLoopSourceRef AKUserNotificationCreateRunLoopSource(CFAllocatorRef allocator, CFTypeRef reference, AKUserNotificationCallBack callout, CFIndex order) {
     AKUserNotification *notification = (__bridge AKUserNotification *)reference;
+    AKLog(@"user notification: run loop source for %@ callout=%d", [notification class], callout != NULL);
     if (![notification isKindOfClass:AKUserNotification.class] || !callout) return NULL;
     if (!notification->_source) {
         // The source does not retain the notification: the notification owns it.

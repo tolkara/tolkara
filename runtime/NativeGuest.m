@@ -982,7 +982,9 @@ static void *user_notification_hook(const char *name) {
     if (strncmp(name,prefix,sizeof prefix-1)) return NULL;
     char adapter[96];
     if (snprintf(adapter,sizeof adapter,"AKUserNotification%s",name+sizeof prefix-1)>=(int)sizeof adapter) return NULL;
-    return dlsym(RTLD_DEFAULT,adapter);
+    void *function=dlsym(RTLD_DEFAULT,adapter);
+    LOG("[native] %s -> %s %s\n",name,adapter,function?"(AppKit adapter)":"is not loaded; the system's is used");
+    return function;
 }
 static void *hook(const char *name) {
 #define HOOK(n,f) if (!strcmp(name,n)) return (void *)&f
