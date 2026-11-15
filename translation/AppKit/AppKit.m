@@ -408,13 +408,19 @@ static BOOL AKWindowInputDiagnostics(void) {
 // insets never mark the strip.
 + (CGRect)touchControlsStripIn:(UIView *)view regions:(NSUInteger *)count {
     *count = 0;
-    if (@available(iOS 27.1, *)) {
+    // UIView's reserved regions (iOS 27.1), named at run time: an Xcode whose
+    // SDK is older, as on the release's build machine, does not declare them.
+    // Options 1 is UIViewReservedRegionQueryOptionsIncludeInactive.
+    SEL query = NSSelectorFromString(@"reservedRegionsOfKind:options:"), occlusion = NSSelectorFromString(@"occlusionRegionKind");
+    Class kinds = NSClassFromString(@"UIViewReservedRegionKind");
+    if (kinds && [kinds respondsToSelector:occlusion] && [view respondsToSelector:query]) {
         CGRect bounds = view.bounds;
-        NSArray<UIViewReservedRegion *> *regions = [view reservedRegionsOfKind:UIViewReservedRegionKind.occlusionRegionKind
-                                                                       options:UIViewReservedRegionQueryOptionsIncludeInactive];
+        id kind = ((id (*)(id, SEL))objc_msgSend)(kinds, occlusion);
+        NSArray *regions = ((NSArray *(*)(id, SEL, id, NSUInteger))objc_msgSend)(view, query, kind, 1);
         *count = regions.count;
-        for (UIViewReservedRegion *region in regions) {
-            CGRect frame = region.frame;
+        for (id region in regions) {
+            if (![region respondsToSelector:@selector(frame)]) continue;
+            CGRect frame = ((CGRect (*)(id, SEL))objc_msgSend)(region, @selector(frame));
             BOOL trailing = CGRectGetMaxX(frame) >= CGRectGetMaxX(bounds) - 1, leading = CGRectGetMinX(frame) <= CGRectGetMinX(bounds) + 1;
             if (trailing == leading || frame.size.width < 44 || frame.size.width > bounds.size.width / 4 ||
                 CGRectGetMinY(frame) > CGRectGetMinY(bounds) + 1 || CGRectGetMaxY(frame) > CGRectGetMidY(bounds)) continue;
