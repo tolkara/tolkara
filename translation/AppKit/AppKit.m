@@ -16,6 +16,11 @@ NSApplication *NSApp;
 
 @interface NSView (ProcessLifetime)
 + (void)ak_retireObservers:(NSView *)view;
+- (void)ak_placeLayerOfSubview:(NSView *)view;
+@end
+
+@interface NSWindow (ContentLayer)
+- (void)ak_contentLayerChanged;
 @end
 
 #pragma mark - NSResponder
@@ -117,10 +122,50 @@ static NSPoint mouseScreenLocation;
     if (w && !_layer) { self.layer = [self makeBackingLayer]; }
 }
 - (void)setLayer:(CALayer *)l {
+    CALayer *old = _layer;
     _layer = l;
     // As AppKit's: a view's layer is placed by its origin, which Wine's Mac driver sets as the position.
     l.anchorPoint = CGPointZero;
     l.frame = _frame; l.delegate = nil; l.hidden=_hidden;
+    if (old == l) return;
+    // As AppKit's: the view's new layer takes the old one's place on screen,
+    // and the subviews' layers move into it. A game that makes a new Metal
+    // layer for its view (World of Warcraft does when the graphics card is
+    // chosen in its settings) otherwise draws into a layer nobody sees, while
+    // the old layer keeps showing its last frame.
+    [CATransaction begin]; [CATransaction setDisableActions:YES];
+    for (NSView *child in _subviews) {
+        CALayer *sublayer = child.layer;
+        if (!sublayer || (old && sublayer.superlayer != old)) continue;
+        if (l) [l addSublayer:sublayer]; else [sublayer removeFromSuperlayer];
+    }
+    CALayer *parent = old.superlayer;
+    if (parent && l) [parent replaceSublayer:old with:l];
+    else {
+        [old removeFromSuperlayer];
+        if (l && !l.superlayer) {
+            if (_superview) [_superview ak_placeLayerOfSubview:self];
+            else if (_window.contentView == self) [_window ak_contentLayerChanged];
+        }
+    }
+    [CATransaction commit];
+    if (old) {
+        AKLog(@"view %@ layer replaced: %@ -> %@ (%@)", NSStringFromClass(self.class), NSStringFromClass(old.class),
+              l ? NSStringFromClass(l.class) : @"none", l.superlayer ? @"on screen in its place" : @"not in a layer tree");
+        // The window gives its content view's layer the screen's scale.
+        if (l && parent && _window.contentView == self) [_window ak_hostBoundsChanged:parent.bounds];
+    }
+}
+// The subview's layer among its siblings' layers, in the subviews' order.
+- (void)ak_placeLayerOfSubview:(NSView *)view {
+    if (!_layer || !view.layer) return;
+    NSUInteger index = [_subviews indexOfObjectIdenticalTo:view];
+    if (index == NSNotFound) return;
+    for (NSUInteger i = index + 1; i < _subviews.count; i++) {
+        CALayer *next = _subviews[i].layer;
+        if (next.superlayer == _layer) { [_layer insertSublayer:view.layer below:next]; return; }
+    }
+    [_layer addSublayer:view.layer];
 }
 - (void)setHidden:(BOOL)hidden { _hidden=hidden; _layer.hidden=hidden; }
 - (void)setFrame:(NSRect)f {
@@ -1124,6 +1169,8 @@ static void logLayer(CALayer *layer,unsigned depth) {
     if (!v.layer) v.wantsLayer = YES;
     if (_host) [self ak_attach];
 }
+// The content view was given a layer after it had none.
+- (void)ak_contentLayerChanged { if (_host && _contentView.layer && !_contentView.layer.superlayer) [self ak_attach]; }
 - (void)ak_attach {
     [_host.layer addSublayer:_contentView.layer];
     [self ak_hostBoundsChanged:_host.bounds];

@@ -754,5 +754,47 @@ int main(void) { @autoreleasepool {
            (NSEventModifierFlagShift | LeftShift | NSEventModifierFlagCapsLock));
     assert(AKModifiersReconciled(held, 0) == 0);
     assert(AKModifiersReconciled(AKModifiersAfterKey(0, 0xE6, YES), NSEventModifierFlagOption) == (NSEventModifierFlagOption | RightOption));
-    puts("display pass, frame rects, panels, tracking areas, layer placement, contents scale, window ordering, Quartz events, window numbers and modifier keys: PASS");
+
+    // A view given a new layer shows it where the old one was: a game that
+    // makes a new Metal layer for its view (World of Warcraft, when the
+    // graphics card is chosen) must not be left drawing into a layer off screen.
+    NSWindow *gameWindow = [[NSWindow alloc] initWithContentRect:CGRectMake(0, 0, 200, 100) styleMask:0 backing:0 defer:NO];
+    UIView *gameHost = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200, 100)];
+    UIView *overlay = [UIView new]; [gameHost addSubview:overlay];
+    [gameWindow setValue:gameHost forKey:@"host"];
+    NSView *gameView = [[NSView alloc] initWithFrame:CGRectMake(0, 0, 200, 100)];
+    gameWindow.contentView = gameView;
+    NSView *below = [[NSView alloc] initWithFrame:CGRectMake(0, 0, 10, 10)], *above = [[NSView alloc] initWithFrame:CGRectMake(0, 0, 10, 10)];
+    [gameView addSubview:below]; [gameView addSubview:above];
+    CALayer *firstLayer = gameView.layer;
+    assert(firstLayer.superlayer == gameHost.layer);
+    NSUInteger place = [gameHost.layer.sublayers indexOfObjectIdenticalTo:firstLayer];
+    CALayer *secondLayer = [CALayer layer];
+    gameView.layer = secondLayer;
+    assert(gameView.layer == secondLayer && !firstLayer.superlayer);
+    assert(secondLayer.superlayer == gameHost.layer);
+    assert([gameHost.layer.sublayers indexOfObjectIdenticalTo:secondLayer] == place);
+    assert(CGRectEqualToRect(secondLayer.frame, gameView.frame));
+    assert(secondLayer.contentsScale == gameWindow.backingScaleFactor);
+    assert(secondLayer.sublayers.count == 2 && secondLayer.sublayers[0] == below.layer && secondLayer.sublayers[1] == above.layer);
+    assert(firstLayer.sublayers.count == 0);
+    // The same layer again changes nothing.
+    gameView.layer = secondLayer;
+    assert(secondLayer.superlayer == gameHost.layer && secondLayer.sublayers.count == 2);
+    // A subview's layer keeps its place among its siblings' layers.
+    CALayer *belowLayer = [CALayer layer];
+    below.layer = belowLayer;
+    assert(secondLayer.sublayers.count == 2 && secondLayer.sublayers[0] == belowLayer && secondLayer.sublayers[1] == above.layer);
+    // No layer, then one again: the view comes back where it belongs.
+    below.layer = nil;
+    assert(!belowLayer.superlayer && secondLayer.sublayers.count == 1);
+    below.layer = belowLayer;
+    assert(secondLayer.sublayers.count == 2 && secondLayer.sublayers[0] == belowLayer && secondLayer.sublayers[1] == above.layer);
+    gameView.layer = nil;
+    assert(!secondLayer.superlayer && !belowLayer.superlayer && !above.layer.superlayer);
+    CALayer *thirdLayer = [CALayer layer];
+    gameView.layer = thirdLayer;
+    assert(thirdLayer.superlayer == gameHost.layer);
+    assert(thirdLayer.sublayers.count == 2 && thirdLayer.sublayers[0] == belowLayer && thirdLayer.sublayers[1] == above.layer);
+    puts("display pass, frame rects, panels, tracking areas, layer placement, layer replacement, contents scale, window ordering, Quartz events, window numbers and modifier keys: PASS");
 } }
