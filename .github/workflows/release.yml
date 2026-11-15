@@ -62,7 +62,7 @@ jobs:
       - name: Build the unsigned .ipa
         if: steps.plan.outputs.skip != 'true'
         # Published, so nothing exported from the runner's macOS goes in.
-        run: TOLKARA_SYSTEM_ROOTS=NO tools/package_ipa.sh "$IPA"
+        run: TOLKARA_SYSTEM_ROOTS=PUBLIC tools/package_ipa.sh "$IPA"
 
       - name: Write the release notes
         if: steps.plan.outputs.skip != 'true'

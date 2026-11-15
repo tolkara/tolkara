@@ -6,8 +6,9 @@
 # the sideloading tool (SideStore or similar), or a JIT enabler such as
 # StikDebug, enables JIT. For Developer service or Local signing with your own
 # team, build with tools/install.sh instead.
-# TOLKARA_SYSTEM_ROOTS=NO leaves out this Mac's public root certificates
-# (.github/workflows/release.yml does, for the published build).
+# TOLKARA_SYSTEM_ROOTS=PUBLIC packages Mozilla's public root certificates in
+# place of this Mac's (.github/workflows/release.yml does, for the published
+# build: nothing exported from macOS is redistributed); NO packages none.
 set -euo pipefail
 OUT=${1:-Tolkara-unsigned.ipa}
 case "$OUT" in /*) ;; *) OUT="$PWD/$OUT";; esac

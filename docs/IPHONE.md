@@ -30,9 +30,10 @@ WoW Forever needs the settings of its own installation: `portal`,
 `textLocale` and `audioLocale` from `_forever_/WTF/Config.wtf` after you have
 logged in on the Mac, not from Classic Era (the earlier Classic beta used
 `portal "test"` from `_classic_beta_`).
-It also needs the public system root certificates that a build on your own Mac
-includes by default (`TOLKARA_SYSTEM_ROOTS=YES`; the published unsigned `.ipa`
-has none). Login was refused (`BLZ51900003`) until both were right.
+It also needs public root certificates: a build on your own Mac includes that
+Mac's by default (`TOLKARA_SYSTEM_ROOTS=YES`), and the published unsigned
+`.ipa` carries Mozilla's public list since 0.3.1 (before, it had none). Login
+was refused (`BLZ51900003`) until both were right.
 
 ## Input
 

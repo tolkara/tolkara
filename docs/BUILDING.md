@@ -227,8 +227,11 @@ your sideloading tool knows to request them), as a generic build (`NATIVE_GUEST_
 release carries the same build, made by `.github/workflows/release.yml`, with
 install links for SideStore and LiveContainer in its notes; building it
 yourself remains the supported way. The release build leaves out the public
-root certificates a build exports from your own Mac, so an application that
-reads macOS's system root certificate store finds none there. Install it with your sideloading
+root certificates a build exports from your own Mac. An application that
+reads macOS's system root certificate store (World of Warcraft does, to verify
+its login servers) is offered Mozilla's public list in their place
+(`TOLKARA_SYSTEM_ROOTS=PUBLIC`, `translation/Security/PublicRoots`), of which
+it gets only the certificates the device itself trusts. Install it with your sideloading
 tool, open it with JIT enabled, then add your application in the app. Opened
 without JIT, Tolkara says so instead of starting the application. Sideloading
 tools usually change the app's bundle identifier: copy your application's files

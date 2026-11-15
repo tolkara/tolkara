@@ -90,11 +90,15 @@ if [ "${NATIVE_GUEST_SHIMS:-NO}" = YES ] || [ "${NATIVE_GUEST_SHIMS:-NO}" = GENE
         python3 "$ROOT/tools/build_shims.py" "$P" "$W/surface.json" "$OUT/Frameworks"
         cp "$W/map.json" "$OUT/Guest/libraries.json"
     fi
-    # The builder's own Mac's public root certificates. TOLKARA_SYSTEM_ROOTS=NO
-    # leaves them out, as the published release build does: it is not built on
-    # the user's Mac, and nothing exported from macOS is redistributed.
+    # The builder's own Mac's public root certificates. The published release
+    # build is not built on the user's Mac, and nothing exported from macOS is
+    # redistributed: TOLKARA_SYSTEM_ROOTS=PUBLIC packages Mozilla's public list
+    # instead (translation/Security/PublicRoots), and NO packages none.
     rm -f "$OUT/CompatibilityRootCertificates.plist"
-    if [ "${TOLKARA_SYSTEM_ROOTS:-YES}" != NO ]; then
+    if [ "${TOLKARA_SYSTEM_ROOTS:-YES}" = PUBLIC ]; then
+        python3 "$ROOT/tools/package_public_roots.py" "$ROOT/translation/Security/PublicRoots/cacert.pem" \
+            "$OUT/CompatibilityRootCertificates.plist"
+    elif [ "${TOLKARA_SYSTEM_ROOTS:-YES}" != NO ]; then
         MACSDK=$(xcrun --sdk macosx --show-sdk-path)
         xcrun --sdk macosx clang -target arm64-apple-macos14.0 -isysroot "$MACSDK" \
           -fobjc-arc -Wno-deprecated-declarations -framework Foundation -framework Security \
