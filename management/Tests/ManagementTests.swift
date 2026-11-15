@@ -438,6 +438,11 @@ final class LibraryTests: XCTestCase {
         XCTAssertEqual(files, [.init(path: "Data", size: 96, isDirectory: true), .init(path: "Data/a.idx", size: 1000, isDirectory: false)])
         let plist = try PropertyListSerialization.data(fromPropertyList: ["CFBundleShortVersionString": "1.60.1"], format: .xml, options: 0)
         XCTAssertEqual(DeviceLibraryReader.version(fromInfoPlist: plist), "1.60.1")
+        // The build tells two updates apart when the short version stays the same.
+        XCTAssertEqual(DeviceLibraryReader.version(of: ["CFBundleShortVersionString": "1.60.1", "CFBundleVersion": "1.60.1.70938"]), "1.60.1.70938")
+        XCTAssertEqual(DeviceLibraryReader.version(of: ["CFBundleShortVersionString": "2.1", "CFBundleVersion": "412"]), "2.1 (412)")
+        XCTAssertEqual(DeviceLibraryReader.version(of: ["CFBundleVersion": "412"]), "412")
+        XCTAssertNil(DeviceLibraryReader.version(of: [:]))
     }
 
     func testFindsTolkaraInstalledByHand() {

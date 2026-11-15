@@ -253,6 +253,15 @@ launcher expects them. For the tested profile:
 python3 profiles/wow-classic-era/install.py
 ```
 
+The World of Warcraft scripts first check that Battle.net has finished
+installing the game: the version of the executable must be the one its
+`.build.info` names for that product. A copy made while an update is under way
+starts on the iPad and then stops with the game's own error (*Invalid schema
+... for Table StartupFiles*). When the script stops, open Battle.net, let the
+update finish, start the game once as far as the character list, quit both and
+run the script again, without `--skip-data` after a game update, so the data
+matches the executable. `--skip-version-check` copies regardless.
+
 An app whose profile is in `profiles/` appears in Tolkara's library by itself
 once its files are there. For anything else, copy the application's folder with
 Finder or the Files app, then tap **+** in Tolkara and choose its executable (or
@@ -264,9 +273,10 @@ profile: see [profiles/README.md](../profiles/README.md).
 Open Tolkara on the iPad, choose the execution mode if it asks, and tap the
 app in the library. With Developer service, keep Tolkara in the foreground
 while it prepares memory (about 3 MB per second: 33 seconds for Heroes III). One app can start per
-session: to start another, open Tolkara again. When an app closes cleanly,
-Tolkara ends itself after a short note, so the next tap on its icon opens the
-library ready to start another app.
+session: to start another, open Tolkara again. When an app closes, Tolkara
+ends itself after a short note, so the next tap on its icon opens the library
+ready to start another app; an app that is slow to shut down is ended after a
+few seconds.
 Runtime output goes to `Documents/native-guest.log` (the three runs before it
 stay beside it as `native-guest.1.log`, the latest, to `native-guest.3.log`); the Diagnostics menu
 (stethoscope) shows it and the other logs, and holds the development checks.

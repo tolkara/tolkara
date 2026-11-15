@@ -98,7 +98,16 @@ enum DeviceLibraryReader {
     }
 
     static func version(fromInfoPlist data: Data) -> String? {
-        (try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])?["CFBundleShortVersionString"] as? String
+        version(of: (try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]) ?? [:])
+    }
+
+    /// A bundle's version with its build: World of Warcraft's short version stays
+    /// "1.60.1" across updates, and only the build (1.60.1.70938) tells two apart.
+    static func version(of info: [String: Any]) -> String? {
+        let short = info["CFBundleShortVersionString"] as? String, build = info["CFBundleVersion"] as? String
+        guard let build, !build.isEmpty else { return short }
+        guard let short, !short.isEmpty else { return build }
+        return build.hasPrefix(short) ? build : "\(short) (\(build))"
     }
 }
 
@@ -129,7 +138,7 @@ struct MacCopy: Equatable {
     static func of(_ executable: URL) -> MacCopy? {
         guard let size = (try? executable.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else { return nil }
         let app = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        return MacCopy(version: Bundle(url: app)?.infoDictionary?["CFBundleShortVersionString"] as? String, executableSize: Int64(size))
+        return MacCopy(version: DeviceLibraryReader.version(of: Bundle(url: app)?.infoDictionary ?? [:]), executableSize: Int64(size))
     }
 
     /// Different from the device's copy: the game was updated on this Mac.

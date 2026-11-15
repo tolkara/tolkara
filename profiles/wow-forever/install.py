@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'tools'))
+import build_info
 import first_run
 import localenv
 BUNDLE_ID=localenv.bundle_id()
@@ -30,6 +31,7 @@ def main():
     parser.add_argument('--device',default=localenv.load().get('DEVICE'),help='iPad UDID (default: DEVICE in local.env)')
     parser.add_argument('--source',type=Path,default=Path('/Applications/World of Warcraft'))
     parser.add_argument('--skip-data',action='store_true')
+    parser.add_argument('--skip-version-check',action='store_true',help='copy even when Battle.net has not finished an update')
     args=parser.parse_args()
     if not args.device: parser.error('set DEVICE in local.env or pass --device')
     os.chdir(localenv.ROOT)
@@ -39,6 +41,10 @@ def main():
     executable=app/'MacOS/World of Warcraft'
     if not (source/executable).is_file(): parser.error('original WoW Forever executable not found')
     if not args.skip_data and not (source/'Data').is_dir(): parser.error('game Data directory not found')
+    # An executable and a .build.info that disagree (an update under way) make a
+    # copy the client cannot start from: stop before anything reaches the device.
+    incomplete=None if args.skip_version_check else build_info.check(source,'_forever_',app/'Info.plist')
+    if incomplete: sys.exit(incomplete)
     # Region and languages saved by the game's first start on this Mac, merged
     # into the device's own settings (first_run.py); stops here when there are none.
     first_run.stage(source,stage,'World of Warcraft',Path(__file__).parent,args.device,BUNDLE_ID)
@@ -63,7 +69,12 @@ def main():
         subprocess.run(['xcrun','devicectl','device','copy','to','--device',args.device,
             '--domain-type','appDataContainer','--domain-identifier',BUNDLE_ID,
             '--source',str(path),'--destination',destination],check=True)
-    transfer(stage,'Documents/World of Warcraft')
+    # Only this game's folder and the install's own files: the stage is shared
+    # with the other World of Warcraft profile, whose older staged executable
+    # would otherwise go to the device beside a newer .build.info.
+    for item in sorted(stage.iterdir()):
+        if item.is_file(): transfer(item,'Documents/World of Warcraft/'+item.name)
+    transfer(stage/'_forever_','Documents/World of Warcraft/_forever_')
     nibs=Path('build/guest-module/Nibs')
     if nibs.is_dir(): transfer(nibs,'Documents/GuestCompatibility/Nibs')
     if not args.skip_data: transfer(source/'Data','Documents/World of Warcraft/Data')
