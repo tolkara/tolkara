@@ -132,7 +132,7 @@ static NSString *AKUserNotificationKey(const char *symbol, NSString *value) {
             (void)stop;
             if (!title.length) return;
             [self->_alert addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-                (void)action; [weakSelf respond:index];
+                (void)action; AKLog(@"user notification: button %lu tapped", (unsigned long)index); [weakSelf respond:index];
             }]];
         }];
         [presenter presentViewController:_alert animated:NO completion:nil];
@@ -198,6 +198,7 @@ CFTypeRef AKGuestUserNotificationCreate(CFAllocatorRef allocator, CFTimeInterval
     [notification show];
     // A notification with a timeout answers by itself when it passes, as the system's does.
     if (timeout > 0) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            AKLog(@"user notification: its timeout passed");
         [notification respond:AKUserNotificationCancelResponse];
     });
     if (error) *error = 0;
@@ -208,18 +209,26 @@ SInt32 AKGuestUserNotificationUpdate(CFTypeRef reference, CFTimeInterval timeout
     AKUserNotification *notification = (__bridge AKUserNotification *)reference;
     if (![notification isKindOfClass:AKUserNotification.class]) return -1;
     [notification read:(__bridge NSDictionary *)dictionary];
+    // Progress in the log by tenths, not every update.
+    static int lastTenth = -1; static unsigned updates;
+    int tenth = notification.progress ? (int)(notification.progress.doubleValue * 10) : -1;
+    updates++;
+    if (tenth != lastTenth) { lastTenth = tenth; AKLog(@"user notification: update %u progress=%.2f", updates, notification.progress.doubleValue); }
     [notification show];
     return 0;
 }
 SInt32 AKGuestUserNotificationCancel(CFTypeRef reference) {
     AKUserNotification *notification = (__bridge AKUserNotification *)reference;
     if (![notification isKindOfClass:AKUserNotification.class]) return -1;
+    AKLog(@"user notification: cancelled by the application (progress=%.2f)", notification.progress.doubleValue);
     [notification respond:AKUserNotificationCancelResponse];
     return 0;
 }
 SInt32 AKGuestUserNotificationReceiveResponse(CFTypeRef reference, CFTimeInterval timeout, CFOptionFlags *responseFlags) {
     AKUserNotification *notification = (__bridge AKUserNotification *)reference;
     if (![notification isKindOfClass:AKUserNotification.class]) return -1;
+    static unsigned polls;
+    if (polls++ < 3) AKLog(@"user notification: response polled, timeout=%.2f", timeout);
     return [notification receive:responseFlags timeout:timeout];
 }
 static void AKUserNotificationPerform(void *info) {
