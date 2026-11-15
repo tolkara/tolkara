@@ -30,6 +30,9 @@ typedef struct {
     // double tap and hold then holds the left button, to drag a spell or an
     // item, in place of the right.
     bool leftDrag;
+    // Set by the caller (pointer acceleration is switched off): the pointer
+    // moves by AKTrackpadLinearGain whatever the finger's speed.
+    bool linear;
     // The one-finger tap just before this gesture, and whether this touch
     // followed it closely enough to be a double tap and hold.
     bool tapped, doubleTap;
@@ -45,6 +48,8 @@ double AKTrackpadGain(double speed);
 // Constant gain, without acceleration, while the right button is held (double
 // tap and slide, or two fingers held then slid): a game's camera turns by it.
 #define AKTrackpadRightDragGain 3.0
+// Constant pointer gain with pointer acceleration switched off (AKTrackpad.linear).
+#define AKTrackpadLinearGain 1.5
 void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, double time,
                      AKTrackpadEmit emit, void *context);
 // About half a second after a still touch: one finger right-clicks; two

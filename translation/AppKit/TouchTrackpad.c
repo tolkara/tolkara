@@ -128,7 +128,8 @@ void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, dou
         // evenly with the finger. The pointer's gain follows a smoothed speed.
         double sample = passed / fmax(interval, 1.0 / 240);
         pad->speed += (sample - pad->speed) * (1 - exp(-fmax(interval, 1.0 / 240) / 0.05));
-        double gain = pad->dragging && pad->button == 1 ? AKTrackpadRightDragGain : AKTrackpadGain(pad->speed);
+        double gain = pad->dragging && pad->button == 1 ? AKTrackpadRightDragGain :
+                      pad->linear ? AKTrackpadLinearGain : AKTrackpadGain(pad->speed);
         emit(context, AKTrackpadMove, dx * scale * gain, dy * scale * gain, pad->button);
     } else if (fingers == 2 && pad->reach > AKTrackpadSlop) {
         // Keep sub-line motion: the Quartz adapter exposes integer wheel ticks.
