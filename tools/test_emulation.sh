@@ -509,6 +509,7 @@ grep -q "@rpath/libtlsinit.dylib needs thread-local constructors" build/emulatio
 grep -q "imports from carried libraries=0 elsewhere=1" build/emulation/constructors-imports.txt
 python3 tests/test_package.py
 python3 tests/test_profile.py
+python3 tests/test_public_roots.py
 python3 tests/test_build_info.py
 xcrun clang -arch arm64 -x c -o build/emulation/module_fixture - <<'C'
 int main(void) { return 42; }
