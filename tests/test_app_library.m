@@ -32,7 +32,9 @@ int main(int argc, const char **argv) {
         NSError *error=nil;
 
         // Profiles: data only, paths inside Documents, unique identifiers.
-        write_text(@"{\"id\":\"p\",\"name\":\"Profiled\",\"workingDirectory\":\"P/_retail_\",\"executable\":\"P.app/Contents/MacOS/P\"}",[profiles stringByAppendingPathComponent:@"a.json"]);
+        write_text(@"{\"id\":\"p\",\"name\":\"Profiled\",\"workingDirectory\":\"P/_retail_\",\"executable\":\"P.app/Contents/MacOS/P\",\"download\":{"
+            "\"service\":\"blizzard\",\"product\":\"p\",\"regions\":[{\"id\":\"eu\",\"name\":\"Europe\",\"portal\":\"EU\"}],\"locales\":[\"enUS\"],"
+            "\"tags\":[\"OSX\"],\"folder\":\"P.app\",\"root\":\"P\"}}",[profiles stringByAppendingPathComponent:@"a.json"]);
         write_text(@"{\"id\":\"p\",\"name\":\"Duplicate\",\"workingDirectory\":\"Q\",\"executable\":\"Q\"}",[profiles stringByAppendingPathComponent:@"b.json"]);
         write_text(@"{\"id\":\"x\",\"name\":\"Escape\",\"workingDirectory\":\"../x\",\"executable\":\"X\"}",[profiles stringByAppendingPathComponent:@"c.json"]);
         write_text(@"{\"id\":\"y\",\"name\":\"Absolute\",\"workingDirectory\":\"Y\",\"executable\":\"/bin/sh\"}",[profiles stringByAppendingPathComponent:@"d.json"]);
@@ -60,6 +62,10 @@ int main(int argc, const char **argv) {
             "\"remoteDirectory\":\"s/\",\"localDirectory\":\"../s\",\"fileNames\":[\"a\"]}}",[profiles stringByAppendingPathComponent:@"r.json"]);
         write_text(@"{\"id\":\"s\",\"name\":\"Cloud\",\"workingDirectory\":\"S\",\"executable\":\"run\",\"steamCloud\":{\"appID\":1,"
             "\"remoteDirectory\":\"s/\",\"localDirectory\":\"S/s\",\"fileNames\":[\"d/a\"],\"required\":1}}",[profiles stringByAppendingPathComponent:@"s.json"]);
+        // A download block the launcher does not understand drops the profile.
+        write_text(@"{\"id\":\"t\",\"name\":\"Fetched\",\"workingDirectory\":\"T/_x_\",\"executable\":\"T.app/Contents/MacOS/T\",\"download\":{"
+            "\"service\":\"blizzard\",\"product\":\"t\",\"regions\":[{\"id\":\"eu\",\"name\":\"Europe\",\"portal\":\"EU\"}],\"locales\":[\"enUS\"],"
+            "\"tags\":[\"OSX\"],\"folder\":\"T.app\",\"root\":\"Elsewhere\"}}",[profiles stringByAppendingPathComponent:@"t.json"]);
         NSArray *known=[TKAppLibrary profilesInDirectory:profiles];
         assert(known.count==2 && [known[0][@"name"] isEqual:@"Profiled"] && [known[1][@"name"] isEqual:@"Layered"]);
         assert([[TKAppLibrary executableOfProfile:known[0]] isEqual:@"P/_retail_/P.app/Contents/MacOS/P"]);
@@ -67,6 +73,8 @@ int main(int argc, const char **argv) {
 
         TKAppLibrary *library=open_library(documents,storage,known);
         assert(!library.apps.count && !library.defaultApp && !library.loadWarning);
+        // A profile with a download block is on offer while its application is not in Documents.
+        assert(library.downloadableProfiles.count==1 && [library.downloadableProfiles[0][@"id"] isEqual:@"p"]);
 
         // An application bundle inside Documents runs in place, from the folder
         // that contains the bundle, under the bundle's own name.
@@ -140,6 +148,7 @@ int main(int argc, const char **argv) {
         copy_file(fixture,profiled);
         NSArray<TKApp *> *found=[library discover];
         assert(found.count==1 && [found[0].name isEqual:@"Profiled"] && [found[0].profile isEqual:@"p"]);
+        assert(!library.downloadableProfiles.count);
         assert([found[0].workingDirectory isEqual:@"P/_retail_"] && found[0].sha256.length==64);
         assert(![library discover].count && library.apps.count==3);
         assert([library removeApp:found[0] error:&error] && library.apps.count==2);

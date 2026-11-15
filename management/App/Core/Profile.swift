@@ -83,7 +83,7 @@ struct ProfileError: LocalizedError {
 
 enum ProfileParser {
     static let required = ["id", "name", "workingDirectory", "executable"]
-    static let optional = ["notes", "tested", "caseAliases", "runtime", "arguments", "environment", "libraries", "codePool", "processes", "setup", "steamCloud"]
+    static let optional = ["notes", "tested", "caseAliases", "runtime", "arguments", "environment", "libraries", "codePool", "processes", "setup", "steamCloud", "download"]
 
     static func relative(_ value: Any?) -> Bool {
         guard let value = value as? String, !value.isEmpty, !value.hasPrefix("/") else { return false }
@@ -127,6 +127,10 @@ enum ProfileParser {
         // steamCloud is the iPad launcher's (tools/check_profile.py checks it in full).
         if let cloud = profile["steamCloud"], !(cloud is [String: Any]) {
             throw ProfileError(message: "steamCloud must be an object.")
+        }
+        // download is the iPad launcher's too (its experimental downloader).
+        if let download = profile["download"], !(download is [String: Any]) {
+            throw ProfileError(message: "download must be an object.")
         }
         let setup = profile["setup"]
         var source: String?, installer: String?, getApp: AppProfile.GetApp?, firstRun: AppProfile.FirstRun?, risk: AppProfile.Risk?

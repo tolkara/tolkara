@@ -1,4 +1,5 @@
 #import "AppLibrary.h"
+#import "GameDownload.h"
 #import "GuestImage.h"
 #import "GuestModule.h"
 #include <ctype.h>
@@ -176,11 +177,21 @@ static NSString *clean_name(id name) {
             (profile[@"libraries"] && (!profile[@"runtime"] || !valid_libraries(profile[@"libraries"]))) ||
             (profile[@"codePool"] && (!profile[@"runtime"] || !valid_code_pool(profile[@"codePool"]))) ||
             (profile[@"processes"] && (!profile[@"runtime"] || !valid_processes(profile[@"processes"]))) ||
-            (profile[@"steamCloud"] && !valid_steam_cloud(profile[@"steamCloud"]))) continue;
+            (profile[@"steamCloud"] && !valid_steam_cloud(profile[@"steamCloud"])) ||
+            (profile[@"download"] && (profile[@"runtime"] ||
+                ![TKGameDownload validConfiguration:profile[@"download"] workingDirectory:profile[@"workingDirectory"]]))) continue;
         [seen addObject:profile[@"id"]];
         [profiles addObject:profile];
     }
     return profiles;
+}
+- (NSArray<NSDictionary *> *)downloadableProfiles {
+    NSMutableArray *out=[NSMutableArray new];
+    for (NSDictionary *profile in _profiles) {
+        if (!profile[@"download"]) continue;
+        if (![NSFileManager.defaultManager fileExistsAtPath:join(_documents,[TKAppLibrary executableOfProfile:profile])]) [out addObject:profile];
+    }
+    return out;
 }
 + (NSString *)executableOfProfile:(NSDictionary *)profile {
     return join(profile[@"runtime"]?:profile[@"workingDirectory"],profile[@"executable"]);

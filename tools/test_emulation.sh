@@ -534,7 +534,7 @@ build/emulation/test_controller_probe
 build/emulation/test_startup_activity
 xcrun clang -fobjc-arc -Wno-deprecated-declarations -Wall -Wextra -Werror \
     -O1 -g -fsanitize=address,undefined -Iruntime -Ilauncher/App -framework Foundation \
-    launcher/App/AppLibrary.m runtime/GuestModule.m runtime/GuestMemory.c runtime/GuestImage.c tests/test_app_library.m \
+    launcher/App/AppLibrary.m launcher/Download/GameDownload.m launcher/Download/BlizzardContent.c -Ilauncher/Download -lz runtime/GuestModule.m runtime/GuestMemory.c runtime/GuestImage.c tests/test_app_library.m \
     -o build/emulation/test_app_library
 build/emulation/test_app_library build/emulation/module_fixture
 xcrun clang -fobjc-arc -Wall -Wextra -Werror \
@@ -688,6 +688,12 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations \
     -framework Security translation/Security/Keychain.m tests/test_system_roots.m \
     -o build/emulation/test_system_roots
 build/emulation/test_system_roots build/emulation/system-roots.plist
+
+# The experimental downloader against a made-up content server; no network.
+xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Ilauncher/Download -framework Foundation launcher/Download/BlizzardContent.c launcher/Download/GameDownload.m \
+    tests/test_game_download.m -lz -o build/emulation/test_game_download
+build/emulation/test_game_download
 
 # Original Steam Cloud protocol and conflict fixtures; no account or network.
 xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
