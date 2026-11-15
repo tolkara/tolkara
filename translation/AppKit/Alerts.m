@@ -188,7 +188,7 @@ static NSString *AKUserNotificationKey(const char *symbol, NSString *value) {
 }
 @end
 
-CFTypeRef AKUserNotificationCreate(CFAllocatorRef allocator, CFTimeInterval timeout, CFOptionFlags flags, SInt32 *error, CFDictionaryRef dictionary) {
+CFTypeRef AKGuestUserNotificationCreate(CFAllocatorRef allocator, CFTimeInterval timeout, CFOptionFlags flags, SInt32 *error, CFDictionaryRef dictionary) {
     (void)allocator;
     AKLog(@"user notification: create flags=0x%lx dictionary=%d", (unsigned long)flags, dictionary != NULL);
     AKUserNotification *notification = [AKUserNotification new];
@@ -203,7 +203,7 @@ CFTypeRef AKUserNotificationCreate(CFAllocatorRef allocator, CFTimeInterval time
     if (error) *error = 0;
     return (__bridge_retained CFTypeRef)notification;
 }
-SInt32 AKUserNotificationUpdate(CFTypeRef reference, CFTimeInterval timeout, CFOptionFlags flags, CFDictionaryRef dictionary) {
+SInt32 AKGuestUserNotificationUpdate(CFTypeRef reference, CFTimeInterval timeout, CFOptionFlags flags, CFDictionaryRef dictionary) {
     (void)timeout; (void)flags;
     AKUserNotification *notification = (__bridge AKUserNotification *)reference;
     if (![notification isKindOfClass:AKUserNotification.class]) return -1;
@@ -211,13 +211,13 @@ SInt32 AKUserNotificationUpdate(CFTypeRef reference, CFTimeInterval timeout, CFO
     [notification show];
     return 0;
 }
-SInt32 AKUserNotificationCancel(CFTypeRef reference) {
+SInt32 AKGuestUserNotificationCancel(CFTypeRef reference) {
     AKUserNotification *notification = (__bridge AKUserNotification *)reference;
     if (![notification isKindOfClass:AKUserNotification.class]) return -1;
     [notification respond:AKUserNotificationCancelResponse];
     return 0;
 }
-SInt32 AKUserNotificationReceiveResponse(CFTypeRef reference, CFTimeInterval timeout, CFOptionFlags *responseFlags) {
+SInt32 AKGuestUserNotificationReceiveResponse(CFTypeRef reference, CFTimeInterval timeout, CFOptionFlags *responseFlags) {
     AKUserNotification *notification = (__bridge AKUserNotification *)reference;
     if (![notification isKindOfClass:AKUserNotification.class]) return -1;
     return [notification receive:responseFlags timeout:timeout];
@@ -235,7 +235,7 @@ static void AKUserNotificationScheduled(void *info, CFRunLoopRef loop, CFRunLoop
     if (notification.responded) { CFRunLoopSourceSignal(notification->_source); CFRunLoopWakeUp(loop); }
 }
 // The callout runs on the run loop the source is added to, once, with the response.
-CFRunLoopSourceRef AKUserNotificationCreateRunLoopSource(CFAllocatorRef allocator, CFTypeRef reference, AKUserNotificationCallBack callout, CFIndex order) {
+CFRunLoopSourceRef AKGuestUserNotificationCreateRunLoopSource(CFAllocatorRef allocator, CFTypeRef reference, AKUserNotificationCallBack callout, CFIndex order) {
     AKUserNotification *notification = (__bridge AKUserNotification *)reference;
     if (reference && ![notification isKindOfClass:AKUserNotification.class]) {
         // Not one of ours: say what it is (its type only), for the log.

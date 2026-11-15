@@ -67,11 +67,11 @@ extern void AKSetWindowProcess(NSWindow *window,size_t slot);
 - (void)quickKeyUp:(UIButton *)button;
 @end
 // The AppKit adapter's CFUserNotification functions (Alerts.m).
-CFTypeRef AKUserNotificationCreate(CFAllocatorRef, CFTimeInterval, CFOptionFlags, SInt32 *, CFDictionaryRef);
-SInt32 AKUserNotificationUpdate(CFTypeRef, CFTimeInterval, CFOptionFlags, CFDictionaryRef);
-SInt32 AKUserNotificationCancel(CFTypeRef);
-SInt32 AKUserNotificationReceiveResponse(CFTypeRef, CFTimeInterval, CFOptionFlags *);
-CFRunLoopSourceRef AKUserNotificationCreateRunLoopSource(CFAllocatorRef, CFTypeRef, void (*)(CFTypeRef, CFOptionFlags), CFIndex);
+CFTypeRef AKGuestUserNotificationCreate(CFAllocatorRef, CFTimeInterval, CFOptionFlags, SInt32 *, CFDictionaryRef);
+SInt32 AKGuestUserNotificationUpdate(CFTypeRef, CFTimeInterval, CFOptionFlags, CFDictionaryRef);
+SInt32 AKGuestUserNotificationCancel(CFTypeRef);
+SInt32 AKGuestUserNotificationReceiveResponse(CFTypeRef, CFTimeInterval, CFOptionFlags *);
+CFRunLoopSourceRef AKGuestUserNotificationCreateRunLoopSource(CFAllocatorRef, CFTypeRef, void (*)(CFTypeRef, CFOptionFlags), CFIndex);
 static unsigned userNotificationCalls; static CFOptionFlags userNotificationFlags;
 static void user_notification_answered(CFTypeRef notification, CFOptionFlags flags) {
     (void)notification; userNotificationCalls++; userNotificationFlags = flags;
@@ -416,18 +416,18 @@ int main(void) { @autoreleasepool {
         NSDictionary *first = @{@"AlertHeader": @"10%", @"AlertMessage": @"Setting up", @"DefaultButtonTitle": @"Cancel",
                                 @"ProgressIndicatorValue": @0.1};
         SInt32 failure = -1;
-        CFTypeRef notice = AKUserNotificationCreate(NULL, 0, 0, &failure, (__bridge CFDictionaryRef)first);
+        CFTypeRef notice = AKGuestUserNotificationCreate(NULL, 0, 0, &failure, (__bridge CFDictionaryRef)first);
         NSObject *model = (__bridge NSObject *)notice;
         assert(notice && failure == 0 && [[model valueForKey:@"header"] isEqual:@"10%"]);
         assert([[model valueForKey:@"buttons"] isEqual:@[@"Cancel"]] && [[model valueForKey:@"progress"] doubleValue] == 0.1);
         // Nothing answered yet: a poll times out and leaves the flags alone.
-        assert(AKUserNotificationReceiveResponse(notice, 0.01, &answer) != 0 && answer == 99);
-        assert(AKUserNotificationUpdate(notice, 0, 0, (__bridge CFDictionaryRef)@{@"AlertHeader": @"82%", @"AlertMessage": @"Setting up",
+        assert(AKGuestUserNotificationReceiveResponse(notice, 0.01, &answer) != 0 && answer == 99);
+        assert(AKGuestUserNotificationUpdate(notice, 0, 0, (__bridge CFDictionaryRef)@{@"AlertHeader": @"82%", @"AlertMessage": @"Setting up",
             @"DefaultButtonTitle": @"Cancel", @"ProgressIndicatorValue": @0.82}) == 0);
         assert([[model valueForKey:@"header"] isEqual:@"82%"] && [[model valueForKey:@"progress"] doubleValue] == 0.82);
         // The run loop source delivers the response once, on its run loop.
         userNotificationCalls = 0;
-        CFRunLoopSourceRef source = AKUserNotificationCreateRunLoopSource(NULL, notice, user_notification_answered, 0);
+        CFRunLoopSourceRef source = AKGuestUserNotificationCreateRunLoopSource(NULL, notice, user_notification_answered, 0);
         assert(source);
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopDefaultMode);
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
@@ -435,22 +435,22 @@ int main(void) { @autoreleasepool {
         [model performSelector:@selector(respond:) withObject:(__bridge id)(void *)1];
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);
         assert(userNotificationCalls == 1 && userNotificationFlags == 1);
-        assert(AKUserNotificationReceiveResponse(notice, 0.01, &answer) == 0 && answer == 1);
+        assert(AKGuestUserNotificationReceiveResponse(notice, 0.01, &answer) == 0 && answer == 1);
         // A second answer, or a cancel after it, changes nothing.
-        assert(AKUserNotificationCancel(notice) == 0);
-        assert(AKUserNotificationReceiveResponse(notice, 0, &answer) == 0 && answer == 1);
+        assert(AKGuestUserNotificationCancel(notice) == 0);
+        assert(AKGuestUserNotificationReceiveResponse(notice, 0, &answer) == 0 && answer == 1);
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
         assert(userNotificationCalls == 1);
         CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, kCFRunLoopDefaultMode);
         CFRelease(source); CFRelease(notice);
         // Cancelled by the guest: the response is "cancel". Three buttons keep their order.
-        notice = AKUserNotificationCreate(NULL, 0, 0, NULL, (__bridge CFDictionaryRef)@{@"DefaultButtonTitle": @"A", @"OtherButtonTitle": @"C"});
+        notice = AKGuestUserNotificationCreate(NULL, 0, 0, NULL, (__bridge CFDictionaryRef)@{@"DefaultButtonTitle": @"A", @"OtherButtonTitle": @"C"});
         assert([[(__bridge NSObject *)notice valueForKey:@"buttons"] isEqual:(@[@"A", @"", @"C"])]);
         assert(![(__bridge NSObject *)notice valueForKey:@"progress"]);
-        assert(AKUserNotificationCancel(notice) == 0 && AKUserNotificationReceiveResponse(notice, 0, &answer) == 0 && answer == 3);
+        assert(AKGuestUserNotificationCancel(notice) == 0 && AKGuestUserNotificationReceiveResponse(notice, 0, &answer) == 0 && answer == 3);
         CFRelease(notice);
         // Something that is not one of ours is refused, not followed.
-        assert(AKUserNotificationUpdate((__bridge CFTypeRef)@"x", 0, 0, NULL) == -1);
+        assert(AKGuestUserNotificationUpdate((__bridge CFTypeRef)@"x", 0, 0, NULL) == -1);
     }
     // Pointer acceleration is on unless the launcher's switch stored a choice.
     [defaults removeObjectForKey:AKPointerAccelerationDefaultsKey];

@@ -975,13 +975,15 @@ static size_t guest_process_slot(void) {
 // iPadOS has CoreFoundation's user notifications (a dialog with buttons and a
 // progress bar, shown for the process) but refuses them to an app; a guest
 // reads that as its dialog being cancelled. The AppKit adapter presents them
-// (Alerts.m): CFUserNotificationCreate binds to its AKUserNotificationCreate,
-// and so on for each function it has.
+// (Alerts.m): CFUserNotificationCreate binds to its
+// AKGuestUserNotificationCreate, and so on for each function it has. (Not
+// "AKUserNotification…": iOS's AuthKit exports a function of that name, which
+// a lookup by name finds first.)
 static void *user_notification_hook(const char *name) {
     static const char prefix[]="CFUserNotification";
     if (strncmp(name,prefix,sizeof prefix-1)) return NULL;
     char adapter[96];
-    if (snprintf(adapter,sizeof adapter,"AKUserNotification%s",name+sizeof prefix-1)>=(int)sizeof adapter) return NULL;
+    if (snprintf(adapter,sizeof adapter,"AKGuestUserNotification%s",name+sizeof prefix-1)>=(int)sizeof adapter) return NULL;
     void *function=dlsym(RTLD_DEFAULT,adapter);
     LOG("[native] %s -> %s %s\n",name,adapter,function?"(AppKit adapter)":"is not loaded; the system's is used");
     return function;
