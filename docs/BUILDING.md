@@ -233,7 +233,9 @@ its login servers) is offered Mozilla's public list in their place
 (`TOLKARA_SYSTEM_ROOTS=PUBLIC`, `translation/Security/PublicRoots`), of which
 it gets only the certificates the device itself trusts. Install it with your sideloading
 tool, open it with JIT enabled, then add your application in the app. Opened
-without JIT, Tolkara says so instead of starting the application. Sideloading
+without JIT, Tolkara says so instead of starting the application, and can ask
+StikDebug for it itself ([NO_MAC.md](NO_MAC.md), the route for someone with no
+Mac at all). Sideloading
 tools usually change the app's bundle identifier: copy your application's files
 with Finder or the Files app, or set `TOLKARA_BUNDLE_ID` to the installed
 identifier before running a profile's `install.py` (step 5). This mode has

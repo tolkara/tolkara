@@ -44,6 +44,8 @@ iPhone support is experimental: on an iPhone 16 Pro Max with iOS 27, the WoW
 Forever client logs in and plays with Developer service. Optional on-screen
 controls (a movement stick, a touch trackpad and the keyboard), shown by
 default on iPhone, stand in for a keyboard and mouse. See [docs/IPHONE.md](docs/IPHONE.md).
+With no Mac at all, the published build and a JIT enabler are an experimental
+route: [docs/NO_MAC.md](docs/NO_MAC.md).
 
 Notable limits today: with Developer service, preparing executable memory takes
 time at every launch, about 3 MB per second (33 seconds for Heroes III), and

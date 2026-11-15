@@ -43,6 +43,8 @@
 @property(nonatomic, copy) NSString *cloudContainer;
 // iPadOS allows one guest startup per process; some checks also end it.
 @property(nonatomic) BOOL sessionUsed;
+// External JIT: until when the app looks for the enabler it asked (askStikDebug).
+@property(nonatomic, strong, nullable) NSDate *jitWaitUntil;
 // A plain launch (library shown, no development arguments): a game that
 // closes cleanly ends the process so the next tap starts another app.
 @property(nonatomic) BOOL uiSession;
@@ -596,11 +598,7 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         return;
     }
     // Opened without JIT: say so; the session stays usable.
-    if(!PreparedFromOutside()) {
-        [self alert:@"JIT Not Enabled" message:@"Tolkara was opened without JIT. Enable JIT for it with the tool you sideloaded it with "
-            "(such as SideStore) or a JIT enabler such as StikDebug, then open it again."];
-        return;
-    }
+    if(!PreparedFromOutside()) { [self offerJIT]; return; }
     [self endSession:[NSString stringWithFormat:@"%@ was started in this session. Close Tolkara in the app switcher and open it again to start an app.",app.name]];
     self.launchingApp=app;
     [self.library recordLaunchOfApp:app error:NULL];
@@ -611,6 +609,48 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep Tolkara open.",app.name];
     // Enter from a timer callout, never a dispatch block.
     [self performSelector:@selector(startExternalJITGame) withObject:nil afterDelay:0];
+}
+// Opened without JIT. StikDebug takes a request from the app itself, naming
+// this process and the script that answers Tolkara's requests for executable
+// memory (its "universal" one, runtime/DebuggerArena.c): where the system
+// only grants such memory through the enabler, an enabler started by hand
+// without that script attaches and leaves, and the request then ends the app.
+- (void)offerJIT {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"JIT Not Enabled"
+        message:@"Tolkara was opened without JIT. With StikDebug installed and set up, Tolkara can ask it now: allow the request in StikDebug, "
+            "come back to Tolkara and start the app again. Otherwise enable JIT for Tolkara with the tool you sideloaded it with, then open it again."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Ask StikDebug" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action; [self askStikDebug];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
+}
+- (void)askStikDebug {
+    NSURLComponents *request=[NSURLComponents new];
+    request.scheme=@"stikdebug"; request.host=@"enable-jit";
+    request.queryItems=@[[NSURLQueryItem queryItemWithName:@"bundle-id" value:NSBundle.mainBundle.bundleIdentifier ?: @""],
+        [NSURLQueryItem queryItemWithName:@"pid" value:[NSString stringWithFormat:@"%d",getpid()]],
+        [NSURLQueryItem queryItemWithName:@"script-name" value:@"universal.js"]];
+    [UIApplication.sharedApplication openURL:request.URL options:@{} completionHandler:^(BOOL opened) {
+        if(!opened) { [self alert:@"StikDebug Not Found" message:@"StikDebug is not installed on this device, or it did not take the request."]; return; }
+        // StikDebug attaches while Tolkara is behind it or just after: take the
+        // memory as soon as it is there, for two minutes.
+        self.jitWaitUntil=[NSDate dateWithTimeIntervalSinceNow:120];
+        [self waitForJIT];
+    }];
+}
+- (void)waitForJIT {
+    if(!self.jitWaitUntil) return;
+    [self reserveExecutableMemory];
+    if(PreparedFromOutside()) {
+        self.jitWaitUntil=nil;
+        if(UIApplication.sharedApplication.applicationState==UIApplicationStateActive && !self.window.rootViewController.presentedViewController)
+            [self alert:@"JIT Is Ready" message:@"Start your app now."];
+        return;
+    }
+    if(self.jitWaitUntil.timeIntervalSinceNow<0) { self.jitWaitUntil=nil; return; }
+    [self performSelector:@selector(waitForJIT) withObject:nil afterDelay:0.5];
 }
 - (void)startExternalJITGame {
     (void)ng_use_external_authorization();

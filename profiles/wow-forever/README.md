@@ -45,6 +45,9 @@ Library, then **Copy Again**). Tolkara Management checks this on its Game step.
 
 ## Without a Mac (experimental)
 
+The whole route, with the sideloaded build and JIT, is in
+[docs/NO_MAC.md](../../docs/NO_MAC.md). The download itself:
+
 In the launcher, **+** offers **Download World of Warcraft Forever…** while
 the game is not in Tolkara's folder. After the notice about online games you
 choose your region and language, and Tolkara fetches the game's application
