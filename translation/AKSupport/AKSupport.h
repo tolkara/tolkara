@@ -37,6 +37,11 @@ void AKMouseSetCaptured(bool captured);
 void AKMouseSetConfined(bool confined);
 // The display a guest sees, in points: the area its windows get, which is the
 // screen minus the on-screen controls' side columns. Unset, it is the screen.
+// How an adapter ends the process for the guest (-[NSApplication terminate:]):
+// through the runtime, which runs its exit observer and bounds the exit.
+// Without a runtime (tests) it is exit().
+void AKSetProcessEnd(void (*end)(int code));
+void AKEndProcess(int code) __attribute__((noreturn));
 bool AKScreenGameSize(double *width, double *height);
 // The backing scale the guest is told: a whole number, as on every Mac.
 // iPadOS Display Zoom ("More Space") and some iPhones give the panel a

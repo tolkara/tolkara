@@ -241,8 +241,14 @@ Development checks, the Developer service route controls and the runtime logs
 are in a separate Diagnostics menu. Checks that load compatibility libraries or may be
 terminated by the system end the session: iPadOS allows one guest startup per
 process, so Tolkara must be reopened before starting an app. An app that
-closes cleanly ends the Tolkara process after a short note, making the next
-tap on the icon a fresh library. Launch arguments
+closes ends the Tolkara process after a short note, making the next tap on
+the icon a fresh library; that includes an app whose `main` returns a nonzero
+code, which the note then shows. The end is bounded (`runtime/ProcessEnd.c`):
+`exit()` runs the application's exit handlers while its audio, Metal and
+network threads are still alive, and one that waits for such a thread would
+otherwise leave a dead screen, so after 3 seconds the process ends anyway
+(30 while a clean exit uploads Steam Cloud saves, which itself waits at most
+20). `-[NSApplication terminate:]` ends the process the same way. Launch arguments
 used by `tools/` keep their plain status screen; `--app=<identifier>` selects a
 library app for `--native-startup` and friends.
 

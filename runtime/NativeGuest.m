@@ -26,6 +26,7 @@ static NativeCodeMemory local_quarantine;
 #include "HostExecutionProbe.h"
 #include "GuestWait.h"
 #include "GuestWaitTrace.h"
+#include "ProcessEnd.h"
 #include "SignedImage.h"
 #include <dlfcn.h>
 #include <execinfo.h>
@@ -1176,10 +1177,26 @@ static void guest_exit(int code) {
     if (slot) gp_slot_exit(slot,code);
     char caller[512]; describe_caller(__builtin_return_address(0),caller,sizeof caller);
     LOG("[native] exit(%d) called from %s\n",code,caller);
+    ng_end_process(code);
+}
+// The observer may upload saves (its own limit is shorter than the 30 s
+// here); the flush before it and the guest's exit handlers after it get 3 s
+// each, far more than a healthy exit takes.
+void ng_end_process(int code) {
+    pe_deadline(code,3);
     // exit() would flush these anyway; flushing first lets the observer see
     // saves still buffered in stdio. atexit handlers still run afterwards.
     if (guest_exit_observer) fflush(NULL);
-    notify_guest_exit(code); exit(code);
+    pe_deadline(code,30);
+    notify_guest_exit(code);
+    pe_deadline(code,3);
+    exit(code);
+}
+static atomic_bool main_returned; static atomic_int main_result;
+bool ng_main_returned(int *code) {
+    if (!atomic_load(&main_returned)) return false;
+    if (code) *code=atomic_load(&main_result);
+    return true;
 }
 static void guest_abort(void) {
     size_t slot=gp_active()?gp_current_slot((uintptr_t)__builtin_return_address(0)):0;
@@ -2164,6 +2181,8 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         void (*configure_callbacks)(size_t,size_t (*)(uintptr_t))=dlsym(RTLD_DEFAULT,"AKConfigureProcessCallbacks");
         if (configure_callbacks && process_slots>1) configure_callbacks(process_slots,gp_current_slot);
         gp_set_exit_callback(dlsym(RTLD_DEFAULT,"AKGuestProcessDidExit"));
+        void (*set_end)(void (*)(int))=dlsym(RTLD_DEFAULT,"AKSetProcessEnd");
+        if (set_end) set_end(ng_end_process);
         const char *reclaim=getenv("TOLKARA_PROCESS_RECLAIM_RANGES");
         if (reclaim && !strcmp(reclaim,"1"))
             gp_set_retirement_check(dlsym(RTLD_DEFAULT,"AKProcessRetirementComplete"));
@@ -2495,6 +2514,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
             }
 #endif
             LOG("[native] original main returned %d\n",result);
+            atomic_store(&main_result,result); atomic_store(&main_returned,true);
             ok=(result==0);
         }
     }

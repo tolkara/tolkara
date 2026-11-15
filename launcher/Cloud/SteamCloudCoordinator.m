@@ -131,7 +131,11 @@ static NSError *coordinatorError(NSInteger code) { return [NSError errorWithDoma
     // URL-session work and UIKit teardown while the final sync drains.
     dispatch_semaphore_t done=dispatch_semaphore_create(0);
     dispatch_async(_queue,^{ sync(); dispatch_semaphore_signal(done); });
+    // A game that has closed does not wait for a slow network: after 20 s the
+    // session ends, and the next start's synchronization uploads what is left.
+    NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:20];
     while (dispatch_semaphore_wait(done,DISPATCH_TIME_NOW)) {
+        if (limit.timeIntervalSinceNow<0) { [self record:@"Steam Cloud final synchronization still running after 20 s; not waited for." error:nil]; break; }
         @autoreleasepool {
             if (![NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]])
                 [NSThread sleepForTimeInterval:0.001];

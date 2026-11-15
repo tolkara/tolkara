@@ -22,6 +22,13 @@ void ng_set_arguments(const char *const *arguments, size_t count);
 // Install before guest entry. A nonzero exit remains an error exit.
 typedef void (*NGExitObserver)(int code, void *context);
 void ng_set_exit_observer(NGExitObserver observer, void *context);
+// Ends the process as a guest's exit(code) does: the exit observer once, then
+// exit(), with a bound on each part (ProcessEnd.h) so that an exit handler
+// waiting on a guest thread cannot leave a dead screen behind.
+void ng_end_process(int code) __attribute__((noreturn));
+// Whether the guest's main was entered and returned, and with what. A game
+// that returns nonzero has still ended.
+bool ng_main_returned(int *code);
 // Libraries a compatibility runtime opens by path instead of linking, placed
 // with the executable as if it carried them (gl_carry): absolute paths inside
 // root, the runtime folder, which then counts as the application's folder.

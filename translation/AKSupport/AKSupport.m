@@ -80,6 +80,9 @@ bool AKScreenGameSize(double *width, double *height) {
     os_unfair_lock_unlock(&screenLock);
     return known;
 }
+static void (*processEnd)(int);
+void AKSetProcessEnd(void (*end)(int code)) { processEnd = end; }
+void AKEndProcess(int code) { if (processEnd) processEnd(code); exit(code); }
 double AKBackingScale(double scale, double nativeScale) {
     if (nativeScale >= 1 && nativeScale == floor(nativeScale)) return nativeScale;
     double whole = round(scale);

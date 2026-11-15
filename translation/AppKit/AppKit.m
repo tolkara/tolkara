@@ -1332,7 +1332,7 @@ void AKGuestProcessDidExit(size_t slot) {
     }
     if(reply!=1) { _terminating=NO;return; }
     [self ak_notify:@"NSApplicationWillTerminateNotification" sel:@selector(applicationWillTerminate:)];
-    AKLog(@"terminate: requested by guest"); exit(0);
+    AKLog(@"terminate: requested by guest"); AKEndProcess(0);
 }
 - (void)replyToApplicationShouldTerminate:(BOOL)shouldTerminate {
     if(!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{[self replyToApplicationShouldTerminate:shouldTerminate];});return; }

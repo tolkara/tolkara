@@ -934,15 +934,21 @@ static void TKScheduleSnapshots(NSArray<NSString *> *arguments, FILE *log) {
     BOOL ok = ng_initialize(path.fileSystemRepresentation, NSBundle.mainBundle.privateFrameworksPath.fileSystemRepresentation, map.fileSystemRepresentation, log, fullStartup);
     // The outcome as the host saw it (tools/run.sh requires "returned").
     fprintf(log,"[host] native %s %s\n",fullStartup?"startup":"first initializer",ok?"returned":"stopped"); fflush(log);
-    self.status.text = ok ? (fullStartup ? [app.name stringByAppendingString:@" closed."] : @"Original client first initializer returned.") : @"Native startup stopped. See runtime log.";
+    // A game whose main returned has ended, whatever it returned: World of
+    // Warcraft returns -1 from some of its own ways out.
+    int code=0; BOOL closed=fullStartup && ng_main_returned(&code);
+    self.status.text = closed ? (code ? [NSString stringWithFormat:@"%@ closed (code %d).",app.name,code] : [app.name stringByAppendingString:@" closed."]) :
+        ok ? @"Original client first initializer returned." : @"Native startup stopped. See runtime log.";
     [self showStartStopped];
-    // A cleanly closed game was the whole session in a library launch. End the
-    // process after a short note: the next tap on Tolkara opens the library
-    // ready to start another app (one guest startup per process).
-    if (ok && fullStartup && self.uiSession) {
-        [self.steamCloud flush];
-        fprintf(log,"[host] %s closed; ending this session\n",app.name.UTF8String); fflush(log);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{ exit(0); });
+    // A closed game was the whole session in a library launch. End the process
+    // after a short note: the next tap on Tolkara opens the library ready to
+    // start another app (one guest startup per process). The runtime runs the
+    // exit observer (a clean exit's Steam Cloud upload) and bounds the exit,
+    // so a guest thread that an exit handler waits for cannot keep the note
+    // on screen for good.
+    if (closed && self.uiSession) {
+        fprintf(log,"[host] %s closed (code %d); ending this session\n",app.name.UTF8String,code); fflush(log);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{ ng_end_process(code); });
     }
     // Runtime callbacks retain this log for the life of the guest.
 }
