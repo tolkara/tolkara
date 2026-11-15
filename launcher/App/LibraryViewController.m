@@ -339,6 +339,25 @@ static double TKPointerSpeed(void) {
 
 #pragma mark Download (experimental)
 
+// Development runs (docs/BUILDING.md): --download-profile=<id> with
+// --download-region=<id> and --download-locale=<locale> starts that profile's
+// download as the menu would after its questions, once, when the library appears.
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    static BOOL asked;
+    if (asked) return;
+    asked=YES;
+    NSString *wanted=nil, *region=nil, *locale=nil;
+    for (NSString *argument in NSProcessInfo.processInfo.arguments) {
+        if ([argument hasPrefix:@"--download-profile="]) wanted=[argument substringFromIndex:19];
+        if ([argument hasPrefix:@"--download-region="]) region=[argument substringFromIndex:18];
+        if ([argument hasPrefix:@"--download-locale="]) locale=[argument substringFromIndex:18];
+    }
+    if (!wanted || !region || !locale) return;
+    for (NSDictionary *profile in _library.downloadableProfiles)
+        if ([profile[@"id"] isEqual:wanted]) [self downloadProfile:profile region:region locale:locale];
+}
+
 // What is fetched and from whom, with the profile's own notice about the
 // application; then the region and language the game is set up for.
 - (void)offerDownloadOfProfile:(NSDictionary *)profile {

@@ -326,6 +326,11 @@ library, for example `xcrun devicectl device process launch --device <iPad>
 screen. Diagnostics that change what the runtime does are opt-in and never on
 for apps started from the library:
 
+- `--download-profile=<profile id> --download-region=<id>
+  --download-locale=<locale>` (experimental): the library appears as on a
+  plain launch and starts that profile's download
+  ([profiles/README.md](../profiles/README.md), `download`) as its **+** menu
+  would after its questions, if the application is not in Documents yet.
 - `--local-native-authorization` (Tolkara build, with `--native-startup` or
   `--native-initializer`): this iPad's Developer service prepares memory, as
   for a library launch, instead of a debugger on the Mac. It needs the

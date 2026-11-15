@@ -231,8 +231,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
     // shows the app library. Any other launch is a development run from
     // tools/: keep its plain status screen and behaviour.
     BOOL plain=YES;
+    // The library's own development arguments (--download-…, LibraryViewController.m) keep the library.
     for(NSUInteger i=1;i<arguments.count;i++) if(![arguments[i] hasPrefix:TKExecutionModeArgumentPrefix] &&
-        ![arguments[i] isEqualToString:TKExecutionModeSaveArgument]) plain=NO;
+        ![arguments[i] isEqualToString:TKExecutionModeSaveArgument] && ![arguments[i] hasPrefix:@"--download-"]) plain=NO;
     if (plain) {
         self.uiSession=YES;
         self.libraryController=[[TKLibraryViewController alloc] initWithLibrary:self.library];
