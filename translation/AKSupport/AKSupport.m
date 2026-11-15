@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <math.h>
 
 void AKLogC(const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
@@ -78,6 +79,11 @@ bool AKScreenGameSize(double *width, double *height) {
     if (known) { *width = screenWidth; *height = screenHeight; }
     os_unfair_lock_unlock(&screenLock);
     return known;
+}
+double AKBackingScale(double scale, double nativeScale) {
+    if (nativeScale >= 1 && nativeScale == floor(nativeScale)) return nativeScale;
+    double whole = round(scale);
+    return whole >= 1 ? whole : 1;
 }
 void AKScreenSetGameSize(double width, double height) {
     os_unfair_lock_lock(&screenLock);

@@ -216,8 +216,8 @@ static NSPoint mouseScreenLocation;
 }
 - (NSPoint)convertPointToBacking:(NSPoint)p { NSSize s=[self convertSizeToBacking:CGSizeMake(p.x,p.y)]; return CGPointMake(s.width,s.height); }
 - (NSPoint)convertPointFromBacking:(NSPoint)p { NSSize s=[self convertSizeFromBacking:CGSizeMake(p.x,p.y)]; return CGPointMake(s.width,s.height); }
-- (NSSize)convertSizeFromBacking:(NSSize)s { CGFloat f = self.window.backingScaleFactor ?: UIScreen.mainScreen.nativeScale; return CGSizeMake(s.width/f,s.height/f); }
-- (NSSize)convertSizeToBacking:(NSSize)s { CGFloat f = self.window.backingScaleFactor ?: UIScreen.mainScreen.nativeScale; return CGSizeMake(s.width*f,s.height*f); }
+- (NSSize)convertSizeFromBacking:(NSSize)s { CGFloat f = self.window.backingScaleFactor ?: NSScreen.mainScreen.backingScaleFactor; return CGSizeMake(s.width/f,s.height/f); }
+- (NSSize)convertSizeToBacking:(NSSize)s { CGFloat f = self.window.backingScaleFactor ?: NSScreen.mainScreen.backingScaleFactor; return CGSizeMake(s.width*f,s.height*f); }
 - (NSRect)convertRectFromBacking:(NSRect)r { NSSize p=[self convertSizeFromBacking:(NSSize){r.origin.x,r.origin.y}]; return (NSRect){{p.width,p.height},[self convertSizeFromBacking:r.size]}; }
 - (NSRect)convertRectToBacking:(NSRect)r { NSSize p=[self convertSizeToBacking:(NSSize){r.origin.x,r.origin.y}]; return (NSRect){{p.width,p.height},[self convertSizeToBacking:r.size]}; }
 - (NSPoint)ak_originInWindow { NSPoint o = _frame.origin; for (NSView *v = _superview; v; v = v->_superview) { o.x += v->_frame.origin.x; o.y += v->_frame.origin.y; } return o; }
@@ -1023,7 +1023,7 @@ static void logLayer(CALayer *layer,unsigned depth) {
 }
 - (void)setFrame:(NSRect)frame display:(BOOL)display { [self setFrame:frame display:display animate:NO]; }
 - (NSRect)frame { return _host ? (CGRect){CGPointZero, _host.bounds.size} : _contentRect; }
-- (CGFloat)backingScaleFactor { return (_uiWindow.screen ?: UIScreen.mainScreen).nativeScale; }
+- (CGFloat)backingScaleFactor { UIScreen *s = _uiWindow.screen ?: UIScreen.mainScreen; return AKBackingScale(s.scale, s.nativeScale); }
 - (BOOL)isKeyWindow { return _uiWindow.isKeyWindow; }
 - (BOOL)isVisible { return _uiWindow && !_uiWindow.hidden; }
 - (NSUInteger)occlusionState { return self.isVisible && _uiWindow.windowScene.activationState!=UISceneActivationStateBackground ? 2 : 0; }

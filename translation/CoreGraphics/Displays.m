@@ -17,7 +17,8 @@ static CGRect displayBounds(void) {
 }
 typedef CFDictionaryRef CGDisplayModeRef;
 typedef void (*DisplayCallback)(CGDirectDisplayID, uint32_t, void *);
-static NSDictionary *mode(void) { UIScreen *s=UIScreen.mainScreen; CGSize b=displayBounds().size; return @{@"width":@(b.width),@"height":@(b.height),@"pixelWidth":@(b.width*s.nativeScale),@"pixelHeight":@(b.height*s.nativeScale),@"refresh":@(s.maximumFramesPerSecond)}; }
+// Whole pixels at the whole backing scale the guest is told (AKBackingScale).
+static NSDictionary *mode(void) { UIScreen *s=UIScreen.mainScreen; CGSize b=displayBounds().size; double f=AKBackingScale(s.scale,s.nativeScale); return @{@"width":@(b.width),@"height":@(b.height),@"pixelWidth":@(lround(b.width*f)),@"pixelHeight":@(lround(b.height*f)),@"refresh":@(s.maximumFramesPerSecond)}; }
 CGDirectDisplayID CGMainDisplayID(void) { return 1; }
 CGError CGGetActiveDisplayList(uint32_t capacity,CGDirectDisplayID *displays,uint32_t *count) {
     if (!count || (capacity && !displays)) return kCGErrorIllegalArgument;

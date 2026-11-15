@@ -37,6 +37,15 @@ int main(void) { @autoreleasepool {
     assert(CGDisplayIDToOpenGLDisplayMask(1)==1 && CGOpenGLDisplayMaskToDisplayID(1)==1 && !CGOpenGLDisplayMaskToDisplayID(2) && !CGDisplayIDToOpenGLDisplayMask(2));
     assert(!CGDisplayMirrorsDisplay(1) && CGDirectDisplayCopyCurrentMetalDevice(1) && !CGDirectDisplayCopyCurrentMetalDevice(2));
     assert(CGCaptureAllDisplays()==kCGErrorSuccess && CGReleaseAllDisplays()==kCGErrorSuccess && CGShieldingWindowLevel()>0);
+    // The backing scale is a whole number: Display Zoom's "More Space" on an
+    // iPad Pro 12.9" has 1590 points across 2732 pixels, and 1590 * 1.718 is
+    // not a pixel count a guest can use.
+    assert(AKBackingScale(2, 2) == 2 && AKBackingScale(3, 3) == 3 && AKBackingScale(1, 1) == 1);
+    assert(AKBackingScale(2, 2048.0 / 1192.0) == 2 && AKBackingScale(3, 2.608) == 3 && AKBackingScale(2, 2.34) == 2);
+    assert(AKBackingScale(0, 0) == 1);
+    extern size_t CGDisplayPixelsWide(CGDirectDisplayID), CGDisplayPixelsHigh(CGDirectDisplayID);
+    double whole = AKBackingScale(UIScreen.mainScreen.scale, UIScreen.mainScreen.nativeScale);
+    assert(CGDisplayPixelsWide(1) == (size_t)lround(points.width * whole) && CGDisplayPixelsHigh(1) == (size_t)lround(points.height * whole));
     // The screen's own mode is the only one to set.
     CGDisplayModeRef mode=CGDisplayCopyDisplayMode(1); assert(mode && CGDisplayModeIsUsableForDesktopGUI(mode));
     assert(CGDisplayModeRetain(mode)==mode); CGDisplayModeRelease(mode);

@@ -38,6 +38,12 @@ void AKMouseSetConfined(bool confined);
 // The display a guest sees, in points: the area its windows get, which is the
 // screen minus the on-screen controls' side columns. Unset, it is the screen.
 bool AKScreenGameSize(double *width, double *height);
+// The backing scale the guest is told: a whole number, as on every Mac.
+// iPadOS Display Zoom ("More Space") and some iPhones give the panel a
+// fractional native scale; a guest that multiplies its point size by that gets
+// a fractional pixel size (World of Warcraft asserts on one). Such a screen
+// reports UIKit's whole scale instead, and the system resamples.
+double AKBackingScale(double scale, double nativeScale);
 void AKScreenSetGameSize(double width, double height);
 
 // Native callbacks can outlive the guest pthread that registered them. The

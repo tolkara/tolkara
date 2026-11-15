@@ -13,7 +13,7 @@
 - (NSRect)convertRectFromBacking:(NSRect)r { CGFloat f=self.backingScaleFactor; return CGRectMake(r.origin.x/f,r.origin.y/f,r.size.width/f,r.size.height/f); }
 - (NSRect)convertRectToBacking:(NSRect)r { CGFloat f=self.backingScaleFactor; return CGRectMake(r.origin.x*f,r.origin.y*f,r.size.width*f,r.size.height*f); }
 - (NSRect)visibleFrame { return self.frame; }
-- (CGFloat)backingScaleFactor { return UIScreen.mainScreen.nativeScale; }
+- (CGFloat)backingScaleFactor { UIScreen *s=UIScreen.mainScreen; return AKBackingScale(s.scale, s.nativeScale); }
 - (NSDictionary *)deviceDescription { return @{@"NSScreenNumber":@1,@"NSDeviceSize":[NSValue valueWithCGSize:self.frame.size],@"NSDeviceResolution":[NSValue valueWithCGSize:CGSizeMake(72,72)],@"NSDeviceBitsPerSample":@8,@"NSDeviceColorSpaceName":@"NSCalibratedRGBColorSpace"}; }
 - (NSInteger)maximumFramesPerSecond { return UIScreen.mainScreen.maximumFramesPerSecond; }
 // No extended dynamic range is offered to the guest (1.0: standard range only).
