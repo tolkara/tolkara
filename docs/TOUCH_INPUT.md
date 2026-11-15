@@ -5,7 +5,9 @@ mouse, modelled on the Windows App's (Microsoft Remote Desktop) mouse pointer
 mode. They are shown by default on iPhone and hidden on iPad;
 **On-Screen Controls**, under the hand button in the library's toolbar, turns
 them on or off from the next game start. Without them, touches act as before:
-a touch is a left click where the finger is.
+a touch is a left click where the finger is; the pointer moves there before
+the button goes down, so a game that highlights what is under the pointer (a
+login button) takes the tap.
 
 Four translucent buttons sit at the bottom right of the game: Jump, the
 movement stick, the trackpad and the keyboard. Jump holds Space for as long as

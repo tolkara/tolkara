@@ -65,6 +65,20 @@ extern void AKSetWindowProcess(NSWindow *window,size_t slot);
 - (void)quickKeyUp:(UIButton *)button;
 + (CGRect)gameFrameIn:(CGRect)bounds strip:(CGRect)strip;
 @end
+// A finger (or a pointer's click) as the host view's touch methods read it.
+@interface FixtureTouch : NSObject
+@property UITouchType type;
+@property CGPoint point;
+@end
+@implementation FixtureTouch
+- (CGPoint)locationInView:(UIView *)view { (void)view; return self.point; }
+@end
+@interface FixtureTouchEvent : NSObject
+@property UIEventButtonMask buttonMask;
+@property UIKeyModifierFlags modifierFlags;
+@end
+@implementation FixtureTouchEvent
+@end
 @interface FixtureKeyResponder : NSResponder
 @property unsigned downs, ups;
 @property unsigned short lastCode;
@@ -203,6 +217,28 @@ int main(void) { @autoreleasepool {
     [defaults setBool:NO forKey:AKTouchControlsDefaultsKey];
     plainHost=[NSClassFromString(@"AKHostView") new];
     assert(![plainHost valueForKey:@"_touchControls"] && !plainHost.multipleTouchEnabled);
+    // Without the controls a finger is a left click where it lands, and the
+    // pointer gets there first: a game's hover state (a login button's)
+    // follows mouse-moved events. A pointer the game holds is not moved.
+    [NSApplication sharedApplication];
+    [plainHost setValue:window forKey:@"nsWindow"]; plainHost.frame=CGRectMake(0,0,200,100);
+    FixtureTouch *finger=[FixtureTouch new]; finger.type=UITouchTypeDirect; finger.point=CGPointMake(120,30);
+    FixtureTouchEvent *fingerEvent=[FixtureTouchEvent new];
+    [plainHost touchesBegan:[NSSet setWithObject:(UITouch *)finger] withEvent:(UIEvent *)fingerEvent];
+    NSEvent *arrive=[NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+    NSEvent *down=[NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+    assert(arrive && arrive.type==NSEventTypeMouseMoved && CGPointEqualToPoint(arrive.locationInWindow,CGPointMake(120,70)));
+    assert(down && down.type==NSEventTypeLeftMouseDown && CGPointEqualToPoint(down.locationInWindow,CGPointMake(120,70)) && down.deltaX==0 && down.deltaY==0);
+    [plainHost touchesEnded:[NSSet setWithObject:(UITouch *)finger] withEvent:(UIEvent *)fingerEvent];
+    NSEvent *up=[NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+    assert(up && up.type==NSEventTypeLeftMouseUp);
+    AKMouseSetCaptured(true);
+    [plainHost touchesBegan:[NSSet setWithObject:(UITouch *)finger] withEvent:(UIEvent *)fingerEvent];
+    down=[NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES];
+    assert(down && down.type==NSEventTypeLeftMouseDown);
+    [plainHost touchesEnded:[NSSet setWithObject:(UITouch *)finger] withEvent:(UIEvent *)fingerEvent];
+    AKMouseSetCaptured(false);
+    while([NSApp nextEventMatchingMask:UINT64_MAX untilDate:NSDate.distantPast inMode:NSDefaultRunLoopMode dequeue:YES]) {}
     [defaults setBool:YES forKey:AKTouchControlsDefaultsKey];
     id host=[NSClassFromString(@"AKHostView") new];
     [host setValue:window forKey:@"nsWindow"];

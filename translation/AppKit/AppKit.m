@@ -815,6 +815,13 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
     if ([self handleTrackpadTouches:t event:ev]) return;
     BOOL r = AKIsRight(ev);if(r?_pressedRight:_pressedLeft)return; _last = [t.anyObject locationInView:self];
     [self reconcileModifiers:AKMods(ev.modifierFlags)];
+    // A finger's pointer arrives where it landed before the button goes down.
+    // A game's hover state follows mouse-moved events (World of Warcraft's
+    // login buttons do), so without this a tap presses nothing until a drag
+    // has brought the pointer over the button. The move's delta is zero: the
+    // location was already taken. A pointer the game holds (captured) is not
+    // moved, and a mouse or trackpad has hovered there already.
+    if (t.anyObject.type == UITouchTypeDirect && !AKMouseIsCaptured()) [self postMouse:NSEventTypeMouseMoved at:_last button:0];
     [self postMouse:r ? NSEventTypeRightMouseDown : NSEventTypeLeftMouseDown at:_last button:r];
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
