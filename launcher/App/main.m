@@ -4,6 +4,7 @@
 #import <UIKit/UIKit.h>
 #include <sys/stat.h>
 #import "AppLibrary.h"
+#import "ControllerProbe.h"
 #import "Diagnostics.h"
 #import "DiagnosticsViewController.h"
 #import "ExecutionMode.h"
@@ -446,6 +447,9 @@ static BOOL PreparedFromOutside(void) { return hd_may_run_unsigned_code() || ng_
         [TKDiagnostic diagnosticWithTitle:@"Captured shaders" detail:@"Compiles every shader library a game left in Documents/ShaderRequests on this iPad." run:^(TKDiagnosticReport report) {
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ report(TKCapturedShaderProbeReport(),YES); });
         }],
+        [TKDiagnostic diagnosticWithTitle:@"Controller input" detail:@"What the iPad's GameController framework delivers here; press buttons on a paired controller for 10 seconds." run:^(TKDiagnosticReport report) {
+            TKControllerProbeRun(10,report);
+        }],
     ]]];
 #if TOLKARA_INTEGRATED_AUTH
     TKLocalAuthorization *authorization=self.localAuthorization;
@@ -804,6 +808,9 @@ static void TKScheduleSnapshots(NSArray<NSString *> *arguments, FILE *log) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     for (NSString *argument in arguments) if ([argument hasPrefix:@"--probe-run-id="]) fprintf(log,"%s\n",argument.UTF8String);
     fprintf(log,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),self.executionModeSource.UTF8String);
+    // With --trace-controllers: what the GameController framework lists and
+    // announces during the run. Observation only; a no-op without the option.
+    TKControllerProbeStartLogging(log);
     NSString *map = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Guest/libraries.json"];
     NSError *error=nil;
     NSString *path=app ? [self.library executablePathForApp:app error:&error] : nil;
