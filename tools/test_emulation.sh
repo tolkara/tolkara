@@ -523,6 +523,11 @@ for auth in 0 1; do   # TolkaraDiagnostics and Tolkara (TOLKARA_INTEGRATED_AUTH)
 done
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -Ilauncher/App -framework Foundation \
     launcher/App/StartupActivityText.m tests/test_startup_activity.m -o build/emulation/test_startup_activity
+# The controller probe on the Mac's GameController, with the framework's virtual controller.
+xcrun clang -fobjc-arc -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined -Ilauncher/App -Iruntime \
+    -framework Foundation -framework GameController \
+    launcher/App/ControllerProbe.m tests/test_controller_probe.m -o build/emulation/test_controller_probe
+build/emulation/test_controller_probe
 build/emulation/test_startup_activity
 xcrun clang -fobjc-arc -Wno-deprecated-declarations -Wall -Wextra -Werror \
     -O1 -g -fsanitize=address,undefined -Iruntime -Ilauncher/App -framework Foundation \

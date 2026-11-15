@@ -270,6 +270,12 @@ library ready to start another app.
 Runtime output goes to `Documents/native-guest.log` (the three runs before it
 stay beside it as `native-guest.1.log`, the latest, to `native-guest.3.log`); the Diagnostics menu
 (stethoscope) shows it and the other logs, and holds the development checks.
+Its **Controller input** check shows whether a game controller reaches
+Tolkara at all: for ten seconds it lists the controllers the GameController
+framework delivers and the buttons and sticks you move, and writes the same
+text to `Documents/controller-probe.txt`. Run it before starting an app, not
+while one runs: for those ten seconds it listens in the place of a
+controller's own input handler, and puts that back when it ends.
 
 ## Developing without a device
 
@@ -321,6 +327,15 @@ for apps started from the library:
   line once, with paths shortened as elsewhere in the log; a variable's value
   appears only when it lies in the app's home, otherwise only its length.
   Meant for bringing up a new application; it slows file access.
+- `--trace-controllers`: logs, as `[controller]` lines, the game controllers
+  the iPad's GameController framework lists when the run starts (name,
+  profiles, elements), then each connect, disconnect and became-current
+  notification with the size of the list. It only reads the framework and
+  listens to its notifications: no method is replaced and no input handler is
+  set, so it does not change what the application receives, and it does not
+  show what the application itself asks the framework for. An empty file
+  `Documents/trace-controllers` turns it on as well, also for an app started
+  from the library, for a device without a Mac at hand.
 - `--case-insensitive-files` (experimental): a file lookup that fails is
   retried with each missing folder or file name matched ignoring case, as on
   macOS, and the log names the folder. Files being created and Foundation's
