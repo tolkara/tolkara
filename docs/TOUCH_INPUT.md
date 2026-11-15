@@ -133,7 +133,8 @@ under the finger. Motion is accelerated with the finger's speed: slow motion
 moves the pointer a little less than the finger, for aiming, and a quick flick
 up to two and a half times as far; the speed is averaged over about a
 twentieth of a second, so touch samples that arrive unevenly do not make the
-pointer lurch. While the right button is held (double tap and slide, or two
+pointer lurch. With **Pointer Acceleration** off (below) the pointer instead
+moves one and a half times the finger's motion at any speed. While the right button is held (double tap and slide, or two
 fingers held then slid), which turns a game's camera, motion is instead three
 times the finger's at any speed, so the camera turns evenly. A game that does not capture the pointer for its
 camera (World of Warcraft) reads each event's motion, which is therefore sent
@@ -203,3 +204,28 @@ keyboard. `tools/test_translation_sim.sh` checks the layout decision itself
 for iPad, iPhone, Duo and small sizes. An iPad simulator counts the Mac's
 keyboard as a hardware keyboard, so there only the row above the keyboard
 opens.
+
+## Pointer acceleration
+
+iPadOS accelerates its pointer and has no setting to stop that. A game that
+captures the mouse (for its camera, or to aim) never sees it: Tolkara locks
+the iPadOS pointer and passes the mouse's own motion on. The free pointer, in
+menus or a strategy game, is the iPadOS pointer and is accelerated.
+
+**Pointer Acceleration**, under the hand button in the library's toolbar,
+turns that off from the next game start (it is on by default):
+
+- With a mouse attached, the iPadOS pointer stays locked for the whole game
+  and the game's pointer moves by the mouse's own motion at a constant speed.
+  **Mouse Pointer Speed** in the same menu scales it, from 0.5× to 2×; motion a
+  game has captured is passed on unscaled, as before. Tolkara draws the game's
+  pointer itself, since iPadOS shows none while its pointer is locked.
+- The touch trackpad's pointer moves by a constant one and a half times the
+  finger's motion.
+
+Limits: iPadOS only locks its pointer for a game that fills the screen and is
+in front. In a Stage Manager or Split View window the lock is refused and the
+iPadOS pointer, with its acceleration, moves the game's pointer as before.
+While locked, the pointer cannot leave the game for the Dock or another
+window; use touch or the keyboard. Only devices iPadOS reports as a mouse
+(`GCMouse`) are read this way.

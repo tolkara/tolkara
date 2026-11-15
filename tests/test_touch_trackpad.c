@@ -105,6 +105,16 @@ int main(void) {
     assert(AKTrackpadGain(0) == 0.8 && AKTrackpadGain(150) == 1 && AKTrackpadGain(NAN) == 0.8);
     for (double speed = 0; speed < 3000; speed += 10) assert(AKTrackpadGain(speed + 10) >= AKTrackpadGain(speed));
     assert(AKTrackpadGain(1200) == 2.5 && AKTrackpadGain(100000) == 2.5);
+    // Pointer acceleration switched off: the same gain for a slow finger and
+    // for a flick.
+    AKTrackpad linear = {.linear = true}; Trace steps = {0};
+    update(&linear, &steps, 1, 100, 100, 12);
+    update(&linear, &steps, 1, 101, 100, 12.2);
+    update(&linear, &steps, 1, 102, 100, 12.4);
+    update(&linear, &steps, 1, 142, 100, 12.41);
+    update(&linear, &steps, 0, 0, 0, 12.5);
+    assert(steps.count == 3 && steps.events[1].action == AKTrackpadMove && steps.events[2].action == AKTrackpadMove);
+    assert(steps.events[1].x == AKTrackpadLinearGain && steps.events[2].x == 40 * AKTrackpadLinearGain);
     // Repeated still samples (another touch's events) do not shorten the
     // interval the next motion's speed is measured over.
     trace.count = 0;

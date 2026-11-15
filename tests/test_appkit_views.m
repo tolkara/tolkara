@@ -57,6 +57,8 @@ extern void AKSetWindowProcess(NSWindow *window,size_t slot);
 @interface NSObject (FixtureHostInput)
 - (void)postKeys:(NSSet *)presses down:(BOOL)down;
 - (void)postRelativeMouseX:(CGFloat)dx y:(CGFloat)dy;
+- (void)rawMouseMovedX:(CGFloat)dx y:(CGFloat)dy;
+- (BOOL)wantsPointerLock;
 - (void)anchorChanged:(NSNotification *)notification;
 - (void)touchMoveBy:(CGPoint)delta;
 - (void)touchScrollBy:(CGPoint)delta;
@@ -397,6 +399,47 @@ int main(void) { @autoreleasepool {
     assert(move.deltaX == -500 && move.locationInWindow.x == 10 && move.locationInWindow.y >= 21 && move.locationInWindow.y <= 70);
     window.mouseConfinementRect = CGRectZero;
     AKMouseSetCaptured(false);
+    // Pointer acceleration is on unless the launcher's switch stored a choice.
+    [defaults removeObjectForKey:AKPointerAccelerationDefaultsKey];
+    [defaults removeObjectForKey:AKPointerSpeedDefaultsKey];
+    assert(AKPointerAccelerationEnabled() && AKPointerSpeed() == 1);
+    assert(![[[NSClassFromString(@"AKHostView") new] valueForKey:@"_rawPointer"] boolValue]);
+    [defaults setBool:NO forKey:AKPointerAccelerationDefaultsKey];
+    [defaults setDouble:0.5 forKey:AKPointerSpeedDefaultsKey];
+    assert(!AKPointerAccelerationEnabled() && AKPointerSpeed() == 0.5);
+    NSObject *rawHost = [NSClassFromString(@"AKHostView") new];
+    assert([[rawHost valueForKey:@"_rawPointer"] boolValue] && [[rawHost valueForKey:@"_rawSpeed"] doubleValue] == 0.5);
+    // The iPadOS pointer is only locked for a mouse: none is attached here.
+    assert(![rawHost wantsPointerLock]);
+    [defaults setDouble:0 forKey:AKPointerSpeedDefaultsKey];
+    assert(AKPointerSpeed() == 1);
+    [defaults removeObjectForKey:AKPointerAccelerationDefaultsKey];
+    [defaults removeObjectForKey:AKPointerSpeedDefaultsKey];
+    // Raw pointer: the free pointer moves by the mouse's own motion (y up)
+    // times the chosen speed, the same for a small step and a large one, and
+    // stops at the view's edge with the motion still reported.
+    NSPoint beforeRaw = window.ak_mouseLocation;
+    [host setValue:@YES forKey:@"_rawPointer"]; [host setValue:@0.5 forKey:@"_rawSpeed"];
+    [host rawMouseMovedX:100000 y:100000];
+    move = next_input();
+    assert(move.type == NSEventTypeMouseMoved && move.locationInWindow.x == 199 && move.locationInWindow.y == 100);
+    assert(move.deltaX == 50000 && move.deltaY == -50000);
+    [host rawMouseMovedX:-2 y:-4];
+    move = next_input();
+    assert(move.deltaX == -1 && move.deltaY == 2 && move.locationInWindow.x == 198 && move.locationInWindow.y == 98);
+    [host rawMouseMovedX:-200 y:-40];
+    move = next_input();
+    assert(move.deltaX == -100 && move.deltaY == 20 && move.locationInWindow.x == 98 && move.locationInWindow.y == 78);
+    assert([[host valueForKey:@"_rawCursorActive"] boolValue] && ![[host valueForKey:@"_touchCursorActive"] boolValue]);
+    // A pointer the game holds takes the mouse's motion as it is.
+    AKMouseSetCaptured(true);
+    [host rawMouseMovedX:7 y:3];
+    move = next_input();
+    assert(move.deltaX == 7 && move.deltaY == -3);
+    AKMouseSetCaptured(false);
+    [host setValue:@NO forKey:@"_rawPointer"]; [host setValue:@NO forKey:@"_rawCursorActive"];
+    [host touchMoveBy:CGPointMake(beforeRaw.x - window.ak_mouseLocation.x, window.ak_mouseLocation.y - beforeRaw.y)];
+    (void)next_input();
     [host touchScrollBy:CGPointMake(-2, 3)];
     NSEvent *wheelInput = next_input();
     AKQuartzEvent *wheelInputCG = (__bridge AKQuartzEvent *)wheelInput.CGEvent;

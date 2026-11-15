@@ -12,6 +12,18 @@ static BOOL TKTouchControlsShown(void) {
     return [saved isKindOfClass:NSNumber.class] ? saved.boolValue : UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPhone;
 }
 
+// AKPointerAccelerationDefaultsKey and AKPointerSpeedDefaultsKey, likewise.
+static NSString *const TKPointerAccelerationKey=@"AKPointerAcceleration";
+static NSString *const TKPointerSpeedKey=@"AKPointerSpeed";
+static BOOL TKPointerAccelerated(void) {
+    NSNumber *saved=[NSUserDefaults.standardUserDefaults objectForKey:TKPointerAccelerationKey];
+    return ![saved isKindOfClass:NSNumber.class] || saved.boolValue;
+}
+static double TKPointerSpeed(void) {
+    NSNumber *saved=[NSUserDefaults.standardUserDefaults objectForKey:TKPointerSpeedKey];
+    return [saved isKindOfClass:NSNumber.class] ? saved.doubleValue : 1;
+}
+
 @implementation TKLibraryViewController {
     TKAppLibrary *_library;
     NSArray<TKApp *> *_apps;
@@ -42,7 +54,7 @@ static BOOL TKTouchControlsShown(void) {
     UIBarButtonItem *mode=[[UIBarButtonItem alloc] initWithTitle:@"Execution Mode"
         style:UIBarButtonItemStylePlain target:self action:@selector(showExecutionMode)];
     _controlsItem=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"hand.tap"] menu:nil];
-    _controlsItem.accessibilityLabel=@"On-Screen Controls";
+    _controlsItem.accessibilityLabel=@"Controls";
     [self updateControlsMenu];
     self.navigationItem.leftBarButtonItems=@[diagnostics,mode,_controlsItem];
     // Files copied in with the Files app or a profile's install script appear
@@ -207,8 +219,33 @@ static BOOL TKTouchControlsShown(void) {
         [weakSelf updateControlsMenu];
     }];
     toggle.state=TKTouchControlsShown()?UIMenuElementStateOn:UIMenuElementStateOff;
-    _controlsItem.menu=[UIMenu menuWithTitle:@"Movement stick, touch trackpad and keyboard buttons over the game, from its next start"
-        children:@[toggle]];
+    UIMenu *controls=[UIMenu menuWithTitle:@"Movement stick, touch trackpad and keyboard buttons over the game, from its next start"
+        image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[toggle]];
+    // Off: a mouse's pointer follows its raw motion at a constant speed, and
+    // the touch trackpad's pointer no longer speeds up with the finger.
+    UIAction *acceleration=[UIAction actionWithTitle:@"Pointer Acceleration" image:nil identifier:nil handler:^(UIAction *a) {
+        (void)a;
+        [NSUserDefaults.standardUserDefaults setBool:!TKPointerAccelerated() forKey:TKPointerAccelerationKey];
+        [weakSelf updateControlsMenu];
+    }];
+    acceleration.state=TKPointerAccelerated()?UIMenuElementStateOn:UIMenuElementStateOff;
+    NSMutableArray<UIMenuElement *> *pointer=[NSMutableArray arrayWithObject:acceleration];
+    if (!TKPointerAccelerated()) {
+        NSMutableArray<UIAction *> *speeds=[NSMutableArray new];
+        for (NSNumber *speed in @[@0.5,@0.75,@1,@1.5,@2]) {
+            UIAction *choice=[UIAction actionWithTitle:[NSString stringWithFormat:@"%@×",speed] image:nil identifier:nil handler:^(UIAction *a) {
+                (void)a;
+                [NSUserDefaults.standardUserDefaults setDouble:speed.doubleValue forKey:TKPointerSpeedKey];
+                [weakSelf updateControlsMenu];
+            }];
+            choice.state=speed.doubleValue==TKPointerSpeed()?UIMenuElementStateOn:UIMenuElementStateOff;
+            [speeds addObject:choice];
+        }
+        [pointer addObject:[UIMenu menuWithTitle:@"Mouse Pointer Speed" children:speeds]];
+    }
+    UIMenu *pointerMenu=[UIMenu menuWithTitle:@"Off: a mouse or the touch trackpad moves the pointer at a constant speed, from the game's next start. With a mouse, the game must fill the screen."
+        image:nil identifier:nil options:UIMenuOptionsDisplayInline children:pointer];
+    _controlsItem.menu=[UIMenu menuWithChildren:@[controls,pointerMenu]];
 }
 
 - (void)showDetailsOfApp:(TKApp *)app from:(UIView *)view {

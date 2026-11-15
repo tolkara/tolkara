@@ -6,6 +6,17 @@
 #import <GameController/GameController.h>
 
 NSString *const AKTouchControlsDefaultsKey = @"AKTouchControls";
+NSString *const AKPointerAccelerationDefaultsKey = @"AKPointerAcceleration";
+NSString *const AKPointerSpeedDefaultsKey = @"AKPointerSpeed";
+BOOL AKPointerAccelerationEnabled(void) {
+    NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKPointerAccelerationDefaultsKey];
+    return ![saved isKindOfClass:NSNumber.class] || saved.boolValue;
+}
+double AKPointerSpeed(void) {
+    NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKPointerSpeedDefaultsKey];
+    double speed = [saved isKindOfClass:NSNumber.class] ? saved.doubleValue : 1;
+    return isfinite(speed) && speed >= 0.1 && speed <= 10 ? speed : 1;
+}
 static NSString *const AKTouchTrackpadDefaultsKey = @"AKTouchTrackpadEnabled";
 static NSString *const AKTouchStickDefaultsKey = @"AKTouchStickEnabled";
 // Camera or cursor mode, remembered for games whose profile asks for camera
@@ -71,6 +82,7 @@ AKTouchLayout AKTouchLayoutFor(CGSize size, UIEdgeInsets safe, CGRect strip) {
     UIView *_accessory, *_stickBase, *_stickKnob;
     NSTimer *_holdTimer;
     AKTrackpad _pad;
+    BOOL _linearPointer;
     AKTouchCamera _camera;
     BOOL _cameraProfile;   // the profile asks for camera mode: the hand button switches modes
     AKStick _stick;
@@ -235,6 +247,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         [columns addObjectsFromArray:[quick subarrayWithRange:NSMakeRange(0, 5)]];
         [columns addObject:_jumpButton];
         _columnButtons = columns;
+        _linearPointer = !AKPointerAccelerationEnabled();
         NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchTrackpadDefaultsKey];
         BOOL phone = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
         // Camera mode needs the controls to take touches; it starts in camera
@@ -532,6 +545,7 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
     }
     if (!fingers && !_pad.fingers && !_pad.dragging) return;
     _pad.leftDrag = _shiftHeld;
+    _pad.linear = _linearPointer;
     AKTrackpadUpdate(&_pad, fingers, center.x, center.y, time, AKEmitTouch, (__bridge void *)self);
     [_holdTimer invalidate]; _holdTimer = nil;
     if (_pad.fingers && !_pad.blocked && !_pad.lifting && !_pad.dragging && _pad.reach <= 8) {

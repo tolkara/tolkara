@@ -338,6 +338,14 @@ static BOOL AKWindowInputDiagnostics(void) {
     // A touch step's own motion, for the event that carries it (postMouse).
     BOOL _motionGiven;
     CGPoint _motion;
+    // Raw pointer (pointer acceleration switched off, AKPointerAccelerationEnabled):
+    // with a mouse attached the iPadOS pointer stays locked, as it is while a
+    // game captures it, and the free pointer too moves by the mouse's own
+    // motion times _rawSpeed. iPadOS draws no pointer then; _cursorView does.
+    // Where iPadOS grants no lock (a window that is not full screen), the
+    // iPadOS pointer drives the game as before.
+    BOOL _rawPointer, _rawCursorActive;
+    double _rawSpeed;
 }
 - (instancetype)initWithFrame:(CGRect)f {
     if ((self = [super initWithFrame:f])) {
@@ -349,6 +357,8 @@ static BOOL AKWindowInputDiagnostics(void) {
         _touchStrip = CGRectNull;
         _softwareCursor=[NSProcessInfo.processInfo.arguments containsObject:@"--software-cursor"];
         AKLog(@"cursor presentation=%@",_softwareCursor?@"software overlay":@"native iPad pointer");
+        _rawPointer=!AKPointerAccelerationEnabled(); _rawSpeed=AKPointerSpeed();
+        if(_rawPointer) AKLog(@"pointer acceleration off: raw mouse pointer, speed %.2f",_rawSpeed);
         _cursorView=[UIImageView new]; _cursorView.userInteractionEnabled=NO;
         _cursorView.layer.zPosition=100000; _cursorView.hidden=YES; [self addSubview:_cursorView];
         _pointer=[[UIPointerInteraction alloc] initWithDelegate:self]; [self addInteraction:_pointer];
@@ -533,18 +543,22 @@ static BOOL AKWindowInputDiagnostics(void) {
         [self postRelativeMouseX:delta.x y:-delta.y];
         [self positionCursor];
     } else {
-        NSEventType type = _pressedRight ? NSEventTypeRightMouseDragged : _pressedLeft ? NSEventTypeLeftMouseDragged : _pressedMiddle ? NSEventTypeOtherMouseDragged : NSEventTypeMouseMoved;
-        CGPoint wanted = CGPointMake(_last.x + delta.x, _last.y + delta.y);
-        CGPoint point = CGPointMake(MAX(0, MIN(self.bounds.size.width - 1, wanted.x)),
-                                   MAX(0, MIN(self.bounds.size.height - 1, wanted.y)));
-        if (_cameraDragging && !CGPointEqualToPoint(point, wanted)) _cameraEdgeSteps++;
-        // As a Mac's mouse: the pointer stops at the window's edge, but the
-        // event still carries the motion. A game that turns its camera by the
-        // deltas without capturing the pointer keeps turning there.
-        _motionGiven = YES; _motion = delta;
-        [self postMouse:type at:point button:_pressedRight ? 1 : _pressedMiddle ? 2 : 0];
-        _motionGiven = NO;
+        [self movePointerBy:delta];
     }
+}
+// Moves the free pointer by a relative step (touch trackpad, raw mouse).
+- (void)movePointerBy:(CGPoint)delta {
+    NSEventType type = _pressedRight ? NSEventTypeRightMouseDragged : _pressedLeft ? NSEventTypeLeftMouseDragged : _pressedMiddle ? NSEventTypeOtherMouseDragged : NSEventTypeMouseMoved;
+    CGPoint wanted = CGPointMake(_last.x + delta.x, _last.y + delta.y);
+    CGPoint point = CGPointMake(MAX(0, MIN(self.bounds.size.width - 1, wanted.x)),
+                               MAX(0, MIN(self.bounds.size.height - 1, wanted.y)));
+    if (_cameraDragging && !CGPointEqualToPoint(point, wanted)) _cameraEdgeSteps++;
+    // As a Mac's mouse: the pointer stops at the window's edge, but the
+    // event still carries the motion. A game that turns its camera by the
+    // deltas without capturing the pointer keeps turning there.
+    _motionGiven = YES; _motion = delta;
+    [self postMouse:type at:point button:_pressedRight ? 1 : _pressedMiddle ? 2 : 0];
+    _motionGiven = NO;
 }
 - (void)touchScrollBy:(CGPoint)delta {
     [self activateTouchCursor];
@@ -641,7 +655,11 @@ static BOOL AKWindowInputDiagnostics(void) {
     event.timestamp = NSProcessInfo.processInfo.systemUptime;
     [NSApp postEvent:event atStart:NO];
 }
-- (BOOL)usesRelativeMouse { return AKMouseIsCaptured() && GCMouse.mice.count>0; }
+- (BOOL)wantsPointerLock { return (AKMouseIsCaptured() || _rawPointer) && GCMouse.mice.count>0; }
+// The free pointer follows the mouse's raw motion: only while iPadOS holds
+// its own pointer still, or both would move the game's.
+- (BOOL)rawPointerActive { return _rawPointer && GCMouse.mice.count>0 && self.window.windowScene.pointerLockState.locked; }
+- (BOOL)usesRelativeMouse { return GCMouse.mice.count>0 && (AKMouseIsCaptured() || [self rawPointerActive]); }
 - (void)captureChanged:(NSNotification *)notification {
     (void)notification;
     if(!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{[self captureChanged:nil];});return; }
@@ -649,7 +667,13 @@ static BOOL AKWindowInputDiagnostics(void) {
     AKLog(@"mouse capture requested=%d raw_devices=%lu",AKMouseIsCaptured(),(unsigned long)GCMouse.mice.count);
     if (_cameraDragging && AKMouseIsCaptured() && !_cameraCaptured) _cameraCaptured = NSProcessInfo.processInfo.systemUptime;
 }
-- (void)lockChanged:(NSNotification *)notification { (void)notification; AKLog(@"pointer lock active=%d",self.window.windowScene.pointerLockState.locked); }
+- (void)lockChanged:(NSNotification *)notification {
+    (void)notification;
+    AKLog(@"pointer lock active=%d",self.window.windowScene.pointerLockState.locked);
+    // The raw pointer appears where the iPadOS pointer was, and hides once
+    // iPadOS draws its own again.
+    if(_rawPointer) { _rawCursorActive=[self rawPointerActive]; if(_rawCursorActive)_pointerInside=YES; [self positionCursor]; }
+}
 - (void)anchorChanged:(NSNotification *)notification {
     if(!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(),^{[self anchorChanged:notification];});return; }
     NSPoint screen=CGPointMake([notification.userInfo[@"x"] doubleValue],
@@ -666,7 +690,7 @@ static BOOL AKWindowInputDiagnostics(void) {
     mouse.mouseInput.mouseMovedHandler=^(GCMouseInput *input,float dx,float dy) {
         (void)input; AKHostView *view=weakSelf;
         if(!view || !view.window.isKeyWindow || ![view usesRelativeMouse])return;
-        [view postRelativeMouseX:dx y:dy];
+        [view rawMouseMovedX:dx y:dy];
     };
     mouse.mouseInput.leftButton.pressedChangedHandler=^(GCControllerButtonInput *button,float value,BOOL pressed) { (void)button;(void)value;[weakSelf rawButton:0 pressed:pressed]; };
     mouse.mouseInput.rightButton.pressedChangedHandler=^(GCControllerButtonInput *button,float value,BOOL pressed) { (void)button;(void)value;[weakSelf rawButton:1 pressed:pressed]; };
@@ -680,6 +704,15 @@ static BOOL AKWindowInputDiagnostics(void) {
         event.timestamp=NSProcessInfo.processInfo.systemUptime;[NSApp postEvent:event atStart:NO];
     };
     AKLog(@"raw mouse input installed");
+}
+// A mouse's own motion (y up), with the iPadOS pointer locked. A pointer the
+// game holds takes it as it is. The free pointer (raw pointer only) moves by
+// it at a constant speed, with no acceleration, and stops at the view's edge.
+- (void)rawMouseMovedX:(CGFloat)dx y:(CGFloat)dy {
+    if(!isfinite(dx) || !isfinite(dy))return;
+    if(AKMouseIsCaptured()) { [self postRelativeMouseX:dx y:dy]; if(_rawCursorActive)[self positionCursor]; return; }
+    _touchCursorActive=NO; _rawCursorActive=YES; _pointerInside=YES;
+    [self movePointerBy:CGPointMake(dx*_rawSpeed,-dy*_rawSpeed)];
 }
 // Preserve physical deltas while keeping a virtual cursor inside the desktop
 // confinement rect. Wine uses absolute positions inside it and deltas at its edges.
@@ -758,7 +791,7 @@ static BOOL AKWindowInputDiagnostics(void) {
     // Camera mode touches the game where the finger is: no pointer is drawn,
     // except in a left drag, where the game shows what is being carried on it.
     BOOL cameraMode=_touchCursorActive && _touchControls.trackpadEnabled && !_touchControls.cursorMode && !_pressedLeft;
-    _cursorView.hidden=!(_softwareCursor || _touchCursorActive) || reasons!=0 || cameraMode;
+    _cursorView.hidden=!(_softwareCursor || _touchCursorActive || _rawCursorActive) || reasons!=0 || cameraMode;
     if(reasons!=_cursorVisibilityReasons) { _cursorVisibilityReasons=reasons; AKLog(@"cursor visibility hidden=%d outside=%d game_hidden=%d no_image=%d",reasons!=0,!!(reasons&1),!!(reasons&2),!!(reasons&4)); }
     [CATransaction commit];
     // The desktop client owns a nested event loop. UIKit's outer-loop commit
@@ -783,8 +816,8 @@ static BOOL AKWindowInputDiagnostics(void) {
 }
 - (void)moveHoverTo:(CGPoint)point inside:(BOOL)inside {
     if([self usesRelativeMouse])return;
-    BOOL wasTouchCursor = _touchCursorActive;
-    _touchCursorActive = NO;
+    BOOL wasTouchCursor = _touchCursorActive || _rawCursorActive;
+    _touchCursorActive = NO; _rawCursorActive = NO;
     BOOL changed=wasTouchCursor || _pointerInside!=inside || !CGPointEqualToPoint(_last,point);
     _pointerInside=inside;
     if(changed) [self postMouse:_pressedRight?NSEventTypeRightMouseDragged:_pressedLeft?NSEventTypeLeftMouseDragged:NSEventTypeMouseMoved at:point button:_pressedRight?1:0];
@@ -806,6 +839,10 @@ static BOOL AKWindowInputDiagnostics(void) {
     [self moveHoverTo:point inside:CGRectContainsPoint(self.bounds,point)];
 }
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
+static BOOL AKTouchesAreIndirect(NSSet<UITouch *> *touches) {
+    for (UITouch *touch in touches) if (touch.type != UITouchTypeIndirectPointer) return NO;
+    return touches.count > 0;
+}
 static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSecondary) != 0; }
 - (BOOL)handleTrackpadTouches:(NSSet<UITouch *> *)touches event:(UIEvent *)event {
     if (!_touchControls.trackpadEnabled) return NO;
@@ -815,8 +852,15 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
     }
     return NO;
 }
+// With the raw pointer, the mouse reports its own buttons (rawButton) at the
+// game's pointer. UIKit's pointer touches are at the locked iPadOS pointer,
+// somewhere else, and are not used.
+- (BOOL)rawPointerOwns:(NSSet<UITouch *> *)touches {
+    return AKTouchesAreIndirect(touches) && [self rawPointerActive];
+}
 - (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
     if ([self handleTrackpadTouches:t event:ev]) return;
+    if ([self rawPointerOwns:t]) return;
     BOOL r = AKIsRight(ev);if(r?_pressedRight:_pressedLeft)return; _last = [t.anyObject locationInView:self];
     [self reconcileModifiers:AKMods(ev.modifierFlags)];
     // A finger's pointer arrives where it landed before the button goes down.
@@ -837,6 +881,7 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
     if ([self handleTrackpadTouches:t event:ev]) return;
+    if ([self rawPointerOwns:t]) return;
     if(!_pressedRight && !_pressedLeft)return;
     [self postMouse:_pressedRight ? NSEventTypeRightMouseUp : NSEventTypeLeftMouseUp at:[self usesRelativeMouse]?_last:[t.anyObject locationInView:self] button:_pressedRight];
 }
@@ -909,7 +954,7 @@ static BOOL AKIsRight(UIEvent *ev) { return (ev.buttonMask & UIEventButtonMaskSe
 // This is an immersive preference, not a device-wide kiosk lock.
 - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return UIRectEdgeAll; }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
-- (BOOL)prefersPointerLocked { return AKMouseIsCaptured() && GCMouse.mice.count>0; }
+- (BOOL)prefersPointerLocked { return [self.host wantsPointerLock]; }
 - (void)viewDidAppear:(BOOL)a { [super viewDidAppear:a]; [self.host becomeFirstResponder]; }
 @end
 

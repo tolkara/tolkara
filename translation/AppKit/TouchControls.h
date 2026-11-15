@@ -52,6 +52,17 @@ AKTouchLayout AKTouchLayoutFor(CGSize size, UIEdgeInsets safe, CGRect strip);
 // Without a stored choice they are shown on iPhone and not on iPad.
 extern NSString *const AKTouchControlsDefaultsKey;   // "AKTouchControls"
 
+// Optional: the launcher's Pointer Acceleration switch stores this Boolean
+// (on without a stored choice). Off, the pointer moves by a constant gain:
+// a mouse's free pointer follows its raw motion in place of the iPadOS
+// pointer (AppKit.m, "Raw pointer"), times AKPointerSpeedDefaultsKey (a
+// number, 1 without a stored choice), and the touch trackpad's gain no longer
+// follows the finger's speed. Read when a game starts.
+extern NSString *const AKPointerAccelerationDefaultsKey;   // "AKPointerAcceleration"
+extern NSString *const AKPointerSpeedDefaultsKey;          // "AKPointerSpeed"
+BOOL AKPointerAccelerationEnabled(void);
+double AKPointerSpeed(void);
+
 // Lives above the guest layer, but only its buttons intercept hit testing.
 // The host supplies direct touches; hardware mouse input stays on its old path.
 @interface AKTouchControls : UIView <UIKeyInput>
