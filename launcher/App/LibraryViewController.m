@@ -448,10 +448,40 @@ static double TKPointerSpeed(void) {
             self->_download=nil; self->_downloadAlert=nil; self->_downloadBar=nil;
             BOOL stopped=[error.domain isEqual:NSCocoaErrorDomain] && error.code==NSUserCancelledError;
             void (^after)(void)=^{
-                [self refresh];
-                if (!done && !stopped) [self showError:error title:@"Download Failed"];
+                if (done) [self addDownloadedProfile:profile];
+                else { [self refresh]; if (!stopped) [self showError:error title:@"Download Failed"]; }
             };
             if (alert.presentingViewController) [alert dismissViewControllerAnimated:YES completion:after]; else after();
+        });
+    });
+}
+
+// The downloaded application goes into the library at once, also when its
+// profile was removed from the library before, and the user is told under
+// which name: an entry that already pointed at this folder is the one.
+- (void)addDownloadedProfile:(NSDictionary *)profile {
+    NSString *path=[[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"]
+        stringByAppendingPathComponent:[TKAppLibrary executableOfProfile:profile]];
+    _importing=YES;
+    [self reload];
+    dispatch_async(_queue,^{
+        NSError *error=nil;
+        TKApp *app=[self->_library importExecutable:path copy:NO error:&error];
+        [self->_library discover];
+        dispatch_async(dispatch_get_main_queue(),^{
+            self->_importing=NO;
+            [self reload];
+            if (!app) { [self showError:error title:@"Downloaded, but Not Added"]; return; }
+            NSUInteger row=[self->_apps indexOfObjectPassingTest:^BOOL(TKApp *item, NSUInteger index, BOOL *stop) {
+                (void)index; (void)stop; return [item.identifier isEqual:app.identifier]; }];
+            if (row!=NSNotFound)
+                [self.tableView selectRowAtIndexPath:[NSIndexPath indexPathForRow:(NSInteger)row inSection:self.hasNotice ? 1 : 0]
+                    animated:YES scrollPosition:UITableViewScrollPositionMiddle];
+            UIAlertController *alert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"%@ Is in Your Library",app.name]
+                message:@"Tap it to start. The game downloads its data when it first starts and shows its progress; keep Tolkara open until it is done."
+                preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:alert animated:YES completion:nil];
         });
     });
 }
