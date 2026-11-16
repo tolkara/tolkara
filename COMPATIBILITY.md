@@ -238,3 +238,39 @@ built-in profile" and synchronized all three files, uploading the latest
 change. During play the minute-by-minute sync uploaded changes; twice the game
 was writing a save mid-upload, and the sync stopped that pass (error 44)
 without touching the file, uploading it on a later pass.
+
+2026-11-16 Steam on the one build of main (iPad Pro M5, Developer service):
+the profile committed on 25 October was an untested candidate that gave
+Steam's browser 40 GiB; the browser exited with code 3 at every start
+("Failed creating offscreen shared JS context"). With its 52 GiB range back
+(0x71-0x7e) Steam starts, keeps its saved sign-in and shows the Store. Started
+with `-applaunch` as a one-launch override, Steam ran its install script and
+Vampire Survivors reached its first screen under the rules any program in
+`steamapps\common` now gets. Not done today: input to a game, quitting to
+Steam and a second game in one session (no way to touch the iPad from the
+session that tested this).
+
+What a start can still meet, all seen today:
+- A launch whose free low-address gap is too small (1275 MiB once in five
+  launches; 1615 are needed) used to prepare for nine minutes and then hang
+  with the code pool at 0x7e00000000. It now stops at once and asks for
+  Tolkara to be closed and opened again.
+- When Steam installs its own update it starts itself again; the second
+  steam.exe has no range and Tolkara ends. The update is in place and the
+  next start works.
+- Steam's own small dialogs ("Steam Service Error", "Steamwebhelper is not
+  responding") come up as an empty grey window.
+- Helper programs share one 4 GiB range, so an install script's children
+  (cmd.exe, the Visual C++ installer) are refused while SteamService.exe
+  runs. Vampire Survivors starts regardless; Meccha Chameleon, which needs
+  that installer, was not started by Steam. A 1 GiB range per helper is too
+  small for Wine (no room for its 32-bit window; SteamService exits 1).
+- Process slots and code pool shares are used once: 1400 MiB allow two game
+  starts in one session.
+
+Downloading Steam on the device: the launcher code, the packer for the
+Windows runtime and a 182 MB archive built with it exist; on the Mac the
+download code unpacked that archive and fetched Valve's 246 MB of packages,
+all checksums matching. The profile has no download block yet because the
+archive is not published, so the iPad does not offer it, and a fresh
+install has not been started on a device.
