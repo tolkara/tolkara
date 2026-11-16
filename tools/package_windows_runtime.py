@@ -7,12 +7,14 @@
 The archive holds Wine/ (what a device needs of a Wine install built with
 tools/build_windows_runtime.sh: the Unix libraries, the Windows DLLs, share/
 and the libraries GnuTLS and FreeType need) and prefix/ (a Windows prefix
-that Wine made on this Mac and no program was installed in). --overlay is
+that Wine made on this Mac and no program was installed in; its volatile.reg
+goes along, because it holds the processor description FEX reads and
+wineboot never runs on a device to write it again). --overlay is
 laid over the Wine install first (files rebuilt since the install).
 
 The prefix is made anonymous and portable: no user folder, no program's
 registry keys, this Mac's name and user replaced, the Mac's own fonts
-dropped and Wine's Tahoma registered. Files the prefix repeats from the
+dropped, Wine's Tahoma registered and standing in for Arial and Segoe UI. Files the prefix repeats from the
 runtime are not stored twice: tolkara-links.txt names them and the device
 copies them after unpacking. Binaries built under the user's home folder carry its
 path; the user's name in it is overwritten with underscores of the same
@@ -42,6 +44,7 @@ FONTS = {'tahoma.ttf': 'Tahoma (TrueType)', 'tahomabd.ttf': 'Tahoma Bold (TrueTy
 FONT_KEYS = {'system.reg': ('Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Fonts',
                             'Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\Fonts'),
              'user.reg': ('Software\\\\Wine\\\\Fonts\\\\External Fonts',)}
+REPLACED = ('Arial', 'Microsoft Sans Serif', 'sans', 'Segoe UI')
 # Registry keys of programs that were run in the prefix.
 PROGRAM_KEYS = re.compile(r'\\\\(Valve|Wow6432Node\\\\Valve)(\\\\|$)', re.I)
 EPOCH = (2026, 1, 1, 0, 0, 0)
@@ -58,7 +61,7 @@ def runtime_wanted(relative):
 
 def prefix_wanted(relative):
     parts = relative.parts
-    if relative.name == '.DS_Store' or parts[0] in ('dosdevices', '.wineserver', 'volatile.reg', '.update-timestamp'): return False
+    if relative.name == '.DS_Store' or parts[0] in ('dosdevices', '.wineserver', '.update-timestamp'): return False
     if parts[0] != 'drive_c': return len(parts) == 1 and relative.suffix == '.reg'
     if len(parts) == 1: return True
     if parts[1] == 'users': return len(parts) == 2 or parts[2] == 'Public'
@@ -81,6 +84,9 @@ def portable_registry(name, text, user, host):
         if line.startswith('[') and name == 'system.reg' and key in FONT_KEYS['system.reg']:
             out += [f'"{value}"="{file}"\n' for file, value in FONTS.items()]
     text = ''.join(out)
+    # The faces programs ask for by name are not on a device: Wine's Tahoma stands in.
+    if name == 'user.reg' and '[Software\\\\Wine\\\\Fonts\\\\Replacements]' not in text:
+        text = text.rstrip('\n') + '\n\n[Software\\\\Wine\\\\Fonts\\\\Replacements] 1767225600\n' + ''.join(f'"{face}"="Tahoma"\n' for face in REPLACED) + '\n'
     text = re.sub(r'(?i)(users\\\\)' + re.escape(user) + r'(?=\\\\|")', lambda m: m.group(1) + DEVICE_USER, text)
     text = re.sub(r'(?i)(?<![A-Za-z0-9])' + re.escape(host) + r'(?![A-Za-z0-9])', 'TOLKARA', text)
     text = re.sub(r'(?m)^("USERNAME"=").*(")$', lambda m: m.group(1) + DEVICE_USER + m.group(2), text)

@@ -94,6 +94,14 @@ static void log_low_gaps(void) {
             }
         }
         if (result!=KERN_SUCCESS || address>=high) break;
+        // What holds the 2 GiB under the shared region: each mapping of 4 MiB or more.
+        if (address<((vm_address_t)6<<30) && size>=((vm_size_t)4<<20)) {
+            vm_address_t at=address; vm_size_t length=0;
+            vm_region_extended_info_data_t more; mach_msg_type_number_t words=VM_REGION_EXTENDED_INFO_COUNT; mach_port_t unused=MACH_PORT_NULL;
+            unsigned tag=vm_region_64(mach_task_self(),&at,&length,VM_REGION_EXTENDED_INFO,(vm_region_info_t)&more,&words,&unused)==KERN_SUCCESS ? more.user_tag : 0;
+            fprintf(stderr,"[native-memory] used below 6 GiB: %#llx, %llu MiB, protection %d/%d, tag %u\n",(unsigned long long)address,
+                (unsigned long long)(size>>20),info.protection,info.max_protection,tag);
+        }
         cursor=address+size;
     }
     for (size_t i=0;i<4 && largest[i].size;i++)

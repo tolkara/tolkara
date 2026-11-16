@@ -79,9 +79,9 @@
     "service": "steam",
     "root": "Steam",
     "runtime": {
-      "url": "https://github.com/tolkara/tolkara/releases/download/windows-runtime-1/tolkara-windows-runtime-1.zip",
-      "sha256": "0dfc51c8f853c0f0c3d7e987d3a5e39da459dc4b669d25e9234d9c4240bad8f3",
-      "size": 182151661
+      "url": "https://github.com/tolkara/tolkara/releases/download/windows-runtime-2/tolkara-windows-runtime-2.zip",
+      "sha256": "656c25abfe00ba166d0041e89a1f9985a082815001123f1d09e33f32ff276af6",
+      "size": 182159214
     },
     "client": "steam_client_win64"
   },
