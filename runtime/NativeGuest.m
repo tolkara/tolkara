@@ -1210,6 +1210,11 @@ void ng_end_process(int code) {
     pe_deadline(code,3);
     exit(code);
 }
+// This launch of the app has no room below 64 GiB for the arena and its code
+// pool (where the system put its own mappings differs per launch). Nothing was
+// prepared; a new launch of the app is the remedy.
+static atomic_bool no_low_room;
+bool ng_no_low_room(void) { return atomic_load(&no_low_room); }
 static atomic_bool main_returned; static atomic_int main_result;
 bool ng_main_returned(int *code) {
     if (!atomic_load(&main_returned)) return false;
@@ -2089,8 +2094,10 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
                 &separate_code_pool,pool_size,TKPrepareLocalArenaPair,NULL,&local_quarantine,&separate_pool_quarantine);
         else
             arena_ready=nc_create_managed_below(&guest.arena,total,ceiling,TKPrepareLocalArena,NULL,&local_quarantine);
-        if (!arena_ready && errno==ENOSPC)
+        if (!arena_ready && errno==ENOSPC) {
+            atomic_store(&no_low_room,true);
             LOG("[native] no suitable low-address execution region; preparation was not started; restart required\n");
+        }
     }
 #endif
     else if(take_reserved) {

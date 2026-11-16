@@ -75,6 +75,30 @@ static void *map_low_hint(size_t size, int prot) {
     }
     return MAP_FAILED;
 }
+// What is free between 4 and 64 GiB, for the log of a launch that found no
+// room: the largest gaps, from this process's own map.
+static void log_low_gaps(void) {
+    const vm_address_t low=(vm_address_t)1<<32, high=(vm_address_t)1<<36;
+    struct { vm_address_t start; vm_size_t size; } largest[4]={{0,0}};
+    vm_address_t cursor=low;
+    while (cursor<high) {
+        vm_address_t address=cursor; vm_size_t size=0;
+        vm_region_basic_info_data_64_t info; mach_msg_type_number_t count=VM_REGION_BASIC_INFO_COUNT_64; mach_port_t object=MACH_PORT_NULL;
+        kern_return_t result=vm_region_64(mach_task_self(),&address,&size,VM_REGION_BASIC_INFO_64,(vm_region_info_t)&info,&count,&object);
+        vm_address_t next=result==KERN_SUCCESS && address<high ? address : high;
+        if (next>cursor) {
+            vm_size_t gap=next-cursor; vm_address_t start=cursor;
+            for (size_t i=0;i<4;i++) if (gap>largest[i].size) {
+                vm_size_t s=largest[i].size; vm_address_t a=largest[i].start;
+                largest[i].size=gap; largest[i].start=start; gap=s; start=a;
+            }
+        }
+        if (result!=KERN_SUCCESS || address>=high) break;
+        cursor=address+size;
+    }
+    for (size_t i=0;i<4 && largest[i].size;i++)
+        fprintf(stderr,"[native-memory] free below 64 GiB: %#llx, %llu MiB\n",(unsigned long long)largest[i].start,(unsigned long long)(largest[i].size>>20));
+}
 __attribute__((constructor)) static void reserve_low_arena(void) {
     // Keep the largest low gap available at startup, even when the ceiling
     // itself does not fit between the host's initial mappings. A coarse
@@ -103,7 +127,10 @@ static void *map_low(size_t size, int prot) {
         early_low=early_low_end=NULL;
     }
     void *mapped = map_low_hint(size, prot);
-    if (mapped==MAP_FAILED) fprintf(stderr,"[native-memory] low arena unavailable size=%zu errno=%d\n",size,errno);
+    if (mapped==MAP_FAILED) {
+        fprintf(stderr,"[native-memory] low arena unavailable size=%zu errno=%d\n",size,errno);
+        log_low_gaps();
+    }
     return mapped != MAP_FAILED ? mapped : mmap(NULL, size, prot, MAP_PRIVATE | MAP_ANON, -1, 0);
 }
 
@@ -200,6 +227,8 @@ typedef struct {
     NCPreparePair prepare;
     void *context, *first_address;
     size_t first_size;
+    uintptr_t ceiling;
+    int second_errno;
     NCPreparation outcome;
 } PairPreparation;
 static NCPreparation prepare_pair_second(void *address,size_t size,void *opaque) {
@@ -210,8 +239,11 @@ static NCPreparation prepare_pair_second(void *address,size_t size,void *opaque)
 static NCPreparation prepare_pair_first(void *address,size_t size,void *opaque) {
     PairPreparation *pair=opaque;
     pair->first_address=address; pair->first_size=size;
-    if(nc_create_managed(pair->second,pair->second_size,prepare_pair_second,pair,pair->quarantine))
+    // The second region has the first one's ceiling: a code pool that the
+    // kernel put high instead is refused here, before anything is prepared.
+    if(nc_create_managed_below(pair->second,pair->second_size,pair->ceiling,prepare_pair_second,pair,pair->quarantine))
         return NC_PREPARED;
+    pair->second_errno=errno;
     return pair->quarantine->quarantined ? NC_UNCERTAIN : NC_REJECTED;
 }
 bool nc_create_pair(NativeCodeMemory *first,size_t first_size,uintptr_t first_ceiling,
@@ -227,12 +259,14 @@ bool nc_create_pair(NativeCodeMemory *first,size_t first_size,uintptr_t first_ce
     if(!prepare || !first_size || !second_size || first_size%page || second_size%page ||
        second_size>NC_MAX_ARENA || first_size>NC_MAX_ARENA-second_size) { errno=EINVAL;return false; }
     PairPreparation pair={.second=second,.quarantine=second_quarantine,.second_size=second_size,
-                          .prepare=prepare,.context=context,.outcome=NC_REJECTED};
+                          .prepare=prepare,.context=context,.ceiling=first_ceiling,.outcome=NC_REJECTED};
     bool previous_preserve = preserve_low_tail;
     preserve_low_tail = true;
     bool ok=nc_create_managed_below(first,first_size,first_ceiling,prepare_pair_first,&pair,first_quarantine);
     preserve_low_tail = previous_preserve;
     if (!preserve_low_tail) release_low_tail();
     if(!ok && !first_quarantine->quarantined && !second_quarantine->quarantined) nc_destroy(second);
+    // No room for the second region is the answer the caller acts on.
+    if(!ok && pair.second_errno==ENOSPC) errno=ENOSPC;
     return ok;
 }

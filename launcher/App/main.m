@@ -986,7 +986,9 @@ static void TKScheduleSnapshots(NSArray<NSString *> *arguments, FILE *log) {
     // Warcraft returns -1 from some of its own ways out.
     int code=0; BOOL closed=fullStartup && ng_main_returned(&code);
     self.status.text = closed ? (code ? [NSString stringWithFormat:@"%@ closed (code %d).",app.name,code] : [app.name stringByAppendingString:@" closed."]) :
-        ok ? @"Original client first initializer returned." : @"Native startup stopped. See runtime log.";
+        ok ? @"Original client first initializer returned." :
+        ng_no_low_room() ? [NSString stringWithFormat:@"This time Tolkara's memory came out without room for %@. Nothing was prepared. Close Tolkara in the app switcher and open it again, then start %@.",app.name,app.name] :
+        @"Native startup stopped. See runtime log.";
     [self showStartStopped];
     // A closed game was the whole session in a library launch. End the process
     // after a short note: the next tap on Tolkara opens the library ready to

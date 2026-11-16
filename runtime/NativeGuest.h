@@ -26,6 +26,9 @@ void ng_set_exit_observer(NGExitObserver observer, void *context);
 // exit(), with a bound on each part (ProcessEnd.h) so that an exit handler
 // waiting on a guest thread cannot leave a dead screen behind.
 void ng_end_process(int code) __attribute__((noreturn));
+// After a start that stopped: this launch of the app had no room at low
+// addresses for the arena and its code pool, and nothing was prepared.
+bool ng_no_low_room(void);
 // Whether the guest's main was entered and returned, and with what. A game
 // that returns nonzero has still ended.
 bool ng_main_returned(int *code);
