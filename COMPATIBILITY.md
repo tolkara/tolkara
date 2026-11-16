@@ -274,3 +274,22 @@ download code unpacked that archive and fetched Valve's 246 MB of packages,
 all checksums matching. The profile has no download block yet because the
 archive is not published, so the iPad does not offer it, and a fresh
 install has not been started on a device.
+
+### 2026-11-16, later: Steam downloaded on the iPad
+
+- `--download-profile=steam-windows --download-root=SteamTrial` beside the
+  installed Steam: the Windows runtime from the GitHub release and Steam's
+  packages from Valve arrived and were unpacked in about two minutes.
+- Started with the profile's paths pointed at the trial (`--guest-environment=`
+  for `WINEPREFIX`, `TOLKARA_CHDIR`, `WINEDLLDIR`, `WINEDATADIR`): Steam's own
+  updater took the packages placed in `package/` (it fetched 2 MB more),
+  installed itself and restarted, which ends the session; the next start
+  reached the sign-in screen. Signing in was not tried.
+- Runtime archive 1 was incomplete: without `volatile.reg` FEX stops at
+  start ("Couldn't detect CPU features"), and without
+  `Software\Wine\Fonts\Replacements` the sign-in screen has no labels.
+  Archive 2 carries both; they were verified by placing the two files in the
+  trial prefix by hand, not yet by downloading archive 2.
+- The low-memory layout was too small in 5 of 8 starts this evening; such a
+  start stops within seconds. A failed start now logs what occupies the
+  2 GiB under the shared region.
