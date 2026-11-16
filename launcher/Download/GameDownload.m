@@ -719,7 +719,7 @@ static bool entry_sink(void *context, const uint8_t *bytes, size_t length) {
     BOOL keepPrefix = [files fileExistsAtPath:[_root stringByAppendingPathComponent:@"prefix/system.reg"]];
     NSString *runtimeFolder = [_runtime substringFromIndex:_root.length + 1];
     // Every name is checked before anything is written.
-    NSMutableArray *paths = [NSMutableArray new];
+    NSMutableArray *paths = [NSMutableArray new], *folders = [NSMutableArray new];
     uint32_t links = UINT32_MAX, registry = UINT32_MAX;
     uint64_t total = 0;
     BOOL understood = YES, holdsRuntime = NO;
@@ -732,7 +732,10 @@ static bool entry_sink(void *context, const uint8_t *bytes, size_t length) {
             links = i; understood = archive.entries[i].size <= 8 << 20;
             [paths addObject:NSNull.null]; continue;
         }
-        BOOL skipped = directory || (keepPrefix && ([path isEqual:@"prefix"] || under(path, @"prefix")));
+        BOOL kept = keepPrefix && ([path isEqual:@"prefix"] || under(path, @"prefix"));
+        // A folder with nothing in it (C:\windows\temp) is still made.
+        if (directory && !kept) [folders addObject:path];
+        BOOL skipped = directory || kept;
         if (!directory && under(path, runtimeFolder)) holdsRuntime = YES;
         if ([path isEqual:@"prefix/system.reg"] && !skipped) registry = i;
         if (!skipped) total += archive.entries[i].size;
@@ -743,6 +746,8 @@ static bool entry_sink(void *context, const uint8_t *bytes, size_t length) {
     NSError *problem = nil;
     [files removeItemAtPath:marker error:NULL];
     [files removeItemAtPath:_runtime error:NULL];
+    for (NSString *folder in folders)
+        if (!problem) [files createDirectoryAtPath:[_root stringByAppendingPathComponent:folder] withIntermediateDirectories:YES attributes:nil error:&problem];
     uint64_t done = 0;
     for (uint32_t pass = 0; pass < 2 && !problem; pass++) {
         // Second pass: the copies, then the prefix's system.reg.

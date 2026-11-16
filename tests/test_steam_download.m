@@ -51,6 +51,7 @@ int main(void) {
             @[@"prefix/system.reg", registry, @YES, @(S_IFREG | 0644)],
             @[@"Wine/lib/wine/x86_64-windows/kernel32.dll", kernel, @NO, @(S_IFREG | 0644)],
             @[@"Wine/share/", NSData.data, @NO, @(S_IFDIR | 0755)],
+            @[@"prefix/drive_c/windows/temp/", NSData.data, @NO, @(S_IFDIR | 0755)],
             @[@"tolkara-links.txt", text(linkList), @YES, @(S_IFREG | 0644)],
             @[@"prefix/drive_c/windows/win.ini", ini, @NO, @0]];
         NSData *runtimeZip = zip(runtimeEntries);
@@ -205,6 +206,9 @@ int main(void) {
         assert([read_file(kernelPath) isEqual:kernel] && mode_of(kernelPath) == 0644);
         assert([read_file(registryPath) isEqual:registry] && [read_file(iniPath) isEqual:ini] && mode_of(iniPath) == 0644);
         assert([read_file(copyPath) isEqual:kernel] && [read_file([root stringByAppendingPathComponent:@"Wine/copy/of.dll"]) isEqual:kernel]);
+        // A folder the archive names with nothing in it is made too.
+        BOOL isFolder = NO;
+        assert([files fileExistsAtPath:[root stringByAppendingPathComponent:@"prefix/drive_c/windows/temp"] isDirectory:&isFolder] && isFolder);
         assert(![files fileExistsAtPath:[root stringByAppendingPathComponent:@"tolkara-links.txt"]]);
         // Steam: the installer unpacked, the other packages where its updater keeps them.
         assert([read_file([steamFolder stringByAppendingPathComponent:@"steam.exe"]) isEqual:program]);
