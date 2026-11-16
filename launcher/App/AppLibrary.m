@@ -185,6 +185,11 @@ static NSString *clean_name(id name) {
     }
     return profiles;
 }
+- (NSArray<NSDictionary *> *)downloadProfiles {
+    return [_profiles filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *profile,id bindings) {
+        (void)bindings; return profile[@"download"]!=nil;
+    }]];
+}
 - (NSArray<NSDictionary *> *)downloadableProfiles {
     NSMutableArray *out=[NSMutableArray new];
     for (NSDictionary *profile in _profiles) {
