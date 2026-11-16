@@ -75,5 +75,5 @@
     "TOLKARA_SEPARATE_CODE_POOL": "1",
     "TOLKARA_REQUIRE_LOW_ARENA": "1"
   },
-  "notes": "The browser has 0x71-0x7e (52 GiB); it does not start with less. Helpers and games take 0x70-0x71 in turn. Process slots and code pool shares are used once per session."
+  "notes": "The browser has 0x71-0x7e (52 GiB); it does not start with less. Helpers and games take 0x70-0x71 in turn, so an install script's own children are refused. Process slots and code pool shares are used once per session: two game starts. See COMPATIBILITY.md, 2026-11-16."
 }
