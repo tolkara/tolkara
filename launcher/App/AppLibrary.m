@@ -178,8 +178,8 @@ static NSString *clean_name(id name) {
             (profile[@"codePool"] && (!profile[@"runtime"] || !valid_code_pool(profile[@"codePool"]))) ||
             (profile[@"processes"] && (!profile[@"runtime"] || !valid_processes(profile[@"processes"]))) ||
             (profile[@"steamCloud"] && !valid_steam_cloud(profile[@"steamCloud"])) ||
-            (profile[@"download"] && (profile[@"runtime"] ||
-                ![TKGameDownload validConfiguration:profile[@"download"] workingDirectory:profile[@"workingDirectory"]]))) continue;
+            (profile[@"download"] && ![TKGameDownload validConfiguration:profile[@"download"]
+                workingDirectory:profile[@"workingDirectory"] runtime:profile[@"runtime"]])) continue;
         [seen addObject:profile[@"id"]];
         [profiles addObject:profile];
     }
@@ -188,8 +188,7 @@ static NSString *clean_name(id name) {
 - (NSArray<NSDictionary *> *)downloadableProfiles {
     NSMutableArray *out=[NSMutableArray new];
     for (NSDictionary *profile in _profiles) {
-        if (!profile[@"download"]) continue;
-        if (![NSFileManager.defaultManager fileExistsAtPath:join(_documents,[TKAppLibrary executableOfProfile:profile])]) [out addObject:profile];
+        if (profile[@"download"] && ![TKGameDownload profileIsInPlace:profile documents:_documents]) [out addObject:profile];
     }
     return out;
 }

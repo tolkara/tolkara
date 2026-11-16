@@ -535,7 +535,7 @@ build/emulation/test_controller_probe
 build/emulation/test_startup_activity
 xcrun clang -fobjc-arc -Wno-deprecated-declarations -Wall -Wextra -Werror \
     -O1 -g -fsanitize=address,undefined -Iruntime -Ilauncher/App -framework Foundation \
-    launcher/App/AppLibrary.m launcher/Download/GameDownload.m launcher/Download/BlizzardContent.c -Ilauncher/Download -lz runtime/GuestModule.m runtime/GuestMemory.c runtime/GuestImage.c tests/test_app_library.m \
+    launcher/App/AppLibrary.m launcher/Download/GameDownload.m launcher/Download/BlizzardContent.c launcher/Download/ZipArchive.c -Ilauncher/Download -lz runtime/GuestModule.m runtime/GuestMemory.c runtime/GuestImage.c tests/test_app_library.m \
     -o build/emulation/test_app_library
 build/emulation/test_app_library build/emulation/module_fixture
 xcrun clang -fobjc-arc -Wall -Wextra -Werror \
@@ -690,11 +690,18 @@ xcrun clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations \
     -o build/emulation/test_system_roots
 build/emulation/test_system_roots build/emulation/system-roots.plist
 
-# The experimental downloader against a made-up content server; no network.
+# The experimental downloader against made-up servers and archives; no network.
+xcrun clang -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Ilauncher/Download -Itests launcher/Download/ZipArchive.c tests/test_zip_archive.c -lz -o build/emulation/test_zip_archive
+build/emulation/test_zip_archive
 xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
-    -Ilauncher/Download -framework Foundation launcher/Download/BlizzardContent.c launcher/Download/GameDownload.m \
+    -Ilauncher/Download -framework Foundation launcher/Download/BlizzardContent.c launcher/Download/ZipArchive.c launcher/Download/GameDownload.m \
     tests/test_game_download.m -lz -o build/emulation/test_game_download
 build/emulation/test_game_download
+xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \
+    -Ilauncher/Download -Itests -framework Foundation launcher/Download/BlizzardContent.c launcher/Download/ZipArchive.c launcher/Download/GameDownload.m \
+    tests/test_steam_download.m -lz -o build/emulation/test_steam_download
+build/emulation/test_steam_download
 
 # Original Steam Cloud protocol and conflict fixtures; no account or network.
 xcrun clang -fobjc-arc -fblocks -Wall -Wextra -Werror -O1 -g -fsanitize=address,undefined \

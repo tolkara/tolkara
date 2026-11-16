@@ -103,6 +103,33 @@ class ProfileTests(unittest.TestCase):
         # Not for a compatibility runtime's profile.
         with self.assertRaises(ValueError): check(self.write({**good, 'runtime': 'G/Runtime'}))
 
+    def test_download_steam(self):
+        # The Windows Steam client and the runtime it runs in: exactly these keys, inside Documents.
+        archive = {'url': 'https://releases.example/tolkara-windows-runtime-1.zip', 'sha256': 'ab' * 32, 'size': 400000000}
+        block = {'service': 'steam', 'root': 'Steam', 'runtime': archive, 'client': 'steam_client_win64'}
+        good = {'id': 's', 'name': 'S', 'workingDirectory': 'Steam/prefix/drive_c/Program Files (x86)/Steam', 'runtime': 'Steam/Wine',
+                'executable': 'lib/wine/aarch64-unix/wine', 'download': block}
+        check(self.write(good))
+        check(self.write({**good, 'download': {**block, 'runtime': {**archive, 'size': 1 << 32, 'url': 'https://e.example/' + 'a' * 494}}}))
+        for change in ({'root': '/Steam'}, {'root': 'Steam/..'}, {'root': 'Other'}, {'root': 1}, {'client': 'steam_client_'},
+                       {'client': 'steam_client_../x'}, {'client': 'steam_cmd_win64'}, {'client': 'steam_client_WIN64'}, {'client': 7},
+                       {'script': 'run.sh'}, {'product': 'steam'}, {'runtime': archive['url']},
+                       {'runtime': {**archive, 'url': 'http://releases.example/r.zip'}}, {'runtime': {**archive, 'url': 'https://'}},
+                       {'runtime': {**archive, 'url': 'https://releases.example/r .zip'}}, {'runtime': {**archive, 'url': 7}},
+                       {'runtime': {**archive, 'url': 'https://e.example/' + 'a' * 495}},
+                       {'runtime': {**archive, 'sha256': 'abc'}}, {'runtime': {**archive, 'sha256': 'AB' * 32}}, {'runtime': {**archive, 'sha256': 5}},
+                       {'runtime': {**archive, 'size': 0}}, {'runtime': {**archive, 'size': -5}}, {'runtime': {**archive, 'size': 1.5}},
+                       {'runtime': {**archive, 'size': True}}, {'runtime': {**archive, 'size': '12'}}, {'runtime': {**archive, 'size': (1 << 32) + 1}},
+                       {'runtime': {**archive, 'mirror': 'https://other.example/r.zip'}}, {'runtime': {'url': archive['url'], 'sha256': archive['sha256']}}):
+            with self.assertRaises(ValueError, msg=repr(change)): check(self.write({**good, 'download': {**block, **change}}))
+        for missing in ('root', 'runtime', 'client'):
+            with self.assertRaises(ValueError, msg=missing):
+                check(self.write({**good, 'download': {k: v for k, v in block.items() if k != missing}}))
+        # Only for a compatibility runtime's profile, with the runtime and the working directory inside the top folder.
+        with self.assertRaises(ValueError): check(self.write({k: v for k, v in good.items() if k != 'runtime'}))
+        for change in ({'runtime': 'Wine'}, {'runtime': 'Steam'}, {'runtime': 'Steam\\Wine'}, {'workingDirectory': 'Steam'}, {'workingDirectory': 'Other/Steam'}):
+            with self.assertRaises(ValueError, msg=repr(change)): check(self.write({**good, **change}))
+
     def test_setup(self):
         # What the Mac app reads: plain data, https links, the destination above the working directory.
         good = {'id': 'a', 'name': 'A', 'workingDirectory': 'Games/A', 'executable': 'A.app/Contents/MacOS/A',

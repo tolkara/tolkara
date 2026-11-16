@@ -128,9 +128,15 @@ enum ProfileParser {
         if let cloud = profile["steamCloud"], !(cloud is [String: Any]) {
             throw ProfileError(message: "steamCloud must be an object.")
         }
-        // download is the iPad launcher's too (its experimental downloader).
-        if let download = profile["download"], !(download is [String: Any]) {
-            throw ProfileError(message: "download must be an object.")
+        // download is the iPad launcher's too (its experimental downloader): only
+        // which service it is, and that a "steam" one, alone, comes with a runtime.
+        if let download = profile["download"] {
+            guard let download = download as? [String: Any] else { throw ProfileError(message: "download must be an object.") }
+            switch download["service"] as? String {
+            case "blizzard": guard !hasRuntime else { throw ProfileError(message: "A \"blizzard\" download is not available for a profile with a runtime.") }
+            case "steam": guard hasRuntime else { throw ProfileError(message: "A \"steam\" download needs a profile with a runtime.") }
+            default: throw ProfileError(message: "download.service must be \"blizzard\" or \"steam\".")
+            }
         }
         let setup = profile["setup"]
         var source: String?, installer: String?, getApp: AppProfile.GetApp?, firstRun: AppProfile.FirstRun?, risk: AppProfile.Risk?

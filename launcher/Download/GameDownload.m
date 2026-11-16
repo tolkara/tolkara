@@ -1,7 +1,10 @@
 #import "GameDownload.h"
 #import "BlizzardContent.h"
+#import "ZipArchive.h"
 #import <CommonCrypto/CommonDigest.h>
 #import <stdatomic.h>
+#import <sys/clonefile.h>
+#import <sys/stat.h>
 
 NSString *const TKGameDownloadErrorDomain = @"TKGameDownload";
 
@@ -21,10 +24,16 @@ static BOOL plain_relative(NSString *path) {
         if (!part.length || [part isEqual:@"."] || [part isEqual:@".."]) return NO;
     return YES;
 }
-static NSString *hex(const uint8_t *bytes) {
-    NSMutableString *text = [NSMutableString stringWithCapacity:32];
-    for (int i = 0; i < 16; i++) [text appendFormat:@"%02x", bytes[i]];
+static NSString *hex_of(const uint8_t *bytes, int count) {
+    NSMutableString *text = [NSMutableString stringWithCapacity:(NSUInteger)count * 2];
+    for (int i = 0; i < count; i++) [text appendFormat:@"%02x", bytes[i]];
     return text;
+}
+static NSString *hex(const uint8_t *bytes) { return hex_of(bytes, 16); }
+static BOOL under(NSString *path, NSString *folder) { return [path hasPrefix:[folder stringByAppendingString:@"/"]]; }
+static BOOL whole_number(id value, uint64_t low, uint64_t high) {
+    return [value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
+        [value doubleValue] == (double)[value unsignedLongLongValue] && [value doubleValue] >= (double)low && [value doubleValue] <= (double)high;
 }
 // "name!TYPE:n|…" header, "## …" comments, then one row per line.
 static NSArray<NSDictionary<NSString *, NSString *> *> *table(NSData *data) {
@@ -102,19 +111,159 @@ static void index_visit(void *context, const uint8_t *ekey, uint32_t size, uint3
     }
 }
 
+#pragma mark Steam's file list
+
+// Valve's text format: "key" "value" pairs and "key" { … } blocks, as
+// [[key, value]] with a string or a block's own list for value. Strict:
+// quoted strings only, bounded depth, length and count.
+typedef struct { const char *at, *end; unsigned left; } VDFText;
+// '"' with the string in *text, '{', '}', 0 at the end, -1 for anything else.
+static int vdf_token(VDFText *in, NSString **text) {
+    for (;;) {
+        while (in->at < in->end && (*in->at == ' ' || *in->at == '\t' || *in->at == '\r' || *in->at == '\n')) in->at++;
+        if (in->end - in->at >= 2 && in->at[0] == '/' && in->at[1] == '/') { while (in->at < in->end && *in->at != '\n') in->at++; continue; }
+        break;
+    }
+    if (in->at == in->end) return 0;
+    char c = *in->at++;
+    if (c == '{' || c == '}') return c;
+    if (c != '"') return -1;
+    NSMutableData *bytes = [NSMutableData new];
+    for (;;) {
+        if (in->at == in->end || bytes.length > 1024) return -1;
+        c = *in->at++;
+        if (c == '"') break;
+        if (c == '\\') { if (in->at == in->end) return -1; c = *in->at++; }
+        if (!c) return -1;
+        [bytes appendBytes:&c length:1];
+    }
+    *text = [[NSString alloc] initWithData:bytes encoding:NSUTF8StringEncoding];
+    return *text ? '"' : -1;
+}
+static NSArray *vdf_block(VDFText *in, int depth) {
+    NSMutableArray *items = [NSMutableArray new];
+    for (;;) {
+        NSString *key = nil, *value = nil;
+        int token = vdf_token(in, &key);
+        if (token == (depth ? '}' : 0)) return items;
+        if (token != '"' || !in->left) return nil;
+        in->left--;
+        token = vdf_token(in, &value);
+        if (token == '"') { [items addObject:@[key, value]]; continue; }
+        NSArray *inner = token == '{' && depth < 4 ? vdf_block(in, depth + 1) : nil;
+        if (!inner) return nil;
+        [items addObject:@[key, inner]];
+    }
+}
+// A file of the server's by its name there, its size (1 byte to 4 GiB) and its SHA-256.
+static BOOL package_file(NSString *name, NSString *size, NSString *hash) {
+    if (!matches(name, @"[A-Za-z0-9._-]{1,200}") || !plain_relative(name) || !matches(size, @"[0-9]{1,10}") || !matches(hash, @"[0-9a-fA-F]{64}")) return NO;
+    unsigned long long bytes = strtoull(size.UTF8String, NULL, 10);
+    return bytes && bytes <= 1ull << 32;
+}
+// The packages of the first block of Valve's list, in its order: each
+// {name, bootstrapper, fetch, size, sha256} where fetch is the file to ask
+// the server for (the smaller "zipvz" form when the package has one) and
+// bootstrapper says the package is an installer, which is always fetched as
+// a plain ZIP. Blocks inside a package (other regions' variants of it) are
+// not packages. nil for a list that is not understood.
+static NSArray<NSDictionary *> *steam_packages(NSData *manifest) {
+    if (!manifest.length || manifest.length > 1 << 20) return nil;
+    VDFText in = {manifest.bytes, (const char *)manifest.bytes + manifest.length, 4096};
+    NSArray *top = vdf_block(&in, 0);
+    if (!top.count || ![top[0][1] isKindOfClass:NSArray.class]) return nil;
+    NSMutableArray<NSDictionary *> *packages = [NSMutableArray new];
+    NSMutableSet<NSString *> *names = [NSMutableSet new];
+    for (NSArray *item in top[0][1]) {
+        if (![item[1] isKindOfClass:NSArray.class]) continue;   // "version", "ostype"
+        NSMutableDictionary<NSString *, NSString *> *fields = [NSMutableDictionary new];
+        for (NSArray *field in item[1]) {
+            if (![field[1] isKindOfClass:NSString.class]) continue;
+            if (fields[field[0]]) return nil;
+            fields[field[0]] = field[1];
+        }
+        BOOL bootstrapper = [fields[@"IsBootstrapperPackage"] isEqual:@"1"];
+        NSString *file = fields[@"file"], *size = fields[@"size"], *hash = fields[@"sha2"], *packed = fields[@"zipvz"];
+        // Each form a package comes in is checked, also the one that is not fetched.
+        if (packages.count == 64 || !matches(item[0], @"[A-Za-z0-9_]{1,64}") || !package_file(file, size, hash)) return nil;
+        if (packed) {
+            // "name.zip.vz.<hash>_<size>": the size is in the name.
+            NSRange underscore = [packed rangeOfString:@"_" options:NSBackwardsSearch];
+            NSString *packedSize = underscore.location == NSNotFound ? nil : [packed substringFromIndex:NSMaxRange(underscore)];
+            if (!package_file(packed, packedSize, fields[@"sha2vz"])) return nil;
+            if (!bootstrapper) { file = packed; size = packedSize; hash = fields[@"sha2vz"]; }
+        }
+        if ([names containsObject:file]) return nil;
+        [names addObject:file];
+        unsigned long long bytes = strtoull(size.UTF8String, NULL, 10);
+        [packages addObject:@{@"name": item[0], @"bootstrapper": @(bootstrapper), @"fetch": file, @"size": @(bytes), @"sha256": hash.lowercaseString}];
+    }
+    return packages.count ? packages : nil;
+}
+
+#pragma mark Archives
+
+// An archive entry's name as a path of plain components ("\" is Valve's
+// separator in places), or nil: an absolute path, "..", a link or a device.
+static NSString *entry_path(const ZAEntry *entry, BOOL *directory) {
+    NSString *name = [[NSString alloc] initWithBytes:entry->name length:entry->name_length encoding:NSUTF8StringEncoding];
+    name = [name stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
+    mode_t kind = entry->mode & S_IFMT;
+    *directory = [name hasSuffix:@"/"] || kind == S_IFDIR;
+    if ([name hasSuffix:@"/"]) name = [name substringToIndex:name.length - 1];
+    if ((kind && kind != S_IFREG && kind != S_IFDIR) || (*directory && entry->size)) return nil;
+    return plain_relative(name) ? name : nil;
+}
+typedef struct { int fd; atomic_bool *cancelled; NSMutableData *__unsafe_unretained data; } EntrySink;
+static bool entry_sink(void *context, const uint8_t *bytes, size_t length) {
+    EntrySink *sink = context;
+    if (atomic_load(sink->cancelled)) return false;
+    if (sink->data) { [sink->data appendBytes:bytes length:length]; return true; }
+    while (length) {
+        ssize_t wrote = write(sink->fd, bytes, length);
+        if (wrote <= 0) return false;
+        bytes += wrote; length -= (size_t)wrote;
+    }
+    return true;
+}
+
 @implementation TKGameDownload {
     NSDictionary *_configuration;
-    NSString *_root, *_working, *_region, *_locale;
+    NSString *_root, *_working, *_region, *_locale, *_runtime;
     atomic_bool _cancelled;
     NSURLSession *_session;
 }
 
-+ (NSArray<NSDictionary<NSString *, NSString *> *> *)regionsOfConfiguration:(NSDictionary *)configuration { return configuration[@"regions"]; }
-+ (NSArray<NSString *> *)localesOfConfiguration:(NSDictionary *)configuration { return configuration[@"locales"]; }
++ (NSArray<NSDictionary<NSString *, NSString *> *> *)regionsOfConfiguration:(NSDictionary *)configuration { return configuration[@"regions"] ?: @[]; }
++ (NSArray<NSString *> *)localesOfConfiguration:(NSDictionary *)configuration { return configuration[@"locales"] ?: @[]; }
 
-+ (BOOL)validConfiguration:(id)configuration workingDirectory:(NSString *)workingDirectory {
-    if (![configuration isKindOfClass:NSDictionary.class]) return NO;
++ (BOOL)profileIsInPlace:(NSDictionary *)profile documents:(NSString *)documents {
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSString *working = [documents stringByAppendingPathComponent:profile[@"workingDirectory"]];
+    NSString *home = profile[@"runtime"] ? [documents stringByAppendingPathComponent:profile[@"runtime"]] : working;
+    if (![files fileExistsAtPath:[home stringByAppendingPathComponent:profile[@"executable"]]]) return NO;
+    return ![profile[@"download"][@"service"] isEqual:@"steam"] || [files fileExistsAtPath:[working stringByAppendingPathComponent:@"steam.exe"]];
+}
+
+// "steam": the top folder, the runtime archive and the name of Valve's list.
++ (BOOL)validSteamConfiguration:(NSDictionary *)block workingDirectory:(NSString *)workingDirectory runtime:(NSString *)runtime {
+    if (block.count != 4 || !plain_relative(block[@"root"]) || !matches(block[@"client"], @"steam_client_[a-z0-9_]{1,32}")) return NO;
+    // The runtime's folder and the Steam folder inside the prefix are both inside the top folder.
+    if (!plain_relative(runtime) || !under(runtime, block[@"root"]) || !under(workingDirectory, block[@"root"])) return NO;
+    NSDictionary *archive = block[@"runtime"];
+    if (![archive isKindOfClass:NSDictionary.class] || archive.count != 3) return NO;
+    NSString *url = archive[@"url"];
+    if (![url isKindOfClass:NSString.class] || url.length > 512 || ![url hasPrefix:@"https://"] ||
+        [url rangeOfCharacterFromSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].location != NSNotFound ||
+        ![NSURL URLWithString:url].host.length) return NO;
+    return matches(archive[@"sha256"], @"[0-9a-f]{64}") && whole_number(archive[@"size"], 1, 1ull << 32);
+}
+
++ (BOOL)validConfiguration:(id)configuration workingDirectory:(NSString *)workingDirectory runtime:(NSString *)runtime {
+    if (![configuration isKindOfClass:NSDictionary.class] || ![workingDirectory isKindOfClass:NSString.class]) return NO;
     NSDictionary *block = configuration;
+    if ([block[@"service"] isEqual:@"steam"]) return [self validSteamConfiguration:block workingDirectory:workingDirectory runtime:runtime];
+    if (runtime) return NO;   // an application of its own, not one a runtime starts
     NSSet *known = [NSSet setWithArray:@[@"service", @"product", @"regions", @"locales", @"tags", @"folder", @"root", @"settings"]];
     for (id key in block) if (![known containsObject:key]) return NO;
     if (![block[@"service"] isEqual:@"blizzard"] || !matches(block[@"product"], @"[a-z0-9_]{1,32}")) return NO;
@@ -142,16 +291,21 @@ static void index_visit(void *context, const uint8_t *ekey, uint32_t size, uint3
 }
 
 - (instancetype)initWithConfiguration:(NSDictionary *)configuration documents:(NSString *)documents
-                     workingDirectory:(NSString *)workingDirectory region:(NSString *)region locale:(NSString *)locale {
+                     workingDirectory:(NSString *)workingDirectory runtime:(NSString *)runtime
+                               region:(NSString *)region locale:(NSString *)locale {
     if (!(self = [super init])) return nil;
-    if (![TKGameDownload validConfiguration:configuration workingDirectory:workingDirectory] || !plain_relative(workingDirectory)) return nil;
-    BOOL known = NO;
-    for (NSDictionary *item in configuration[@"regions"]) known = known || [item[@"id"] isEqual:region];
-    if (!known || ![configuration[@"locales"] containsObject:locale]) return nil;
+    if (![TKGameDownload validConfiguration:configuration workingDirectory:workingDirectory runtime:runtime] || !plain_relative(workingDirectory)) return nil;
+    if ([TKGameDownload regionsOfConfiguration:configuration].count) {
+        BOOL known = NO;
+        for (NSDictionary *item in configuration[@"regions"]) known = known || [item[@"id"] isEqual:region];
+        if (!known || ![configuration[@"locales"] containsObject:locale]) return nil;
+    } else if (region.length || locale.length) return nil;
     _configuration = [configuration copy];
     _root = [documents stringByAppendingPathComponent:configuration[@"root"]];
     _working = [documents stringByAppendingPathComponent:workingDirectory];
+    _runtime = runtime ? [documents stringByAppendingPathComponent:runtime] : nil;
     _region = [region copy]; _locale = [locale copy];
+    _chunk = 8 << 20;
     return self;
 }
 
@@ -205,6 +359,12 @@ static void index_visit(void *context, const uint8_t *ekey, uint32_t size, uint3
 }
 
 - (BOOL)runWithError:(NSError **)error {
+    return [_configuration[@"service"] isEqual:@"steam"] ? [self runSteam:error] : [self runBlizzard:error];
+}
+
+#pragma mark Blizzard
+
+- (BOOL)runBlizzard:(NSError **)error {
     NSString *product = _configuration[@"product"];
     NSFileManager *files = NSFileManager.defaultManager;
     [self report:@"Asking for the current version…" fraction:0];
@@ -452,6 +612,290 @@ static void index_visit(void *context, const uint8_t *ekey, uint32_t size, uint3
         if (![files createDirectoryAtPath:settingsPath.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:error] ||
             ![text writeToFile:settingsPath atomically:YES encoding:NSUTF8StringEncoding error:error]) return NO;
     }
+    [self report:@"Downloaded." fraction:1];
+    return YES;
+}
+
+#pragma mark Steam
+
+- (BOOL)stopped { return atomic_load(&_cancelled); }
+
+// nil when the file cannot be read or the download was stopped.
+- (NSString *)sha256OfFile:(NSString *)path {
+    int fd = open(path.fileSystemRepresentation, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return nil;
+    CC_SHA256_CTX context; CC_SHA256_Init(&context);
+    uint8_t *buffer = malloc(1 << 20);
+    ssize_t got = -1;
+    while (buffer && !self.stopped && (got = read(fd, buffer, 1 << 20)) > 0) CC_SHA256_Update(&context, buffer, (CC_LONG)got);
+    free(buffer); close(fd);
+    if (got) return nil;
+    uint8_t digest[CC_SHA256_DIGEST_LENGTH]; CC_SHA256_Final(digest, &context);
+    return hex_of(digest, CC_SHA256_DIGEST_LENGTH);
+}
+
+// Brings `url` (`size` bytes with this SHA-256) into the file `part`, a
+// chunk at a time so that memory stays bounded, continuing a file an earlier
+// run left there. True only for a file of the right size and hash; one that
+// is complete and differs is removed.
+- (BOOL)fetch:(NSURL *)url toFile:(NSString *)part size:(uint64_t)size sha256:(NSString *)sha256 what:(NSString *)what
+     progress:(void (^)(uint64_t have))progress error:(NSError **)error {
+    NSFileManager *files = NSFileManager.defaultManager;
+    if (![files createDirectoryAtPath:part.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:error]) return NO;
+    uint64_t have = [[files attributesOfItemAtPath:part error:NULL][NSFileSize] unsignedLongLongValue];
+    if (have > size) { [files removeItemAtPath:part error:NULL]; have = 0; }
+    int fd = open(part.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0644);
+    NSError *problem = fd < 0 ? download_error(@"A file could not be written on this device.") : nil;
+    if (!problem && progress) progress(have);
+    while (!problem && have < size) {
+        @autoreleasepool {
+            NSUInteger length = (NSUInteger)MIN((uint64_t)MAX(self.chunk, 1u), size - have);
+            // Something that fits in one chunk is asked for whole.
+            BOOL whole = !have && length == size;
+            NSError *failure = nil;
+            NSData *data = [self request:url range:whole ? NSMakeRange(0, 0) : NSMakeRange((NSUInteger)have, length) error:&failure];
+            const uint8_t *bytes = data.bytes;
+            if (!data) problem = failure ?: download_error(@"A file could not be fetched.");
+            else if (data.length != length) problem = download_error(@"The server sent a different amount than asked for.");
+            for (NSUInteger wrote = 0; !problem && wrote < length;) {
+                ssize_t count = write(fd, bytes + wrote, length - wrote);
+                if (count <= 0) problem = download_error(@"A file could not be written on this device. Is there enough free space?");
+                else wrote += (NSUInteger)count;
+            }
+            if (!problem) { have += length; if (progress) progress(have); }
+        }
+    }
+    if (fd >= 0) close(fd);
+    if (!problem) {
+        NSString *found = [self sha256OfFile:part];
+        if (!found) problem = download_error(@"A downloaded file could not be read back.");
+        else if (![found isEqual:sha256]) {
+            [files removeItemAtPath:part error:NULL];
+            problem = download_error([NSString stringWithFormat:@"%@ did not match its published checksum, so it was not used. Try again.", what]);
+        }
+    }
+    if (problem && error) *error = problem;
+    return !problem;
+}
+
+// One entry's content to `path` with `mode`, through a file beside it that
+// takes its name only when the content matched the archive's checksum.
+- (BOOL)extract:(const ZAArchive *)archive entry:(uint32_t)index to:(NSString *)path mode:(mode_t)mode {
+    NSString *part = [path stringByAppendingString:@".tolkara-part"];
+    if (![NSFileManager.defaultManager createDirectoryAtPath:path.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:NULL]) return NO;
+    unlink(part.fileSystemRepresentation);
+    EntrySink sink = {open(part.fileSystemRepresentation, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644), &_cancelled, nil};
+    if (sink.fd < 0) return NO;
+    BOOL ok = za_extract(archive, index, entry_sink, &sink) && !fchmod(sink.fd, mode);
+    close(sink.fd);
+    ok = ok && !rename(part.fileSystemRepresentation, path.fileSystemRepresentation);
+    if (!ok) unlink(part.fileSystemRepresentation);
+    return ok;
+}
+
+// The Windows runtime: one archive of Tolkara's own, into the top folder.
+- (BOOL)steamRuntime:(NSError **)error {
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSDictionary *block = _configuration[@"runtime"];
+    NSString *sha256 = block[@"sha256"], *marker = [_root stringByAppendingPathComponent:@".tolkara-runtime"];
+    uint64_t size = [block[@"size"] unsignedLongLongValue];
+    // The marker is written last: it says this very archive is unpacked here.
+    if ([[NSString stringWithContentsOfFile:marker encoding:NSUTF8StringEncoding error:NULL] containsString:sha256]) return YES;
+    NSString *part = [_root stringByAppendingPathComponent:@".download/runtime.zip.part"];
+    if (![self fetch:[NSURL URLWithString:block[@"url"]] toFile:part size:size sha256:sha256 what:@"The Windows runtime" progress:^(uint64_t have) {
+        [self report:[NSString stringWithFormat:@"Downloading the Windows runtime… %llu of %llu MB", have >> 20, size >> 20]
+            fraction:0.5 * (double)have / (double)size];
+    } error:error]) return NO;
+
+    [self report:@"Unpacking the Windows runtime…" fraction:0.5];
+    NSError *unreadable = download_error(@"The Windows runtime's archive was not understood.");
+    ZAArchive archive;
+    if (!za_open(&archive, part.fileSystemRepresentation)) { [files removeItemAtPath:part error:NULL]; if (error) *error = unreadable; return NO; }
+    // An existing prefix is the user's Steam installation and sign-in: with
+    // one here, nothing of the archive's prefix/ is unpacked and no copy is
+    // made into it. Only the runtime's own folder is replaced. A prefix
+    // counts as existing by its system.reg, which is therefore the last
+    // thing unpacked: a prefix that was stopped half-way is completed.
+    BOOL keepPrefix = [files fileExistsAtPath:[_root stringByAppendingPathComponent:@"prefix/system.reg"]];
+    NSString *runtimeFolder = [_runtime substringFromIndex:_root.length + 1];
+    // Every name is checked before anything is written.
+    NSMutableArray *paths = [NSMutableArray new];
+    uint32_t links = UINT32_MAX, registry = UINT32_MAX;
+    uint64_t total = 0;
+    BOOL understood = YES, holdsRuntime = NO;
+    for (uint32_t i = 0; understood && i < archive.count; i++) {
+        BOOL directory = NO;
+        NSString *path = entry_path(&archive.entries[i], &directory);
+        // Names that start with a dot at the top are Tolkara's own notes here.
+        if (!path || [path hasPrefix:@"."]) { understood = NO; break; }
+        if ([path isEqual:@"tolkara-links.txt"] && !directory) {
+            links = i; understood = archive.entries[i].size <= 8 << 20;
+            [paths addObject:NSNull.null]; continue;
+        }
+        BOOL skipped = directory || (keepPrefix && ([path isEqual:@"prefix"] || under(path, @"prefix")));
+        if (!directory && under(path, runtimeFolder)) holdsRuntime = YES;
+        if ([path isEqual:@"prefix/system.reg"] && !skipped) registry = i;
+        if (!skipped) total += archive.entries[i].size;
+        [paths addObject:skipped ? NSNull.null : path];
+    }
+    if (!understood || !holdsRuntime) { za_close(&archive); [files removeItemAtPath:part error:NULL]; if (error) *error = unreadable; return NO; }
+
+    NSError *problem = nil;
+    [files removeItemAtPath:marker error:NULL];
+    [files removeItemAtPath:_runtime error:NULL];
+    uint64_t done = 0;
+    for (uint32_t pass = 0; pass < 2 && !problem; pass++) {
+        // Second pass: the copies, then the prefix's system.reg.
+        if (pass && links != UINT32_MAX) {
+            NSMutableData *text = [NSMutableData new];
+            EntrySink sink = {-1, &_cancelled, text};
+            if (!za_extract(&archive, links, entry_sink, &sink)) problem = unreadable;
+            else [self applyLinks:text keepPrefix:keepPrefix error:&problem];
+        }
+        for (uint32_t i = 0; i < archive.count && !problem; i++) {
+            if (paths[i] == NSNull.null || (i == registry) != (pass == 1)) continue;
+            @autoreleasepool {
+                const ZAEntry *entry = &archive.entries[i];
+                // Files of the runtime are loaded as libraries: the archive says which are executable.
+                if (![self extract:&archive entry:i to:[_root stringByAppendingPathComponent:paths[i]] mode:(entry->mode & 0111) ? 0755 : 0644])
+                    problem = download_error([NSString stringWithFormat:@"%@ of the Windows runtime could not be unpacked.", [paths[i] lastPathComponent]]);
+                done += entry->size;
+                if (i % 64 == 0) [self report:@"Unpacking the Windows runtime…" fraction:0.5 + 0.1 * (double)done / (double)MAX(total, 1)];
+            }
+        }
+    }
+    za_close(&archive);
+    if (!problem && ![[sha256 stringByAppendingString:@"\n"] writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:&problem] && !problem)
+        problem = unreadable;
+    if (problem) { if (error) *error = problem; return NO; }
+    [files removeItemAtPath:part error:NULL];
+    return YES;
+}
+
+// tolkara-links.txt: "<destination>\t<source>" lines, both inside the top
+// folder: the destination becomes a copy of the source that shares its
+// storage (a prefix's system32 is mostly the runtime's own libraries).
+- (BOOL)applyLinks:(NSData *)data keepPrefix:(BOOL)keepPrefix error:(NSError **)error {
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    NSError *problem = text ? nil : download_error(@"The Windows runtime's list of copies was not understood.");
+    for (NSString *raw in [text componentsSeparatedByString:@"\n"]) {
+        if (problem) break;
+        NSString *line = [raw hasSuffix:@"\r"] ? [raw substringToIndex:raw.length - 1] : raw;
+        if (!line.length) continue;
+        if (self.stopped) { problem = [NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError userInfo:nil]; break; }
+        @autoreleasepool {
+            NSArray<NSString *> *pair = [line componentsSeparatedByString:@"\t"];
+            NSString *to = pair.count == 2 ? pair[0] : nil, *from = pair.count == 2 ? pair[1] : nil;
+            NSString *source = [_root stringByAppendingPathComponent:from ?: @""], *target = [_root stringByAppendingPathComponent:to ?: @""];
+            struct stat status;
+            if (!plain_relative(to) || !plain_relative(from) || [to hasPrefix:@"."] || [from hasPrefix:@"."] || [to isEqual:from])
+                problem = download_error(@"The Windows runtime's list of copies names a file outside its folder.");
+            else if (keepPrefix && under(to, @"prefix")) continue;
+            else if (lstat(source.fileSystemRepresentation, &status) || !S_ISREG(status.st_mode))
+                problem = download_error([NSString stringWithFormat:@"The Windows runtime's list of copies names %@, which is not in it.", from.lastPathComponent]);
+            else {
+                [files createDirectoryAtPath:target.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:NULL];
+                unlink(target.fileSystemRepresentation);
+                // A clone costs no storage; a volume that cannot clone gets a plain copy.
+                if (clonefile(source.fileSystemRepresentation, target.fileSystemRepresentation, CLONE_NOFOLLOW) &&
+                    ![files copyItemAtPath:source toPath:target error:NULL])
+                    problem = download_error([NSString stringWithFormat:@"%@ of the Windows runtime could not be put in place.", to.lastPathComponent]);
+            }
+        }
+    }
+    if (problem && error) *error = problem;
+    return !problem;
+}
+
+// Steam itself, from Valve's update server: the installer package unpacked
+// into the Steam folder, the others kept in its package folder as Steam's
+// own updater keeps them, so that it finds them at its first start.
+- (BOOL)steamClient:(NSError **)error {
+    NSFileManager *files = NSFileManager.defaultManager;
+    // With steam.exe here Steam is installed and keeps itself up to date.
+    NSString *steam = [_working stringByAppendingPathComponent:@"steam.exe"];
+    if ([files fileExistsAtPath:steam]) return YES;
+    [self report:@"Asking Valve's server for Steam's files…" fraction:0.6];
+    NSString *server = @"https://client-update.steamstatic.com/", *client = _configuration[@"client"];
+    NSData *manifest = [self request:[NSURL URLWithString:[server stringByAppendingString:client]] range:NSMakeRange(0, 0) error:error];
+    if (!manifest) return NO;
+    // "steam_client_win64" installs with the package "steam_win64".
+    NSString *installerName = [@"steam_" stringByAppendingString:[client substringFromIndex:13]];
+    NSDictionary *installer = nil;
+    NSMutableArray<NSDictionary *> *kept = [NSMutableArray new];
+    uint64_t total = 0;
+    for (NSDictionary *package in steam_packages(manifest)) {
+        if (![package[@"bootstrapper"] boolValue]) [kept addObject:package];
+        else if ([package[@"name"] isEqual:installerName]) installer = package;
+        else continue;   // another edition's installer
+        total += [package[@"size"] unsignedLongLongValue];
+    }
+    if (!installer) { if (error) *error = download_error(@"Valve's list of Steam's files was not understood."); return NO; }
+
+    __block uint64_t done = 0;
+    void (^tell)(uint64_t) = ^(uint64_t have) {
+        [self report:[NSString stringWithFormat:@"Downloading Steam… %llu of %llu MB", (done + have) >> 20, total >> 20]
+            fraction:0.6 + 0.39 * (double)(done + have) / (double)total];
+    };
+    NSString *folder = [_working stringByAppendingPathComponent:@"package"], *parts = [_root stringByAppendingPathComponent:@".download"];
+    if (![files createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:error]) return NO;
+    NSError *problem = nil;
+    for (NSDictionary *package in kept) {
+        @autoreleasepool {
+            NSString *name = package[@"fetch"], *path = [folder stringByAppendingPathComponent:name];
+            NSString *part = [parts stringByAppendingPathComponent:[name stringByAppendingString:@".part"]];
+            uint64_t size = [package[@"size"] unsignedLongLongValue];
+            // What is already there and intact is not fetched again.
+            BOOL present = [[files attributesOfItemAtPath:path error:NULL][NSFileSize] isEqual:package[@"size"]] &&
+                [[self sha256OfFile:path] isEqual:package[@"sha256"]];
+            if (!present) {
+                present = [self fetch:[NSURL URLWithString:[server stringByAppendingString:name]] toFile:part size:size sha256:package[@"sha256"]
+                                 what:name progress:tell error:&problem];
+                if (present) { [files removeItemAtPath:path error:NULL]; present = [files moveItemAtPath:part toPath:path error:&problem]; }
+            }
+            if (!present && !problem) problem = download_error(@"A file could not be fetched.");
+            done += size;
+            if (present) tell(0);
+        }
+        if (problem) { if (error) *error = problem; return NO; }
+    }
+
+    NSString *name = installer[@"fetch"], *part = [parts stringByAppendingPathComponent:[name stringByAppendingString:@".part"]];
+    if (![self fetch:[NSURL URLWithString:[server stringByAppendingString:name]] toFile:part size:[installer[@"size"] unsignedLongLongValue]
+              sha256:installer[@"sha256"] what:name progress:tell error:error]) return NO;
+    [self report:@"Unpacking Steam…" fraction:0.99];
+    ZAArchive archive;
+    BOOL understood = za_open(&archive, part.fileSystemRepresentation);
+    NSMutableArray *paths = [NSMutableArray new];
+    uint32_t program = UINT32_MAX;
+    for (uint32_t i = 0; understood && i < archive.count; i++) {
+        BOOL directory = NO;
+        NSString *path = entry_path(&archive.entries[i], &directory);
+        if (!path) { understood = NO; break; }
+        // The package folder's contents are the ones fetched above.
+        BOOL skipped = directory || [path.lowercaseString isEqual:@"package"] || under(path.lowercaseString, @"package");
+        if (!skipped && [path.lowercaseString isEqual:@"steam.exe"]) program = i;
+        [paths addObject:skipped ? NSNull.null : path];
+    }
+    // steam.exe says Steam is installed, so it is unpacked last.
+    understood = understood && program != UINT32_MAX;
+    for (uint32_t pass = 0; understood && pass < 2; pass++)
+        for (uint32_t i = 0; understood && i < archive.count; i++) {
+            if (paths[i] == NSNull.null || (i == program) != (pass == 1)) continue;
+            @autoreleasepool {
+                understood = [self extract:&archive entry:i to:i == program ? steam : [_working stringByAppendingPathComponent:paths[i]] mode:0644];
+            }
+        }
+    za_close(&archive);
+    if (!self.stopped) [files removeItemAtPath:part error:NULL];
+    if (!understood && error) *error = download_error(@"Steam's installer package could not be unpacked.");
+    return understood;
+}
+
+- (BOOL)runSteam:(NSError **)error {
+    if (![self steamRuntime:error] || self.stopped || ![self steamClient:error] || self.stopped) return NO;
+    [NSFileManager.defaultManager removeItemAtPath:[_root stringByAppendingPathComponent:@".download"] error:NULL];
     [self report:@"Downloaded." fraction:1];
     return YES;
 }

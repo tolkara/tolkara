@@ -339,39 +339,66 @@ static double TKPointerSpeed(void) {
 
 #pragma mark Download (experimental)
 
-// Development runs (docs/BUILDING.md): --download-profile=<id> with
-// --download-region=<id> and --download-locale=<locale> starts that profile's
-// download as the menu would after its questions, once, when the library appears.
+// Development runs (docs/BUILDING.md): --download-profile=<id> starts that
+// profile's download as the menu would after its questions, once, when the
+// library appears; --download-region=<id> and --download-locale=<locale>
+// answer the questions of a download that asks them. For a download with a
+// runtime archive, --download-runtime-url=<https address>,
+// --download-runtime-sha256= and --download-runtime-size= each replace that
+// value of the profile for this launch: an archive that is not published yet.
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     static BOOL asked;
     if (asked) return;
     asked=YES;
     NSString *wanted=nil, *region=nil, *locale=nil;
+    NSMutableDictionary *archive=[NSMutableDictionary new];
     for (NSString *argument in NSProcessInfo.processInfo.arguments) {
         if ([argument hasPrefix:@"--download-profile="]) wanted=[argument substringFromIndex:19];
         if ([argument hasPrefix:@"--download-region="]) region=[argument substringFromIndex:18];
         if ([argument hasPrefix:@"--download-locale="]) locale=[argument substringFromIndex:18];
+        if ([argument hasPrefix:@"--download-runtime-url="]) archive[@"url"]=[argument substringFromIndex:23];
+        if ([argument hasPrefix:@"--download-runtime-sha256="]) archive[@"sha256"]=[argument substringFromIndex:26];
+        if ([argument hasPrefix:@"--download-runtime-size="]) archive[@"size"]=@(strtoull([argument substringFromIndex:24].UTF8String,NULL,10));
     }
-    if (!wanted || !region || !locale) return;
-    for (NSDictionary *profile in _library.downloadableProfiles)
-        if ([profile[@"id"] isEqual:wanted]) [self downloadProfile:profile region:region locale:locale];
+    if (!wanted) return;
+    for (NSDictionary *profile in _library.downloadableProfiles) {
+        if (![profile[@"id"] isEqual:wanted]) continue;
+        BOOL asks=[TKGameDownload regionsOfConfiguration:profile[@"download"]].count>0;
+        if (asks && (!region || !locale)) continue;
+        NSMutableDictionary *changed=[profile mutableCopy];
+        if (archive.count && [profile[@"download"][@"runtime"] isKindOfClass:NSDictionary.class]) {
+            NSMutableDictionary *block=[profile[@"download"] mutableCopy], *runtime=[block[@"runtime"] mutableCopy];
+            [runtime addEntriesFromDictionary:archive];
+            block[@"runtime"]=runtime; changed[@"download"]=block;
+        }
+        // Values the downloader does not accept start nothing.
+        [self downloadProfile:changed region:asks ? region : nil locale:asks ? locale : nil];
+    }
 }
 
 // What is fetched and from whom, with the profile's own notice about the
-// application; then the region and language the game is set up for.
+// application; then the region and language the game is set up for, when
+// the download asks for them.
 - (void)offerDownloadOfProfile:(NSDictionary *)profile {
+    BOOL steam=[profile[@"download"][@"service"] isEqual:@"steam"];
     NSString *risk=[profile[@"setup"] isKindOfClass:NSDictionary.class] && [profile[@"setup"][@"risk"] isKindOfClass:NSDictionary.class]
         ? profile[@"setup"][@"risk"][@"summary"] : nil;
     NSMutableString *message=[NSMutableString stringWithFormat:@"Tolkara fetches %@'s own application from its publisher's servers, into Tolkara's folder on this device. "
         @"Tolkara does not host or change it. The game then downloads its data itself when it first starts, which can be tens of gigabytes: "
         @"use Wi-Fi and keep Tolkara open.\n\nThis is experimental.",profile[@"name"]];
+    if (steam) message=[@"Steam is Valve's. Tolkara fetches it from Valve's public update server, into Tolkara's folder on this device, "
+        @"and checks each file against Valve's own list. The Windows runtime Steam runs in (Wine and FEX, both open source) comes from Tolkara's release page. "
+        @"Nothing of Steam is hosted by Tolkara or included in it. You sign in inside Steam.\n\n"
+        @"About 2 GB of free space is needed: use Wi-Fi and keep Tolkara open.\n\nThis is experimental." mutableCopy];
     if ([risk isKindOfClass:NSString.class] && risk.length) [message appendFormat:@"\n\n%@",risk];
     UIAlertController *alert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"Download %@?",profile[@"name"]]
         message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-        (void)a; [self chooseRegionForProfile:profile];
+        (void)a;
+        if ([TKGameDownload regionsOfConfiguration:profile[@"download"]].count) [self chooseRegionForProfile:profile];
+        else [self downloadProfile:profile region:nil locale:nil];
     }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
@@ -404,15 +431,17 @@ static double TKPointerSpeed(void) {
 }
 - (void)downloadProfile:(NSDictionary *)profile region:(NSString *)region locale:(NSString *)locale {
     NSString *documents=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
-    // Room for the application; the game's own data needs far more and says so itself.
+    // Room for the application; a game's own data needs far more and says so
+    // itself. Steam comes with its Windows runtime, as an archive and unpacked.
+    unsigned long long needed=[profile[@"download"][@"service"] isEqual:@"steam"] ? 3 : 1;
     NSNumber *room=[[NSURL fileURLWithPath:documents] resourceValuesForKeys:@[NSURLVolumeAvailableCapacityForImportantUsageKey] error:NULL][NSURLVolumeAvailableCapacityForImportantUsageKey];
-    if (room && room.unsignedLongLongValue<(1ull<<30)) {
+    if (room && room.unsignedLongLongValue<(needed<<30)) {
         [self showError:[NSError errorWithDomain:TKGameDownloadErrorDomain code:2 userInfo:@{NSLocalizedDescriptionKey:
-            @"There is less than 1 GB free on this device."}] title:@"Cannot Download"];
+            [NSString stringWithFormat:@"There is less than %llu GB free on this device.",needed]}] title:@"Cannot Download"];
         return;
     }
     TKGameDownload *download=[[TKGameDownload alloc] initWithConfiguration:profile[@"download"] documents:documents
-        workingDirectory:profile[@"workingDirectory"] region:region locale:locale];
+        workingDirectory:profile[@"workingDirectory"] runtime:profile[@"runtime"] region:region locale:locale];
     if (!download || _download) return;
     _download=download;
     _downloadAlert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"Downloading %@",profile[@"name"]]
@@ -478,7 +507,9 @@ static double TKPointerSpeed(void) {
                 [self.tableView selectRowAtIndexPath:[NSIndexPath indexPathForRow:(NSInteger)row inSection:self.hasNotice ? 1 : 0]
                     animated:YES scrollPosition:UITableViewScrollPositionMiddle];
             UIAlertController *alert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"%@ Is in Your Library",app.name]
-                message:@"Tap it to start. The game downloads its data when it first starts and shows its progress; keep Tolkara open until it is done."
+                message:[profile[@"download"][@"service"] isEqual:@"steam"]
+                    ? @"Tap it to start. Steam finishes its own installation at the first start, then asks you to sign in."
+                    : @"Tap it to start. The game downloads its data when it first starts and shows its progress; keep Tolkara open until it is done."
                 preferredStyle:UIAlertControllerStyleAlert];
             [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
             [self presentViewController:alert animated:YES completion:nil];

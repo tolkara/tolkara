@@ -90,8 +90,8 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   launcher fetches only the application itself, straight from its
   publisher's content servers to the device, and checks each file against
   the publisher's own file list; Tolkara hosts and bundles none of it. Its
-  keys: `service` (`"blizzard"`, the only one: Blizzard's public version and
-  content servers, which need no account), `product`, the `regions` on offer
+  keys depend on `service`. For `"blizzard"` (Blizzard's public version and
+  content servers, which need no account): `product`, the `regions` on offer
   (each `id`, `name` and the `portal` the game calls it), the `locales`, the
   `tags` of the publisher's file list that select this system's files, the
   list's `folder` that is the application, the install's top folder `root`
@@ -99,6 +99,26 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   the game's settings `file` and the names of its `region`, `text` and
   `audio` settings, written once with the user's choices. Not for a profile
   with a `runtime`.
+  For `"steam"` (the Windows Steam client, from Valve's public update server,
+  which needs no account; only for a profile with a `runtime`), exactly:
+  `root`, the top folder in Documents that holds the profile's `runtime` and
+  working directory; `runtime`, the archive of the Windows runtime Steam runs
+  in (Tolkara's own build of Wine and FEX with an empty Windows prefix), as
+  its https `url` (at most 512 characters), its `sha256` (64 lowercase
+  hexadecimal digits) and its `size` in bytes (up to 4 GiB); and `client`,
+  the name of Valve's list of the client's files (`steam_client_win64`). The
+  launcher fetches the archive, checks it against `sha256` and unpacks it
+  into `root`; then it fetches Steam's packages, checks each against the
+  SHA-256 in Valve's list, unpacks the installer package into the working
+  directory and keeps the others in its `package` folder, where Steam looks
+  for them at its first start. A prefix that is already there (it has a
+  `prefix/system.reg`) is left alone: it holds the user's Steam and sign-in.
+  The archive is a plain ZIP (stored or deflated entries, no ZIP64, no
+  encryption, no links) of `root`'s contents. The executable bit of its
+  entries is kept. Its optional top-level `tolkara-links.txt` is not
+  unpacked: each line, `<destination><tab><source>` with both paths inside
+  `root`, makes the destination a copy of the unpacked source that shares
+  its storage, so files the prefix repeats from the runtime are stored once.
 
 Every profile in `profiles/` is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library
