@@ -14,10 +14,9 @@ The prefix is made anonymous and portable: no user folder, no program's
 registry keys, this Mac's name and user replaced, the Mac's own fonts
 dropped and Wine's Tahoma registered. Files the prefix repeats from the
 runtime are not stored twice: tolkara-links.txt names them and the device
-copies them after unpacking. The result is refused if this Mac's user or
-host name is still in it; binaries built under the user's home folder name
-it, so a runtime to publish is built in a neutral folder
-(--allow-build-paths packs one for a test on your own device).
+copies them after unpacking. Binaries built under the user's home folder carry its
+path; the user's name in it is overwritten with underscores of the same
+length. The result is refused if this Mac's user or host name is still in it.
 
 It prints the archive's size and SHA-256 for the profile's download block.
 Only our own builds of open-source software go in; nothing of Steam does.
@@ -103,7 +102,6 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--user', default=getpass.getuser(), help='this Mac\'s user name, removed from the prefix')
     parser.add_argument('--host', default=socket.gethostname().split('.')[0], help='this Mac\'s name, removed from the prefix')
-    parser.add_argument('--allow-build-paths', action='store_true', help='for a test on your own device only')
     options = parser.parse_args()
 
     # Wine/: the install, with the overlay's files over it.
@@ -142,15 +140,23 @@ def main():
     # This Mac's user or name must not be in what is published.
     secret = re.compile(rb'(?i)(/Users/|users\\\\?)' + re.escape(options.user.encode()) + rb'(?![A-Za-z0-9])|(?<![A-Za-z0-9])' +
                         re.escape(options.host.encode()) + rb'(?![A-Za-z0-9])')
-    # Binaries built in a folder under the user's home carry its path (file
-    # names in Wine's debug channels): build in a neutral folder to publish.
-    named = []
+    # Binaries built under the user's home folder carry its path (file names
+    # in Wine's debug channels, the install's own folders, which a profile's
+    # WINEDLLDIR and WINEDATADIR replace). The user's name in those paths
+    # becomes underscores, the same length, so nothing in a file moves.
+    home = b'/Users/' + options.user.encode()
+    neutral = b'/Users/' + b'_' * len(options.user)
+    renamed = 0
+    def published(source):
+        nonlocal renamed
+        data = source if isinstance(source, bytes) else source.read_bytes()
+        if not isinstance(source, bytes) and home in data:
+            data = re.sub(re.escape(home) + rb'(?![A-Za-z0-9])', neutral, data)
+            renamed += 1
+        return data
     for name, source in list(files.items()) + [('Wine/' + key, path) for key, path in runtime.items()]:
-        found = secret.search(source if isinstance(source, bytes) else source.read_bytes())
-        if not found: continue
-        if isinstance(source, bytes) or not options.allow_build_paths: sys.exit(f'{name} still names this Mac or its user: {found.group(0)!r}')
-        named.append(name)
-    if named: print(f'NOT FOR PUBLISHING: {len(named)} files name the build folder under this user\'s home (--allow-build-paths)')
+        found = secret.search(published(source))
+        if found: sys.exit(f'{name} still names this Mac or its user: {found.group(0)!r}')
     for name in list(files) + folders + [link[0] for link in links]:
         if re.search(r'(?i)(^|/)' + re.escape(options.user) + r'(/|$)', name): sys.exit(f'{name} is a user folder')
 
@@ -166,14 +172,15 @@ def main():
             archive.writestr(info, data)
         for name, path in sorted(runtime.items()):
             executable = path.stat().st_mode & 0o111 or name.startswith(UNIX) or name.endswith(('.so', '.dylib'))
-            add('Wine/' + name, path.read_bytes(), stat.S_IFREG | (0o755 if executable else 0o644))
+            add('Wine/' + name, published(path), stat.S_IFREG | (0o755 if executable else 0o644))
         for name in sorted(set(folders)): add(name + '/', b'', stat.S_IFDIR | 0o755)
         # system.reg marks the prefix as complete: the device unpacks it last.
         for name, source in sorted(files.items()):
-            add(name, source if isinstance(source, bytes) else source.read_bytes(), stat.S_IFREG | 0o644)
+            add(name, published(source), stat.S_IFREG | 0o644)
         add('tolkara-links.txt', ''.join(f'{a}\t{b}\n' for a, b in sorted(links)).encode(), stat.S_IFREG | 0o644)
     size = options.output.stat().st_size
     if size >= 1 << 32: sys.exit('the archive is 4 GiB or more')
+    if renamed: print(f'the build folder\'s user name was overwritten in {renamed // 2} files')
     print(f'{options.output}: {len(runtime)} runtime files, {len(files)} prefix files, {len(links)} copies, {len(set(folders))} folders')
     print(f'"runtime": {{ "url": "https://…/{options.output.name}", "sha256": "{digest(options.output)}", "size": {size} }}')
 
