@@ -212,7 +212,7 @@ int main(void) {
             @"locales": @[@"enUS", @"deDE"], @"tags": @[@"OSX", @"arm64"], @"folder": @"Game.app", @"root": @"Game",
             @"settings": @{@"file": @"WTF/Config.wtf", @"region": @"portal", @"text": @"textLocale", @"audio": @"audioLocale"}};
         NSString *working = @"Game/_flavor_";
-        assert([TKGameDownload validConfiguration:block workingDirectory:working] && [TKGameDownload validConfiguration:block workingDirectory:@"Game"]);
+        assert([TKGameDownload validConfiguration:block workingDirectory:working runtime:nil] && [TKGameDownload validConfiguration:block workingDirectory:@"Game" runtime:nil]);
         assert([[TKGameDownload regionsOfConfiguration:block] count] == 2 && [[TKGameDownload localesOfConfiguration:block] count] == 2);
         // Data only, inside Documents, and nothing this reader does not know.
         NSArray<NSDictionary *> *changes = @[@{@"service": @"other"}, @{@"product": @"../x"}, @{@"regions": @[]}, @{@"regions": @[@{@"id": @"EU", @"name": @"E", @"portal": @"EU"}]},
@@ -223,15 +223,18 @@ int main(void) {
         for (NSDictionary *change in changes) {
             NSMutableDictionary *changed = [block mutableCopy];
             [changed addEntriesFromDictionary:change];
-            assert(![TKGameDownload validConfiguration:changed workingDirectory:working]);
+            assert(![TKGameDownload validConfiguration:changed workingDirectory:working runtime:nil]);
         }
-        assert(![TKGameDownload validConfiguration:@[] workingDirectory:working]);
+        assert(![TKGameDownload validConfiguration:@[] workingDirectory:working runtime:nil]);
+        // An application of its own: not for a profile with a runtime.
+        assert(![TKGameDownload validConfiguration:block workingDirectory:working runtime:@"Game/Runtime"]);
+        assert(![TKGameDownload profileIsInPlace:(@{@"workingDirectory": working, @"executable": @"Game.app/Contents/MacOS/Game", @"download": block}) documents:NSTemporaryDirectory()]);
 
         NSString *documents = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSFileManager *files = NSFileManager.defaultManager;
-        assert(![[TKGameDownload alloc] initWithConfiguration:block documents:documents workingDirectory:working region:@"kr" locale:@"enUS"]);
-        assert(![[TKGameDownload alloc] initWithConfiguration:block documents:documents workingDirectory:working region:@"eu" locale:@"frFR"]);
-        TKGameDownload *download = [[TKGameDownload alloc] initWithConfiguration:block documents:documents workingDirectory:working region:@"eu" locale:@"enUS"];
+        assert(![[TKGameDownload alloc] initWithConfiguration:block documents:documents workingDirectory:working runtime:nil region:@"kr" locale:@"enUS"]);
+        assert(![[TKGameDownload alloc] initWithConfiguration:block documents:documents workingDirectory:working runtime:nil region:@"eu" locale:@"frFR"]);
+        TKGameDownload *download = [[TKGameDownload alloc] initWithConfiguration:block documents:documents workingDirectory:working runtime:nil region:@"eu" locale:@"enUS"];
         download.fetch = fetch;
         __block double last = -1; __block BOOL ordered = YES;
         download.progress = ^(NSString *phase, double fraction) { (void)phase; @synchronized (asked) { ordered = ordered && fraction >= last - 1e-9 && fraction <= 1; last = fraction; } };
@@ -273,7 +276,7 @@ int main(void) {
         [[NSString stringWithFormat:@"%@\n%@\n%@\n", [buildInfo componentsSeparatedByString:@"\n"][0], otherRow, staleRow]
             writeToFile:buildInfoPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
         [asked removeAllObjects];
-        download = [[TKGameDownload alloc] initWithConfiguration:block documents:documents workingDirectory:working region:@"eu" locale:@"enUS"];
+        download = [[TKGameDownload alloc] initWithConfiguration:block documents:documents workingDirectory:working runtime:nil region:@"eu" locale:@"enUS"];
         download.fetch = fetch;
         assert([download run:&error] && asked.count == 4);
         NSArray<NSString *> *merged = [[NSString stringWithContentsOfFile:buildInfoPath encoding:NSUTF8StringEncoding error:NULL] componentsSeparatedByString:@"\n"];
@@ -290,7 +293,7 @@ int main(void) {
         NSString *second = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSData *intact = server[address(@"data", hex(infoEkey))];
         server[address(@"data", hex(infoEkey))] = blte_plain([@"<other/>" dataUsingEncoding:NSUTF8StringEncoding]);
-        download = [[TKGameDownload alloc] initWithConfiguration:block documents:second workingDirectory:working region:@"eu" locale:@"enUS"];
+        download = [[TKGameDownload alloc] initWithConfiguration:block documents:second workingDirectory:working runtime:nil region:@"eu" locale:@"enUS"];
         download.fetch = fetch;
         error = nil;
         assert(![download run:&error] && [error.domain isEqual:TKGameDownloadErrorDomain] && [error.localizedDescription containsString:@"Info.plist"]);
@@ -309,18 +312,18 @@ int main(void) {
             hex(md5(escaping)), hex(md5(escapingStored)), hex(md5(encoding)), hex(md5(encodingStored))] dataUsingEncoding:NSUTF8StringEncoding];
         server[address(@"data", hex(md5(escapingStored)))] = escapingStored;
         NSString *third = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
-        download = [[TKGameDownload alloc] initWithConfiguration:block documents:third workingDirectory:working region:@"eu" locale:@"enUS"];
+        download = [[TKGameDownload alloc] initWithConfiguration:block documents:third workingDirectory:working runtime:nil region:@"eu" locale:@"enUS"];
         download.fetch = fetch;
         error = nil;
         assert(![download run:&error] && [error.localizedDescription containsString:@"outside"] && ![files fileExistsAtPath:third]);
         server[address(@"config", buildKey)] = goodBuild;
 
         // A region the server does not list, an answer that is not a table, and a stop.
-        download = [[TKGameDownload alloc] initWithConfiguration:block documents:third workingDirectory:working region:@"us" locale:@"enUS"];
+        download = [[TKGameDownload alloc] initWithConfiguration:block documents:third workingDirectory:working runtime:nil region:@"us" locale:@"enUS"];
         download.fetch = fetch;
         error = nil;
         assert(![download run:&error] && error && ![files fileExistsAtPath:third]);
-        download = [[TKGameDownload alloc] initWithConfiguration:block documents:third workingDirectory:working region:@"eu" locale:@"enUS"];
+        download = [[TKGameDownload alloc] initWithConfiguration:block documents:third workingDirectory:working runtime:nil region:@"eu" locale:@"enUS"];
         download.fetch = fetch;
         [download cancel];
         error = nil;

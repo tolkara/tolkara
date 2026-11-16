@@ -19,9 +19,11 @@ RISK = ('summary', 'history', 'links')
 # steamCloud is read by the iPad launcher (launcher/Cloud/SteamCloudCoordinator.m).
 STEAM_CLOUD = ('appID', 'remoteDirectory', 'localDirectory', 'fileNames', 'uploadsEnabled', 'required')
 # download is read by the iPad launcher (launcher/Download/GameDownload.m): keep
-# +validConfiguration:workingDirectory: there in step with check_download.
+# +validConfiguration:workingDirectory:runtime: there in step with check_download.
 DOWNLOAD = ('service', 'product', 'regions', 'locales', 'tags', 'folder', 'root', 'settings')
 DOWNLOAD_SETTINGS = ('file', 'region', 'text', 'audio')
+DOWNLOAD_STEAM = ('service', 'root', 'runtime', 'client')
+DOWNLOAD_RUNTIME = ('url', 'sha256', 'size')
 
 
 def relative(value):
@@ -132,15 +134,16 @@ def plain_relative(value):
 
 def check_download(profile):
     """download: what the launcher's experimental downloader fetches from the publisher's own
-    content servers for a user with no Mac. Plain data: the service ("blizzard" is the only one),
-    the product, the regions and languages offered, which files of the publisher's file list make
-    up the application, and where they go inside Documents."""
+    servers for a user with no Mac. Plain data, by service. "blizzard": the product, the regions
+    and languages offered, which files of the publisher's file list make up the application, and
+    where they go inside Documents. "steam": see check_download_steam."""
     block = profile['download']
     if not isinstance(block, dict): raise ValueError('download must be an object')
+    if block.get('service') == 'steam': return check_download_steam(profile, block)
     unknown = set(block) - set(DOWNLOAD)
     if unknown: raise ValueError('download: unknown keys: ' + ', '.join(sorted(unknown)))
-    if 'runtime' in profile: raise ValueError('download is not available for a profile with a runtime')
-    if block.get('service') != 'blizzard': raise ValueError('download.service must be "blizzard"')
+    if block.get('service') != 'blizzard': raise ValueError('download.service must be "blizzard" or "steam"')
+    if 'runtime' in profile: raise ValueError('a "blizzard" download is not available for a profile with a runtime')
     if not isinstance(block.get('product'), str) or not re.fullmatch(r'[a-z0-9_]{1,32}', block['product']):
         raise ValueError('download.product must be a product name')
     regions = block.get('regions')
@@ -169,6 +172,30 @@ def check_download(profile):
         if (not isinstance(file, dict) or set(file) != set(DOWNLOAD_SETTINGS) or not plain_relative(file['file'])
                 or not all(isinstance(file[k], str) and re.fullmatch(r'[A-Za-z]{1,32}', file[k]) for k in ('region', 'text', 'audio'))):
             raise ValueError('download.settings needs file (inside the working directory) and the region, text and audio setting names')
+
+
+def check_download_steam(profile, block):
+    """A "steam" download: the Windows Steam client from Valve's public update server, and before
+    it the Windows runtime it runs in. Exactly: the top folder `root` in Documents, which holds
+    the profile's runtime and working directory; `runtime`, the runtime archive's https address,
+    SHA-256 and size; and `client`, the name of Valve's list of the client's files."""
+    if set(block) != set(DOWNLOAD_STEAM): raise ValueError('a "steam" download needs exactly: ' + ', '.join(DOWNLOAD_STEAM))
+    root = block['root']
+    if not plain_relative(root): raise ValueError('download.root must be a folder in Documents')
+    for key in ('runtime', 'workingDirectory'):
+        if not plain_relative(profile.get(key)) or not profile[key].startswith(root + '/'):
+            raise ValueError(f'a "steam" download needs the profile\'s {key} inside download.root')
+    archive = block['runtime']
+    if not isinstance(archive, dict) or set(archive) != set(DOWNLOAD_RUNTIME): raise ValueError('download.runtime needs exactly url, sha256 and size')
+    url, size = archive['url'], archive['size']
+    if (not isinstance(url, str) or len(url) > 512 or not re.fullmatch(r'https://[^/\s][^\s]*', url)):
+        raise ValueError('download.runtime.url must be an https URL of at most 512 characters')
+    if not isinstance(archive['sha256'], str) or not re.fullmatch(r'[0-9a-f]{64}', archive['sha256']):
+        raise ValueError('download.runtime.sha256 must be 64 lowercase hexadecimal digits')
+    if not isinstance(size, int) or isinstance(size, bool) or not 1 <= size <= 1 << 32:
+        raise ValueError('download.runtime.size must be a number of bytes up to 4 GiB')
+    if not isinstance(block['client'], str) or not re.fullmatch(r'steam_client_[a-z0-9_]{1,32}', block['client']):
+        raise ValueError('download.client must name a Steam client list such as steam_client_win64')
 
 
 def check_steam_cloud(profile):

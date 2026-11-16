@@ -59,10 +59,15 @@ final class ProfileTests: XCTestCase {
             ["setup": ["risk": ["summary": "x", "links": [["title": "x", "url": "javascript:alert(1)"]]]]],
             ["setup": ["risk": ["history": []]]], ["setup": ["run": "x"]],
             ["runtime": "R", "setup": [String: Any]()],
+            // download is the launcher's: here only its service, and which kind of profile it is for.
+            ["download": "x"], ["download": ["service": "other"]], ["download": ["service": "steam"]],
+            ["runtime": "R", "download": ["service": "blizzard"]],
         ]
         for change in bad {
             XCTAssertThrowsError(try profile(good.merging(change) { $1 }), "\(change)")
         }
+        XCTAssertNoThrow(try profile(good.merging(["download": ["service": "blizzard"]]) { $1 }))
+        XCTAssertNoThrow(try profile(good.merging(["runtime": "R", "download": ["service": "steam"]]) { $1 }))
     }
 
     func testRiskDigestFollowsWording() throws {

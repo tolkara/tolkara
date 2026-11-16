@@ -335,7 +335,14 @@ for apps started from the library:
   --download-locale=<locale>` (experimental): the library appears as on a
   plain launch and starts that profile's download
   ([profiles/README.md](../profiles/README.md), `download`) as its **+** menu
-  would after its questions, if the application is not in Documents yet.
+  would after its questions, if the application is not in Documents yet. A
+  download that asks no questions (`"steam"`) needs only `--download-profile`.
+- `--download-runtime-url=<https address>`, `--download-runtime-sha256=<64
+  hexadecimal digits>`, `--download-runtime-size=<bytes>` (with
+  `--download-profile`, for a `"steam"` download): each replaces that value
+  of the profile's `download.runtime` for this launch, to try a runtime
+  archive before it is published. A value that is not given stays the
+  profile's; the archive is still checked against the SHA-256 and size.
 - `--local-native-authorization` (Tolkara build, with `--native-startup` or
   `--native-initializer`): this iPad's Developer service prepares memory, as
   for a library launch, instead of a debugger on the Mac. It needs the

@@ -57,7 +57,7 @@ typedef NS_ENUM(NSInteger, TKAppSource) {
 // application's files as the working directory), else under `workingDirectory`.
 + (NSString *)executableOfProfile:(NSDictionary *)profile;
 // Profiles with a `download` block (GameDownload.h) whose application is not
-// in Documents yet: what the library can offer to download.
+// in Documents yet, or not all of it: what the library can offer to download.
 - (NSArray<NSDictionary *> *)downloadableProfiles;
 // `storage` holds apps.json and should not be user-visible; `documents` holds
 // the applications' files and Tolkara's module copies (GuestModules).
