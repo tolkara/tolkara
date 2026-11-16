@@ -346,24 +346,29 @@ static double TKPointerSpeed(void) {
 // runtime archive, --download-runtime-url=<https address>,
 // --download-runtime-sha256= and --download-runtime-size= each replace that
 // value of the profile for this launch: an archive that is not published yet.
+// --download-root=<folder> puts such a download under another top folder of
+// Documents, also when the application is in place: a trial beside it.
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     static BOOL asked;
     if (asked) return;
     asked=YES;
-    NSString *wanted=nil, *region=nil, *locale=nil;
+    NSString *wanted=nil, *region=nil, *locale=nil, *root=nil;
     NSMutableDictionary *archive=[NSMutableDictionary new];
     for (NSString *argument in NSProcessInfo.processInfo.arguments) {
         if ([argument hasPrefix:@"--download-profile="]) wanted=[argument substringFromIndex:19];
         if ([argument hasPrefix:@"--download-region="]) region=[argument substringFromIndex:18];
         if ([argument hasPrefix:@"--download-locale="]) locale=[argument substringFromIndex:18];
+        if ([argument hasPrefix:@"--download-root="]) root=[argument substringFromIndex:16];
         if ([argument hasPrefix:@"--download-runtime-url="]) archive[@"url"]=[argument substringFromIndex:23];
         if ([argument hasPrefix:@"--download-runtime-sha256="]) archive[@"sha256"]=[argument substringFromIndex:26];
         if ([argument hasPrefix:@"--download-runtime-size="]) archive[@"size"]=@(strtoull([argument substringFromIndex:24].UTF8String,NULL,10));
     }
     if (!wanted) return;
-    for (NSDictionary *profile in _library.downloadableProfiles) {
+    for (NSDictionary *profile in root ? _library.downloadProfiles : _library.downloadableProfiles) {
         if (![profile[@"id"] isEqual:wanted]) continue;
+        NSString *top=profile[@"download"][@"root"];
+        if (root && (![top isKindOfClass:NSString.class] || !root.length || [root containsString:@"/"] || [root hasPrefix:@"."] || [root isEqual:top])) continue;
         BOOL asks=[TKGameDownload regionsOfConfiguration:profile[@"download"]].count>0;
         if (asks && (!region || !locale)) continue;
         NSMutableDictionary *changed=[profile mutableCopy];
@@ -371,6 +376,15 @@ static double TKPointerSpeed(void) {
             NSMutableDictionary *block=[profile[@"download"] mutableCopy], *runtime=[block[@"runtime"] mutableCopy];
             [runtime addEntriesFromDictionary:archive];
             block[@"runtime"]=runtime; changed[@"download"]=block;
+        }
+        if (root) {
+            // The profile's folders are inside its top folder (the downloader checks that).
+            NSMutableDictionary *block=[changed[@"download"] mutableCopy];
+            block[@"root"]=root; changed[@"download"]=block;
+            for (NSString *key in @[@"runtime",@"workingDirectory"]) {
+                NSString *path=profile[key];
+                if ([path hasPrefix:[top stringByAppendingString:@"/"]]) changed[key]=[root stringByAppendingString:[path substringFromIndex:top.length]];
+            }
         }
         // Values the downloader does not accept start nothing.
         [self downloadProfile:changed region:asks ? region : nil locale:asks ? locale : nil];

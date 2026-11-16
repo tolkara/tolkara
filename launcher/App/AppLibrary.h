@@ -59,6 +59,8 @@ typedef NS_ENUM(NSInteger, TKAppSource) {
 // Profiles with a `download` block (GameDownload.h) whose application is not
 // in Documents yet, or not all of it: what the library can offer to download.
 - (NSArray<NSDictionary *> *)downloadableProfiles;
+// Every profile with a download, in Documents already or not.
+- (NSArray<NSDictionary *> *)downloadProfiles;
 // `storage` holds apps.json and should not be user-visible; `documents` holds
 // the applications' files and Tolkara's module copies (GuestModules).
 - (instancetype)initWithDocuments:(NSString *)documents storage:(NSString *)storage

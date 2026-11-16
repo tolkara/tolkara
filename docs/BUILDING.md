@@ -343,6 +343,11 @@ for apps started from the library:
   of the profile's `download.runtime` for this launch, to try a runtime
   archive before it is published. A value that is not given stays the
   profile's; the archive is still checked against the SHA-256 and size.
+- `--download-root=<folder>` (with `--download-profile`, for a `"steam"`
+  download): the download goes under that top folder of Documents instead of
+  the profile's, also when the application is already in place, which stays
+  untouched. To start what was downloaded, point the profile's paths there
+  with `--guest-environment=` for that launch.
 - `--local-native-authorization` (Tolkara build, with `--native-startup` or
   `--native-initializer`): this iPad's Developer service prepares memory, as
   for a library launch, instead of a debugger on the Mac. It needs the
