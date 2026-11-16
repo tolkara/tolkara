@@ -75,5 +75,15 @@
     "TOLKARA_SEPARATE_CODE_POOL": "1",
     "TOLKARA_REQUIRE_LOW_ARENA": "1"
   },
+  "download": {
+    "service": "steam",
+    "root": "Steam",
+    "runtime": {
+      "url": "https://github.com/tolkara/tolkara/releases/download/windows-runtime-1/tolkara-windows-runtime-1.zip",
+      "sha256": "0dfc51c8f853c0f0c3d7e987d3a5e39da459dc4b669d25e9234d9c4240bad8f3",
+      "size": 182151661
+    },
+    "client": "steam_client_win64"
+  },
   "notes": "The browser has 0x71-0x7e (52 GiB); it does not start with less. Helpers and games take 0x70-0x71 in turn, so an install script's own children are refused. Process slots and code pool shares are used once per session: two game starts. See COMPATIBILITY.md, 2026-11-16."
 }

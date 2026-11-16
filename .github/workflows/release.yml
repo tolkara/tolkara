@@ -29,6 +29,8 @@ env:
 jobs:
   ipa:
     name: Unsigned .ipa
+    # Only app releases (v*); other releases carry data such as the Windows runtime.
+    if: startsWith(github.event.release.tag_name || github.event.inputs.tag || github.ref_name, 'v')
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
