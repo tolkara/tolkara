@@ -10,6 +10,12 @@ static NCPreparation reject_pair(void *first, size_t first_size,
     assert(second_size == first_size);
     return NC_REJECTED;
 }
+static NCPreparation never_pair(void *first, size_t first_size,
+                               void *second, size_t second_size, void *context) {
+    (void)first; (void)first_size; (void)second; (void)second_size; (void)context;
+    assert(!"a pair with its second region above the ceiling was prepared");
+    return NC_REJECTED;
+}
 int main(void) {
     size_t page = (size_t)getpagesize();
     assert(early_low && (char *)early_low_end - (char *)early_low >= (ptrdiff_t)(4 * page));
@@ -33,5 +39,14 @@ int main(void) {
     assert(!nc_create_pair(&a,page,UINTPTR_MAX,&b,page,reject_pair,NULL,&qa,&qb));
     assert(!early_low && !early_low_end && !preserve_low_tail);
     assert(!a.executable && !b.executable && !qa.executable && !qb.executable);
-    puts("PASS: paired low reservation survives alias allocation and releases on rejection");
+
+    // The second region has the first one's ceiling. With room for the first
+    // only, the pair is refused for lack of room and nothing is prepared.
+    reserve_low_arena();
+    assert(early_low);
+    uintptr_t ceiling=(uintptr_t)early_low+page;
+    assert(!nc_create_pair(&a,page,ceiling,&b,page,never_pair,NULL,&qa,&qb) && errno==ENOSPC);
+    assert(!early_low && !early_low_end && !preserve_low_tail);
+    assert(!a.executable && !b.executable && !qa.executable && !qb.executable);
+    puts("PASS: paired low reservation survives alias allocation, releases on rejection, and keeps the second region under the ceiling");
 }
