@@ -51,6 +51,10 @@ bool nc_write(NativeCodeMemory *memory, size_t offset, const void *bytes, size_t
 // Unmaps both views, adopted ones too; quarantine is kept.
 void nc_destroy(NativeCodeMemory *memory);
 
+// The two largest free ranges held below 64 GiB since the runtime loaded
+// (0 when none): what a pair's regions can be sized to. They are released
+// with the first arena made.
+void nc_low_room(size_t room[2]);
 // Allocate both views before one preparation transaction. Uncertainty retains
 // both owners; neither executable view is published unless the pair succeeds.
 typedef NCPreparation (*NCPreparePair)(void *, size_t, void *, size_t, void *);

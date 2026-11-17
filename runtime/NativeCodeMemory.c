@@ -45,11 +45,20 @@ void nc_destroy(NativeCodeMemory *memory) {
 // in single-app mode); there it crowded those processes' own views. By the time an arena
 // is made the low gigabytes are often too fragmented for one, so a placeholder of the
 // largest arena is reserved there when the runtime loads, and the arena takes its place.
-static void *early_low, *early_low_end;
+// The system's own heap starts at a random place in those gigabytes before any
+// of our code runs and often leaves no single gap for a large arena pair, so the
+// second largest gap is held as well: a pair may take one region from each
+// (nc_low_room tells the caller what there is).
+static void *early_low, *early_low_end, *early_second, *early_second_end;
 static _Thread_local bool preserve_low_tail;
 static void release_low_tail(void) {
     if (early_low) munmap(early_low, (size_t)((char *)early_low_end - (char *)early_low));
-    early_low = early_low_end = NULL;
+    if (early_second) munmap(early_second, (size_t)((char *)early_second_end - (char *)early_second));
+    early_low = early_low_end = early_second = early_second_end = NULL;
+}
+void nc_low_room(size_t room[2]) {
+    room[0] = early_low ? (size_t)((char *)early_low_end - (char *)early_low) : 0;
+    room[1] = early_second ? (size_t)((char *)early_second_end - (char *)early_second) : 0;
 }
 static void *map_low_hint(size_t size, int prot) {
     const uintptr_t low_end = (uintptr_t)1 << 36;
@@ -115,9 +124,15 @@ __attribute__((constructor)) static void reserve_low_arena(void) {
         void *placeholder=map_low_hint(size,PROT_NONE);
         if (placeholder!=MAP_FAILED) { early_low=placeholder; early_low_end=(char *)placeholder+size; break; }
     }
+    // The next largest gap, searched while the first is held.
+    for (size_t size=early_low ? (size_t)((char *)early_low_end-(char *)early_low) : 0; size>=((size_t)64<<20); size-=((size_t)16<<20)) {
+        void *placeholder=map_low_hint(size,PROT_NONE);
+        if (placeholder!=MAP_FAILED) { early_second=placeholder; early_second_end=(char *)placeholder+size; break; }
+    }
 }
 static void *map_low(size_t size, int prot) {
-    fprintf(stderr,"[native-memory] early low base=%p bytes=%zu requested=%zu\n",early_low,early_low ? (size_t)((char *)early_low_end-(char *)early_low) : 0,size);
+    fprintf(stderr,"[native-memory] early low base=%p bytes=%zu second=%p bytes=%zu requested=%zu\n",early_low,early_low ? (size_t)((char *)early_low_end-(char *)early_low) : 0,
+            early_second,early_second ? (size_t)((char *)early_second_end-(char *)early_second) : 0,size);
     if (early_low && size <= (size_t)((char *)early_low_end - (char *)early_low)) {
         void *mapped = mmap(early_low, size, prot, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
         if (mapped == early_low) {
@@ -129,11 +144,18 @@ static void *map_low(size_t size, int prot) {
             return mapped;
         }
     }
-    // An undersized placeholder must not obstruct a larger contiguous claim.
-    if (early_low) {
-        munmap(early_low,(size_t)((char *)early_low_end-(char *)early_low));
-        early_low=early_low_end=NULL;
+    // What the first gap cannot hold may fit the second.
+    if (early_second && size <= (size_t)((char *)early_second_end - (char *)early_second)) {
+        void *mapped = mmap(early_second, size, prot, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
+        if (mapped == early_second) {
+            early_second = (char *)early_second + size;
+            if (early_second == early_second_end) early_second = early_second_end = NULL;
+            if (!preserve_low_tail) release_low_tail();
+            return mapped;
+        }
     }
+    // Undersized placeholders must not obstruct a larger contiguous claim.
+    release_low_tail();
     void *mapped = map_low_hint(size, prot);
     if (mapped==MAP_FAILED) {
         fprintf(stderr,"[native-memory] low arena unavailable size=%zu errno=%d\n",size,errno);

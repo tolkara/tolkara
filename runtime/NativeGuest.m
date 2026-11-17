@@ -2068,6 +2068,8 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     const char *split_setting=getenv("TOLKARA_SEPARATE_CODE_POOL");
     bool split_pool=local && pool_size && !jit_probe && split_setting && !strcmp(split_setting,"1");
     size_t image_arena_size=split_pool ? pool_offset : total;
+    // With a separate pool: how much of it follows the images after all.
+    size_t pool_with_images=0;
     // An arena an enabler provided earlier: taken, refused, or given back first.
     NGReservedChoice reserved=ng_reserved_choice(external,reserved_arena.published,total,reserved_arena.size);
     if (reserved==NG_RESERVED_REFUSE) {
@@ -2089,10 +2091,28 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
         uintptr_t ceiling=split_pool || (low_only && !strcmp(low_only,"1")) ? ((uintptr_t)1<<36) : UINTPTR_MAX;
         // One attachment prepares both regions and confirms detachment before
         // either is published. An uncertain result quarantines both views.
-        if(split_pool)
-            arena_ready=nc_create_pair(&guest.arena,image_arena_size,ceiling,
-                &separate_code_pool,pool_size,TKPrepareLocalArenaPair,NULL,&local_quarantine,&separate_pool_quarantine);
-        else
+        if(split_pool) {
+            // The system's heap often leaves no single low range for the images
+            // and the whole pool. Then the pool's first part follows the images
+            // in the larger range and the rest takes the other; a pool that
+            // comes out smaller is accepted down to three quarters.
+            size_t room[2]; nc_low_room(room);
+            if(room[0]<pool_offset+pool_size && room[0]>pool_offset) {
+                size_t with_images=(room[0]-pool_offset)/page_size*page_size, apart=room[1]/page_size*page_size;
+                if(with_images>pool_size) with_images=pool_size;
+                if(apart>pool_size-with_images) apart=pool_size-with_images;
+                if(with_images+apart>=pool_size/4*3) {
+                    LOG("[native] no single low range for %zu bytes: %zu bytes of the code pool follow the images, %zu are apart%s\n",
+                        pool_offset+pool_size,with_images,apart,with_images+apart<pool_size?" (smaller than asked)":"");
+                    pool_with_images=with_images; pool_size=with_images+apart; image_arena_size=pool_offset+with_images;
+                }
+            }
+            if(pool_size>pool_with_images)
+                arena_ready=nc_create_pair(&guest.arena,image_arena_size,ceiling,
+                    &separate_code_pool,pool_size-pool_with_images,TKPrepareLocalArenaPair,NULL,&local_quarantine,&separate_pool_quarantine);
+            else
+                arena_ready=nc_create_managed_below(&guest.arena,image_arena_size,ceiling,TKPrepareLocalArena,NULL,&local_quarantine);
+        } else
             arena_ready=nc_create_managed_below(&guest.arena,total,ceiling,TKPrepareLocalArena,NULL,&local_quarantine);
         if (!arena_ready && errno==ENOSPC) {
             atomic_store(&no_low_room,true);
@@ -2128,9 +2148,18 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     if (pool_size) {
         // The process slots share the code pool, each taking a range when it starts
         // (TOLKARA_PROCESS_POOL rules, else equal shares); one slot takes all of it.
-        uintptr_t pool_start=split_pool ? (uintptr_t)separate_code_pool.executable : (uintptr_t)guest.arena.executable+pool_offset;
-        uintptr_t pool_alias=split_pool ? (uintptr_t)separate_code_pool.writable : (uintptr_t)guest.arena.writable+pool_offset;
-        gp_set_pool(pool_start,pool_start+pool_size,pool_alias,process_slots>1?getenv("TOLKARA_PROCESS_POOL"):NULL);
+        const char *rules=process_slots>1?getenv("TOLKARA_PROCESS_POOL"):NULL;
+        uintptr_t apart=(uintptr_t)separate_code_pool.executable, apart_size=pool_size-pool_with_images;
+        if (!split_pool)
+            gp_set_pool((uintptr_t)guest.arena.executable+pool_offset,(uintptr_t)guest.arena.executable+pool_offset+pool_size,(uintptr_t)guest.arena.writable+pool_offset,rules);
+        else if (!pool_with_images)
+            gp_set_pool(apart,apart+apart_size,(uintptr_t)separate_code_pool.writable,rules);
+        else {
+            gp_set_pool((uintptr_t)guest.arena.executable+pool_offset,(uintptr_t)guest.arena.executable+pool_offset+pool_with_images,(uintptr_t)guest.arena.writable+pool_offset,rules);
+            if (apart_size && !gp_add_pool(apart,apart+apart_size,(uintptr_t)separate_code_pool.writable)) {
+                LOG("[native] the code pool's second range was refused; guest entry blocked\n"); goto done;
+            }
+        }
         char *command[65]={(char *)guest.path};
         for (size_t i=0;i<launch_argument_count;i++) command[i+1]=launch_arguments[i];
         if (process_slots>1) {
@@ -2384,7 +2413,7 @@ bool ng_initialize(const char *path, const char *frameworks, const char *library
     if(gsv_enabled() && !gsv_code_alias(guest.arena.executable,guest.arena.writable,guest.arena.size)) {
         LOG("[software-vm] cannot register the loader-owned instruction view\n"); goto done;
     }
-    if(gsv_enabled() && split_pool && !gsv_code_alias(separate_code_pool.executable,separate_code_pool.writable,separate_code_pool.size)) {
+    if(gsv_enabled() && split_pool && separate_code_pool.size && !gsv_code_alias(separate_code_pool.executable,separate_code_pool.writable,separate_code_pool.size)) {
         LOG("[software-vm] cannot register the separate code-pool instruction view\n"); goto done;
     }
     {
