@@ -302,3 +302,17 @@ install has not been started on a device.
   new log shows the space split near its middle (0x14a000000 and
   0x15e000000 in the two cases) by a group of 4 MiB malloc regions (tag 2)
   with 7 to 34 MiB mappings between them; what places them there is open.
+- 2026-11-17, low-memory layout: the system's heap starts at a random
+  16 MiB step between the app's image and the main stack before any of our
+  code runs, so the largest gap under the shared region was often smaller
+  than the images and the code pool together (1615 MiB). The runtime now
+  holds the two largest gaps and the pool may take both (first part after
+  the images, the rest apart). On the iPad a start with gaps of 1152 and
+  384 MiB, which stopped before, prepared 1536 MiB in 453 s and Steam and
+  its browser took their shares (200 and 400 MiB); the pool was 5 MiB
+  smaller than asked. Only this one split start was run to the end; game
+  starts on a split pool are untested.
+- The same start showed Steam's sign-in screen on the signed-in
+  installation: Steam's servers answered the saved sign-in with "Access
+  Denied" (`steamui_login.txt`, 11:59). The previous start, 2026-11-16
+  18:07, had signed in. The cause is not known.
