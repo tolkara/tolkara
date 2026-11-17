@@ -119,6 +119,10 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   unpacked: each line, `<destination><tab><source>` with both paths inside
   `root`, makes the destination a copy of the unpacked source that shares
   its storage, so files the prefix repeats from the runtime are stored once.
+  `tools/package_windows_runtime.py` packs the archive and
+  `tools/publish_windows_runtime.sh <n>` publishes it as the release
+  `windows-runtime-<n>` and pushes the profile that names it. A published
+  archive is never replaced: a change gets the next number.
 
 Every profile in `profiles/` is built into the app. When the files a profile
 describes are present in Documents, the launcher adds that app to its library
