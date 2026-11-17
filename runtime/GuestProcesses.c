@@ -36,7 +36,10 @@ static GPSlot slots[GP_MAX_PROCESSES];
 enum { GP_POOL_RANGES = 64 };
 static struct { uintptr_t start, end; } pool_free[GP_POOL_RANGES];
 static size_t pool_free_count;
-static uintptr_t pool_start, pool_alias;
+// The pool's ranges as they were given, each with its writable view.
+enum { GP_POOL_PARTS = 4 };
+static struct { uintptr_t start, end, alias; } pool_parts[GP_POOL_PARTS];
+static size_t pool_part_count;
 static char pool_rules[1024];
 static char environment_rules[2048];
 static char large_reserve[64];
@@ -106,11 +109,22 @@ size_t gp_current_slot(uintptr_t address) {
 
 void gp_set_pool(uintptr_t start, uintptr_t end, uintptr_t alias, const char *rules) {
     pthread_mutex_lock(&pool_lock);
-    pool_start = start; pool_alias = alias;
-    pool_free_count = end > start;
+    pool_part_count = pool_free_count = end > start;
+    pool_parts[0].start = start; pool_parts[0].end = end; pool_parts[0].alias = alias;
     pool_free[0].start = start; pool_free[0].end = end;
     snprintf(pool_rules, sizeof pool_rules, "%s", rules ? rules : "");
     pthread_mutex_unlock(&pool_lock);
+}
+bool gp_add_pool(uintptr_t start, uintptr_t end, uintptr_t alias) {
+    pthread_mutex_lock(&pool_lock);
+    bool ok = end > start && pool_part_count && pool_part_count < GP_POOL_PARTS && pool_free_count < GP_POOL_RANGES;
+    for (size_t i = 0; ok && i < pool_part_count; i++) ok = end <= pool_parts[i].start || start >= pool_parts[i].end;
+    if (ok) {
+        pool_parts[pool_part_count].start = start; pool_parts[pool_part_count].end = end; pool_parts[pool_part_count++].alias = alias;
+        pool_free[pool_free_count].start = start; pool_free[pool_free_count++].end = end;
+    }
+    pthread_mutex_unlock(&pool_lock);
+    return ok;
 }
 static bool contains_ignoring_case(const char *text, const char *pattern, size_t length) {
     for (; *text; text++) if (!strncasecmp(text, pattern, length)) return true;
@@ -156,7 +170,9 @@ bool gp_take_pool(size_t slot, int argc, char *const argv[]) {
         GPSlotLayout *layout = &slots[slot].layout;
         layout->pool_start = pool_free[i].start;
         layout->pool_end = pool_free[i].start + size;
-        layout->pool_alias = pool_alias + (layout->pool_start - pool_start);
+        for (size_t part = 0; part < pool_part_count; part++)
+            if (layout->pool_start >= pool_parts[part].start && layout->pool_end <= pool_parts[part].end)
+                layout->pool_alias = pool_parts[part].alias + (layout->pool_start - pool_parts[part].start);
         pool_free[i].start += size;
         ok = true;
     }
@@ -170,8 +186,12 @@ static void give_back_pool(size_t slot) {
     GPSlotLayout *layout = &slots[slot].layout;
     if (layout->pool_end <= layout->pool_start) return;
     pthread_mutex_lock(&pool_lock);
-    uintptr_t start = layout->pool_start, end = layout->pool_end;
+    uintptr_t start = layout->pool_start, end = layout->pool_end, low = start, high = end;
+    // Merged only inside its own range: two ranges that touch have different views.
+    for (size_t part = 0; part < pool_part_count; part++)
+        if (start >= pool_parts[part].start && end <= pool_parts[part].end) { low = pool_parts[part].start; high = pool_parts[part].end; }
     for (size_t i = 0; i < pool_free_count;) {
+        if (pool_free[i].start < low || pool_free[i].end > high) { i++; continue; }
         if (pool_free[i].end == start) { start = pool_free[i].start; pool_free[i] = pool_free[--pool_free_count]; i = 0; continue; }
         if (pool_free[i].start == end) { end = pool_free[i].end; pool_free[i] = pool_free[--pool_free_count]; i = 0; continue; }
         i++;

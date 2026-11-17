@@ -34,6 +34,8 @@ build/emulation/test_guest_process_ranges
 "${CC[@]}" -fno-sanitize=address,undefined tests/test_guest_process_exit.c -o build/emulation/test_guest_process_exit
 build/emulation/test_guest_process_exit
 build/emulation/test_guest_process_exit stack-in-range
+"${CC[@]}" tests/test_code_pool_ranges.c -o build/emulation/test_code_pool_ranges
+build/emulation/test_code_pool_ranges
 "${CC[@]}" runtime/ProcessEnd.c tests/test_process_end.c -o build/emulation/test_process_end
 build/emulation/test_process_end
 "${CC[@]}" tests/test_guest_process_threads.c -o build/emulation/test_guest_process_threads

@@ -30,6 +30,9 @@ void gp_configure(size_t count, FILE *log, GPStart start);
 // its range remains retired until host exit; only pre-entry rollback returns it.
 // Without rules each slot gets an equal share.
 void gp_set_pool(uintptr_t start, uintptr_t end, uintptr_t alias, const char *rules);
+// A further range of the pool, apart from the first (after gp_set_pool). A
+// share always lies in one range.
+bool gp_add_pool(uintptr_t start, uintptr_t end, uintptr_t alias);
 // A range of the pool for a slot about to run this command line; false when the
 // pool has no room. Sets the slot's layout pool fields.
 bool gp_take_pool(size_t slot, int argc, char *const argv[]);
