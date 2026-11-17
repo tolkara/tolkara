@@ -293,3 +293,12 @@ install has not been started on a device.
 - The low-memory layout was too small in 5 of 8 starts this evening; such a
   start stops within seconds. A failed start now logs what occupies the
   2 GiB under the shared region.
+- 2026-11-17: archive 2 (release `windows-runtime-2`, published with
+  `tools/publish_windows_runtime.sh`) was downloaded on the iPad into
+  `SteamTrial2`. With nothing placed by hand, the first start updated Steam
+  and ended at its restart, and the next start showed the complete sign-in
+  screen with labels and the QR code. Signing in was not tried.
+- That second start needed three tries: two had a bad low-memory layout. The
+  new log shows the space split near its middle (0x14a000000 and
+  0x15e000000 in the two cases) by a group of 4 MiB malloc regions (tag 2)
+  with 7 to 34 MiB mappings between them; what places them there is open.
