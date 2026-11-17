@@ -316,3 +316,11 @@ install has not been started on a device.
   installation: Steam's servers answered the saved sign-in with "Access
   Denied" (`steamui_login.txt`, 11:59). The previous start, 2026-11-16
   18:07, had signed in. The cause is not known.
+- 2026-11-17, later: a second split start (gaps of 896 and 768 MiB; the
+  pool at its full 1400 MiB, 755 MiB after the images and 645 apart)
+  prepared 1541 MiB in 466 s, started with `-applaunch` for Vampire
+  Survivors. The Steam work was stopped there to free the iPad: whether the
+  game started on the split pool was not checked. Also open: in both
+  series, the starts before the split one showed no memory lines in the log
+  within 40 to 80 s, so the unsplit path of this build is not confirmed on
+  the device.
