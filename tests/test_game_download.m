@@ -289,6 +289,59 @@ int main(void) {
         // The index on disk was used: it is not fetched a second time.
         assert(![asked containsObject:[address(@"data", hex(archiveKey)) stringByAppendingString:@".index"]]);
 
+        // Updates: the installed build and language, from the install's own files.
+        NSDictionary *installed = [TKGameDownload installedBuildOfConfiguration:block documents:documents];
+        assert([installed isEqual:(@{@"region": @"eu", @"build": buildKey, @"version": @"1.2.3.7"})]);
+        assert(![TKGameDownload installedBuildOfConfiguration:block documents:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]]);
+        // The user's own settings name no language here; a profile's other language is found.
+        assert(![TKGameDownload installedLocaleOfConfiguration:block documents:documents workingDirectory:working]);
+        [@"SET portal \"EU\"\nSET textLocale \"deDE\"\n" writeToFile:settingsPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        assert([[TKGameDownload installedLocaleOfConfiguration:block documents:documents workingDirectory:working] isEqual:@"deDE"]);
+        [@"SET textLocale \"frFR\"\n" writeToFile:settingsPath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        assert(![TKGameDownload installedLocaleOfConfiguration:block documents:documents workingDirectory:working]);
+        assert(![TKGameDownload installedLocaleOfConfiguration:block documents:documents workingDirectory:@"../Game"]);
+        // The current build asks for the version list only.
+        [asked removeAllObjects];
+        NSDictionary *current = [download currentBuild:&error];
+        assert([current isEqual:(@{@"build": buildKey, @"version": @"1.2.3.7"})] && asked.count == 1);
+        // A newer build on the server: the same download updates the install.
+        // Only the changed file is fetched, and .build.info names the new build.
+        NSData *newInfo = [@"<plist version=\"2\"/>" dataUsingEncoding:NSUTF8StringEncoding];
+        NSData *newInfoEkey = md5([@"new info stored" dataUsingEncoding:NSUTF8StringEncoding]), *newInfoStored = blte_plain(newInfo);
+        NSData *newManifest = install_manifest(tags, @[entries[0], @[@"Game.app\\Contents\\Info.plist", md5(newInfo), @(newInfo.length)], entries[2], entries[3]]);
+        NSData *newEncoding = encoding_table(@[@[md5(game), gameEkey], @[md5(newInfo), newInfoEkey], @[md5(other), otherEkey], @[md5(tool), toolEkey]]);
+        NSData *newInstallStored = blte_chunks(newManifest, 4096), *newEncodingStored = blte_chunks(newEncoding, 4096);
+        NSString *newBuildKey = hex(md5(pattern(8, 3)));
+        server[address(@"config", newBuildKey)] = [[NSString stringWithFormat:@"install = %@ %@\nencoding = %@ %@\n",
+            hex(md5(newManifest)), hex(md5(newInstallStored)), hex(md5(newEncoding)), hex(md5(newEncodingStored))] dataUsingEncoding:NSUTF8StringEncoding];
+        server[address(@"data", hex(md5(newInstallStored)))] = newInstallStored;
+        server[address(@"data", hex(md5(newEncodingStored)))] = newEncodingStored;
+        server[address(@"data", hex(newInfoEkey))] = newInfoStored;
+        NSData *oldVersions = server[@"https://eu.version.battle.net/v2/products/testp/versions"];
+        server[@"https://eu.version.battle.net/v2/products/testp/versions"] = [[NSString stringWithFormat:
+            @"Region!STRING:0|BuildConfig!HEX:16|CDNConfig!HEX:16|KeyRing!HEX:16|BuildId!DEC:4|VersionsName!String:0|ProductConfig!HEX:16\n"
+            @"eu|%@|%@||8|1.2.3.8|\n", newBuildKey, cdnKey] dataUsingEncoding:NSUTF8StringEncoding];
+        current = [download currentBuild:&error];
+        assert([current[@"build"] isEqual:newBuildKey] && [current[@"version"] isEqual:@"1.2.3.8"]);
+        assert(![current[@"build"] isEqual:installed[@"build"]]);
+        [asked removeAllObjects];
+        download = [[TKGameDownload alloc] initWithConfiguration:block documents:documents workingDirectory:working runtime:nil region:@"eu" locale:@"enUS"];
+        download.fetch = fetch;
+        BOOL updated = [download run:&error];
+        if (!updated) printf("update run: %s\n", error.localizedDescription.UTF8String);
+        assert(updated);
+        assert([[NSData dataWithContentsOfFile:[app stringByAppendingPathComponent:@"Info.plist"]] isEqual:newInfo]);
+        assert([[NSData dataWithContentsOfFile:[app stringByAppendingPathComponent:@"MacOS/Game"]] isEqual:game]);
+        assert([asked containsObject:address(@"data", hex(newInfoEkey))] && ![asked containsObject:address(@"data", hex(archiveKey))]);
+        assert([[TKGameDownload installedBuildOfConfiguration:block documents:documents][@"build"] isEqual:newBuildKey]);
+        // The user's saved settings stay through an update.
+        assert([[NSString stringWithContentsOfFile:settingsPath encoding:NSUTF8StringEncoding error:NULL] isEqual:@"SET textLocale \"frFR\"\n"]);
+        // A version list without the region, or not understood, is no build.
+        server[@"https://eu.version.battle.net/v2/products/testp/versions"] = [@"Region!STRING:0|BuildConfig!HEX:16\nus|zz\n" dataUsingEncoding:NSUTF8StringEncoding];
+        error = nil;
+        assert(![download currentBuild:&error] && error);
+        server[@"https://eu.version.battle.net/v2/products/testp/versions"] = oldVersions;
+
         // Content that does not match the file list is not put in place.
         NSString *second = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         NSData *intact = server[address(@"data", hex(infoEkey))];
@@ -330,7 +383,7 @@ int main(void) {
         assert(![download run:&error] && [error.domain isEqual:NSCocoaErrorDomain] && error.code == NSUserCancelledError);
         [files removeItemAtPath:documents error:NULL]; [files removeItemAtPath:second error:NULL];
         puts("game download: container, file list, storage table and archive index readers with malformed input; a download from a made-up server, "
-             "its resume, a changed file, mismatched content, a path outside the application, an unknown region and a stop: PASS");
+             "its resume, a changed file, mismatched content, a path outside the application, an unknown region and a stop; the installed build and language, the current build and an update to a newer one: PASS");
     }
     return 0;
 }

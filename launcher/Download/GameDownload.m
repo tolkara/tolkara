@@ -245,6 +245,31 @@ static bool entry_sink(void *context, const uint8_t *bytes, size_t length) {
     return ![profile[@"download"][@"service"] isEqual:@"steam"] || [files fileExistsAtPath:[working stringByAppendingPathComponent:@"steam.exe"]];
 }
 
++ (NSDictionary<NSString *, NSString *> *)installedBuildOfConfiguration:(NSDictionary *)configuration documents:(NSString *)documents {
+    if (![configuration[@"service"] isEqual:@"blizzard"] || !plain_relative(configuration[@"root"])) return nil;
+    NSData *data = [NSData dataWithContentsOfFile:[[documents stringByAppendingPathComponent:configuration[@"root"]] stringByAppendingPathComponent:@".build.info"]];
+    for (NSDictionary<NSString *, NSString *> *row in data ? table(data) : @[]) {
+        if (![row[@"Product"] isEqual:configuration[@"product"]] || !is_key(row[@"Build Key"])) continue;
+        for (NSDictionary *region in configuration[@"regions"]) if ([region[@"id"] isEqual:row[@"Branch"]])
+            return @{@"region": row[@"Branch"], @"build": row[@"Build Key"], @"version": row[@"Version"] ?: @""};
+    }
+    return nil;
+}
+
++ (NSString *)installedLocaleOfConfiguration:(NSDictionary *)configuration documents:(NSString *)documents workingDirectory:(NSString *)workingDirectory {
+    NSDictionary *file = configuration[@"settings"];
+    if (![file isKindOfClass:NSDictionary.class] || !plain_relative(workingDirectory) || !plain_relative(file[@"file"])) return nil;
+    NSString *path = [[documents stringByAppendingPathComponent:workingDirectory] stringByAppendingPathComponent:file[@"file"]];
+    NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+    NSString *prefix = [NSString stringWithFormat:@"SET %@ \"", file[@"text"]];
+    for (NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+        if (![line hasPrefix:prefix] || ![line hasSuffix:@"\""] || line.length < prefix.length + 1) continue;
+        NSString *locale = [line substringWithRange:NSMakeRange(prefix.length, line.length - prefix.length - 1)];
+        if ([configuration[@"locales"] containsObject:locale]) return locale;
+    }
+    return nil;
+}
+
 // "steam": the top folder, the runtime archive and the name of Valve's list.
 + (BOOL)validSteamConfiguration:(NSDictionary *)block workingDirectory:(NSString *)workingDirectory runtime:(NSString *)runtime {
     if (block.count != 4 || !plain_relative(block[@"root"]) || !matches(block[@"client"], @"steam_client_[a-z0-9_]{1,32}")) return NO;
@@ -363,6 +388,20 @@ static bool entry_sink(void *context, const uint8_t *bytes, size_t length) {
 }
 
 #pragma mark Blizzard
+
+- (NSDictionary<NSString *, NSString *> *)currentBuild:(NSError **)error {
+    if (![_configuration[@"service"] isEqual:@"blizzard"]) { if (error) *error = download_error(@"Only a Blizzard download has builds."); return nil; }
+    NSString *address = [NSString stringWithFormat:@"https://%@.version.battle.net/v2/products/%@/versions", _region, _configuration[@"product"]];
+    NSData *data = [self request:[NSURL URLWithString:address] range:NSMakeRange(0, 0) error:error];
+    if (!data) return nil;
+    for (NSDictionary<NSString *, NSString *> *row in table(data)) {
+        if (![row[@"Region"] isEqual:_region]) continue;
+        if (!is_key(row[@"BuildConfig"]) || !matches(row[@"VersionsName"], @"[0-9A-Za-z._-]{1,40}")) break;
+        return @{@"build": row[@"BuildConfig"], @"version": row[@"VersionsName"]};
+    }
+    if (error) *error = download_error(@"The version server's answer was not understood.");
+    return nil;
+}
 
 - (BOOL)runBlizzard:(NSError **)error {
     NSString *product = _configuration[@"product"];
