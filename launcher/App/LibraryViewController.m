@@ -40,6 +40,9 @@ static double TKPointerSpeed(void) {
     // installed, current}. Checked at each refresh.
     NSDictionary<NSString *, NSDictionary *> *_updates;
     BOOL _checkingUpdates, _updating;
+    // The build each such game has installed (.build.info), by app
+    // identifier, read from the device alone and shown on its row.
+    NSDictionary<NSString *, NSString *> *_builds;
 }
 
 - (instancetype)initWithLibrary:(TKAppLibrary *)library {
@@ -166,13 +169,17 @@ static double TKPointerSpeed(void) {
     content.textProperties.font=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
     content.secondaryText=[NSString stringWithFormat:@"%@ · %@",[self locationOfApp:app],[self lastStartedOfApp:app]];
     content.secondaryTextProperties.color=UIColor.secondaryLabelColor;
+    // A Blizzard game's installed build always shows; a newer one beside it.
     NSDictionary *update=_updates[app.identifier];
-    if (update) {
+    NSString *build=_builds[app.identifier];
+    if (build || update) {
+        UIFont *font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
         NSMutableAttributedString *text=[[NSMutableAttributedString alloc] initWithString:[content.secondaryText stringByAppendingString:@"\n"]
             attributes:@{NSForegroundColorAttributeName:UIColor.secondaryLabelColor}];
-        [text appendAttributedString:[[NSAttributedString alloc] initWithString:[NSString stringWithFormat:@"Update available: %@",update[@"current"]]
-            attributes:@{NSForegroundColorAttributeName:self.view.tintColor,
-                         NSFontAttributeName:[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]}]];
+        if (build) [text appendAttributedString:[[NSAttributedString alloc] initWithString:[@"Build " stringByAppendingString:build]
+            attributes:@{NSForegroundColorAttributeName:UIColor.secondaryLabelColor,NSFontAttributeName:font}]];
+        if (update) [text appendAttributedString:[[NSAttributedString alloc] initWithString:[NSString stringWithFormat:@"%@Update available: %@",build ? @" · " : @"",update[@"current"]]
+            attributes:@{NSForegroundColorAttributeName:self.view.tintColor,NSFontAttributeName:font}]];
         content.secondaryAttributedText=text;
     }
     content.image=[UIImage systemImageNamed:app.source==TKAppSourceCopy ? @"doc.badge.gearshape" : @"gamecontroller.fill"];
@@ -287,6 +294,7 @@ static double TKPointerSpeed(void) {
         [NSDateFormatter localizedStringFromDate:app.added dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle],[self lastStartedOfApp:app]];
     NSDictionary *update=_updates[app.identifier];
     if (update) [message appendFormat:@"\n\nInstalled build: %@\nAvailable: %@",update[@"installed"],update[@"current"]];
+    else if (_builds[app.identifier]) [message appendFormat:@"\n\nInstalled build: %@",_builds[app.identifier]];
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:app.name message:message preferredStyle:UIAlertControllerStyleActionSheet];
     if (update) [sheet addAction:[UIAlertAction actionWithTitle:@"Update" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         (void)a; [self updateApp:app]; }]];
@@ -580,10 +588,22 @@ static double TKPointerSpeed(void) {
         NSDictionary *profile=[self blizzardProfileOfApp:app];
         if (profile) [candidates addObject:@[app.identifier,profile]];
     }
-    if (!candidates.count) { _updates=nil; return; }
+    if (!candidates.count) { _updates=nil; _builds=nil; return; }
     _checkingUpdates=YES;
     NSString *documents=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        // The installed builds first, from the device alone: they show at once,
+        // offline too, before the version server answers.
+        NSMutableDictionary<NSString *,NSString *> *builds=[NSMutableDictionary new];
+        for (NSArray *candidate in candidates) {
+            NSString *version=[TKGameDownload installedBuildOfConfiguration:candidate[1][@"download"] documents:documents][@"version"];
+            if (version.length) builds[candidate[0]]=version;
+        }
+        dispatch_async(dispatch_get_main_queue(),^{
+            if ([self->_builds isEqual:builds]) return;
+            self->_builds=builds;
+            [self.tableView reloadData];
+        });
         NSMutableDictionary<NSString *,NSDictionary *> *found=[NSMutableDictionary new];
         for (NSArray *candidate in candidates) {
             NSDictionary *profile=candidate[1], *block=profile[@"download"];
