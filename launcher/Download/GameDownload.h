@@ -37,6 +37,18 @@ typedef NSData * _Nullable (^TKGameDownloadFetch)(NSURL *url, NSRange range, NSE
 // and, for "steam", steam.exe in the working directory.
 + (BOOL)profileIsInPlace:(NSDictionary *)profile documents:(NSString *)documents;
 
+// "blizzard": whether the profile opts in to updates in the library
+// ("update": true). Only a profile whose updates were tried on a device says so.
++ (BOOL)offersUpdates:(NSDictionary *)configuration;
+// "blizzard": the build installed for the block's product, from the
+// install's .build.info: @{@"region", @"build", @"version"}. Nil when there is
+// no row for the product, or its region is not one the block offers.
++ (nullable NSDictionary<NSString *, NSString *> *)installedBuildOfConfiguration:(NSDictionary *)configuration documents:(NSString *)documents;
+// "blizzard": the language the install's settings file names, when the block
+// offers it; nil otherwise.
++ (nullable NSString *)installedLocaleOfConfiguration:(NSDictionary *)configuration documents:(NSString *)documents
+                                     workingDirectory:(NSString *)workingDirectory;
+
 // region and locale: one of each the block offers; nil when it offers none.
 - (nullable instancetype)initWithConfiguration:(NSDictionary *)configuration documents:(NSString *)documents
                               workingDirectory:(NSString *)workingDirectory runtime:(nullable NSString *)runtime
@@ -51,5 +63,11 @@ typedef NSData * _Nullable (^TKGameDownloadFetch)(NSURL *url, NSRange range, NSE
 - (void)cancel;
 // Background thread only.
 - (BOOL)run:(NSError **)error;
+// "blizzard", background thread only: the build the version server offers now
+// for this download's region, @{@"build", @"version"}. Fetches nothing else.
+// Running the download again with the same region and language updates an
+// install: only application files that changed are fetched, .build.info names
+// the new build and saved settings stay; the game fetches its new data itself.
+- (nullable NSDictionary<NSString *, NSString *> *)currentBuild:(NSError **)error;
 @end
 NS_ASSUME_NONNULL_END

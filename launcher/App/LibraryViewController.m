@@ -35,6 +35,14 @@ static double TKPointerSpeed(void) {
     TKGameDownload *_download;
     UIAlertController *_downloadAlert;
     UIProgressView *_downloadBar;
+    // Blizzard games whose installed build is older than the version
+    // server's current one, by app identifier: {profile, region, locale,
+    // installed, current}. Checked at each refresh.
+    NSDictionary<NSString *, NSDictionary *> *_updates;
+    BOOL _checkingUpdates, _updating;
+    // The build each such game has installed (.build.info), by app
+    // identifier, read from the device alone and shown on its row.
+    NSDictionary<NSString *, NSString *> *_builds;
 }
 
 - (instancetype)initWithLibrary:(TKAppLibrary *)library {
@@ -72,7 +80,7 @@ static double TKPointerSpeed(void) {
 - (void)refresh {
     dispatch_async(_queue,^{
         [self->_library discover];
-        dispatch_async(dispatch_get_main_queue(),^{ self->_discovered=YES; [self reload]; });
+        dispatch_async(dispatch_get_main_queue(),^{ self->_discovered=YES; [self reload]; [self checkForUpdates]; });
     });
 }
 - (void)reload {
@@ -161,6 +169,19 @@ static double TKPointerSpeed(void) {
     content.textProperties.font=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
     content.secondaryText=[NSString stringWithFormat:@"%@ · %@",[self locationOfApp:app],[self lastStartedOfApp:app]];
     content.secondaryTextProperties.color=UIColor.secondaryLabelColor;
+    // A Blizzard game's installed build always shows; a newer one beside it.
+    NSDictionary *update=_updates[app.identifier];
+    NSString *build=_builds[app.identifier];
+    if (build || update) {
+        UIFont *font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+        NSMutableAttributedString *text=[[NSMutableAttributedString alloc] initWithString:[content.secondaryText stringByAppendingString:@"\n"]
+            attributes:@{NSForegroundColorAttributeName:UIColor.secondaryLabelColor}];
+        if (build) [text appendAttributedString:[[NSAttributedString alloc] initWithString:[@"Build " stringByAppendingString:build]
+            attributes:@{NSForegroundColorAttributeName:UIColor.secondaryLabelColor,NSFontAttributeName:font}]];
+        if (update) [text appendAttributedString:[[NSAttributedString alloc] initWithString:[NSString stringWithFormat:@"%@Update available: %@",build ? @" · " : @"",update[@"current"]]
+            attributes:@{NSForegroundColorAttributeName:self.view.tintColor,NSFontAttributeName:font}]];
+        content.secondaryAttributedText=text;
+    }
     content.image=[UIImage systemImageNamed:app.source==TKAppSourceCopy ? @"doc.badge.gearshape" : @"gamecontroller.fill"];
     content.imageProperties.preferredSymbolConfiguration=[UIImageSymbolConfiguration configurationWithTextStyle:UIFontTextStyleTitle2];
     content.imageToTextPadding=16;
@@ -172,7 +193,9 @@ static double TKPointerSpeed(void) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     TKApp *app=[self appAtIndexPath:indexPath];
-    if (app) [self.delegate libraryViewController:self startApp:app];
+    if (!app) return;
+    if (_updates[app.identifier]) [self offerUpdateOfApp:app from:[tableView cellForRowAtIndexPath:indexPath]];
+    else [self.delegate libraryViewController:self startApp:app];
 }
 - (void)tableView:(UITableView *)tableView accessoryButtonTappedForRowWithIndexPath:(NSIndexPath *)indexPath {
     TKApp *app=[self appAtIndexPath:indexPath];
@@ -197,7 +220,10 @@ static double TKPointerSpeed(void) {
     UITableViewCell *cell=[tableView cellForRowAtIndexPath:indexPath];
     return [UIContextMenuConfiguration configurationWithIdentifier:nil previewProvider:nil actionProvider:^UIMenu *(NSArray<UIMenuElement *> *suggested) {
         (void)suggested;
-        return [UIMenu menuWithChildren:@[
+        NSMutableArray<UIMenuElement *> *items=[NSMutableArray new];
+        if (self->_updates[app.identifier]) [items addObject:[UIAction actionWithTitle:@"Update" image:[UIImage systemImageNamed:@"arrow.down.circle"]
+            identifier:nil handler:^(UIAction *a) { (void)a; [self updateApp:app]; }]];
+        [items addObjectsFromArray:@[
             [UIAction actionWithTitle:@"Start" image:[UIImage systemImageNamed:@"play.fill"] identifier:nil handler:^(UIAction *a) {
                 (void)a; [self.delegate libraryViewController:self startApp:app]; }],
             [UIAction actionWithTitle:@"Rename…" image:[UIImage systemImageNamed:@"pencil"] identifier:nil handler:^(UIAction *a) {
@@ -209,6 +235,7 @@ static double TKPointerSpeed(void) {
             [UIAction actionWithTitle:@"Remove from Library" image:[UIImage systemImageNamed:@"trash"] identifier:nil
                 handler:^(UIAction *a) { (void)a; [self confirmRemovingApp:app from:cell]; }],
         ]];
+        return [UIMenu menuWithChildren:items];
     }];
 }
 
@@ -265,7 +292,12 @@ static double TKPointerSpeed(void) {
     if (app.profile) [message appendFormat:@"\n\nProfile: %@",app.profile];
     [message appendFormat:@"\n\nAdded %@\n%@",
         [NSDateFormatter localizedStringFromDate:app.added dateStyle:NSDateFormatterMediumStyle timeStyle:NSDateFormatterShortStyle],[self lastStartedOfApp:app]];
+    NSDictionary *update=_updates[app.identifier];
+    if (update) [message appendFormat:@"\n\nInstalled build: %@\nAvailable: %@",update[@"installed"],update[@"current"]];
+    else if (_builds[app.identifier]) [message appendFormat:@"\n\nInstalled build: %@",_builds[app.identifier]];
     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:app.name message:message preferredStyle:UIAlertControllerStyleActionSheet];
+    if (update) [sheet addAction:[UIAlertAction actionWithTitle:@"Update" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a; [self updateApp:app]; }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"Start" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
         (void)a; [self.delegate libraryViewController:self startApp:app]; }]];
     [sheet addAction:[UIAlertAction actionWithTitle:@"Rename…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
@@ -458,7 +490,7 @@ static double TKPointerSpeed(void) {
         workingDirectory:profile[@"workingDirectory"] runtime:profile[@"runtime"] region:region locale:locale];
     if (!download || _download) return;
     _download=download;
-    _downloadAlert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"Downloading %@",profile[@"name"]]
+    _downloadAlert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:_updating ? @"Updating %@" : @"Downloading %@",profile[@"name"]]
         message:@"Starting…\n\n" preferredStyle:UIAlertControllerStyleAlert];
     [_downloadAlert addAction:[UIAlertAction actionWithTitle:@"Stop" style:UIAlertActionStyleCancel handler:^(UIAlertAction *a) {
         (void)a; [download cancel];
@@ -489,10 +521,13 @@ static double TKPointerSpeed(void) {
             UIApplication.sharedApplication.idleTimerDisabled=NO;
             UIAlertController *alert=self->_downloadAlert;
             self->_download=nil; self->_downloadAlert=nil; self->_downloadBar=nil;
+            BOOL updating=self->_updating;
+            self->_updating=NO;
+            if (done && updating) self->_updates=nil;
             BOOL stopped=[error.domain isEqual:NSCocoaErrorDomain] && error.code==NSUserCancelledError;
             void (^after)(void)=^{
-                if (done) [self addDownloadedProfile:profile];
-                else { [self refresh]; if (!stopped) [self showError:error title:@"Download Failed"]; }
+                if (done) [self addDownloadedProfile:profile updated:updating];
+                else { [self refresh]; if (!stopped) [self showError:error title:updating ? @"Update Failed" : @"Download Failed"]; }
             };
             if (alert.presentingViewController) [alert dismissViewControllerAnimated:YES completion:after]; else after();
         });
@@ -502,7 +537,7 @@ static double TKPointerSpeed(void) {
 // The downloaded application goes into the library at once, also when its
 // profile was removed from the library before, and the user is told under
 // which name: an entry that already pointed at this folder is the one.
-- (void)addDownloadedProfile:(NSDictionary *)profile {
+- (void)addDownloadedProfile:(NSDictionary *)profile updated:(BOOL)updated {
     NSString *path=[[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"]
         stringByAppendingPathComponent:[TKAppLibrary executableOfProfile:profile]];
     _importing=YES;
@@ -520,8 +555,10 @@ static double TKPointerSpeed(void) {
             if (row!=NSNotFound)
                 [self.tableView selectRowAtIndexPath:[NSIndexPath indexPathForRow:(NSInteger)row inSection:self.hasNotice ? 1 : 0]
                     animated:YES scrollPosition:UITableViewScrollPositionMiddle];
-            UIAlertController *alert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"%@ Is in Your Library",app.name]
-                message:[profile[@"download"][@"service"] isEqual:@"steam"]
+            [self checkForUpdates];
+            UIAlertController *alert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:updated ? @"%@ Is Updated" : @"%@ Is in Your Library",app.name]
+                message:updated ? @"Tap it to start. The game downloads the new build's data when it starts and shows its progress; keep Tolkara open until it is done."
+                : [profile[@"download"][@"service"] isEqual:@"steam"]
                     ? @"Tap it to start. Steam finishes its own installation at the first start, then asks you to sign in."
                     : @"Tap it to start. The game downloads its data when it first starts and shows its progress; keep Tolkara open until it is done."
                 preferredStyle:UIAlertControllerStyleAlert];
@@ -529,6 +566,89 @@ static double TKPointerSpeed(void) {
             [self presentViewController:alert animated:YES completion:nil];
         });
     });
+}
+
+#pragma mark Updates
+
+// A Blizzard game's own download block, when the app came from its profile
+// and the profile opts in to updates ("update": true in its download block).
+- (NSDictionary *)blizzardProfileOfApp:(TKApp *)app {
+    if (!app.profile || app.source!=TKAppSourceDocuments) return nil;
+    for (NSDictionary *profile in _library.downloadProfiles)
+        if ([profile[@"id"] isEqual:app.profile] && [TKGameDownload offersUpdates:profile[@"download"]]) return profile;
+    return nil;
+}
+// Compares each such game's installed build (its .build.info) with the build
+// Blizzard's version server offers now for the same region. Only the version
+// list is asked for; nothing is downloaded or changed. A game copied from a
+// Mac is checked too: an update then fetches the changed application files.
+- (void)checkForUpdates {
+    if (_checkingUpdates || _download) return;
+    NSMutableArray<NSArray *> *candidates=[NSMutableArray new];
+    for (TKApp *app in _apps) {
+        NSDictionary *profile=[self blizzardProfileOfApp:app];
+        if (profile) [candidates addObject:@[app.identifier,profile]];
+    }
+    if (!candidates.count) { _updates=nil; _builds=nil; return; }
+    _checkingUpdates=YES;
+    NSString *documents=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        // The installed builds first, from the device alone: they show at once,
+        // offline too, before the version server answers.
+        NSMutableDictionary<NSString *,NSString *> *builds=[NSMutableDictionary new];
+        for (NSArray *candidate in candidates) {
+            NSString *version=[TKGameDownload installedBuildOfConfiguration:candidate[1][@"download"] documents:documents][@"version"];
+            if (version.length) builds[candidate[0]]=version;
+        }
+        dispatch_async(dispatch_get_main_queue(),^{
+            if ([self->_builds isEqual:builds]) return;
+            self->_builds=builds;
+            [self.tableView reloadData];
+        });
+        NSMutableDictionary<NSString *,NSDictionary *> *found=[NSMutableDictionary new];
+        for (NSArray *candidate in candidates) {
+            NSDictionary *profile=candidate[1], *block=profile[@"download"];
+            NSDictionary *installed=[TKGameDownload installedBuildOfConfiguration:block documents:documents];
+            if (!installed) continue;
+            NSString *locale=[TKGameDownload installedLocaleOfConfiguration:block documents:documents workingDirectory:profile[@"workingDirectory"]]
+                ?: [TKGameDownload localesOfConfiguration:block].firstObject;
+            TKGameDownload *check=[[TKGameDownload alloc] initWithConfiguration:block documents:documents
+                workingDirectory:profile[@"workingDirectory"] runtime:nil region:installed[@"region"] locale:locale];
+            NSDictionary *current=[check currentBuild:NULL];
+            if (!current || [current[@"build"] isEqual:installed[@"build"]]) continue;
+            found[candidate[0]]=@{@"profile":profile,@"region":installed[@"region"],@"locale":locale,
+                                  @"installed":[installed[@"version"] length] ? installed[@"version"] : @"unknown",@"current":current[@"version"]};
+        }
+        dispatch_async(dispatch_get_main_queue(),^{
+            self->_checkingUpdates=NO;
+            if (self->_download) return;
+            self->_updates=found;
+            [self.tableView reloadData];
+        });
+    });
+}
+- (void)offerUpdateOfApp:(TKApp *)app from:(UIView *)view {
+    NSDictionary *update=_updates[app.identifier];
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"Update %@?",app.name]
+        message:[NSString stringWithFormat:@"Build %@ is out; this copy is %@. An online game usually refuses an older build.\n\n"
+            "Tolkara fetches only the application files that changed, from Blizzard's servers, and keeps your settings. "
+            "The game then downloads the new build's data when it starts.",update[@"current"],update[@"installed"]]
+        preferredStyle:UIAlertControllerStyleActionSheet];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Update" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a; [self updateApp:app]; }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Start Without Updating" style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
+        (void)a; [self.delegate libraryViewController:self startApp:app]; }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    sheet.popoverPresentationController.sourceView=view;
+    sheet.popoverPresentationController.sourceRect=view.bounds;
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+- (void)updateApp:(TKApp *)app {
+    NSDictionary *update=_updates[app.identifier];
+    if (!update || _download) return;
+    _updating=YES;
+    [self downloadProfile:update[@"profile"] region:update[@"region"] locale:update[@"locale"]];
+    if (!_download) _updating=NO;
 }
 
 - (void)importApp {
