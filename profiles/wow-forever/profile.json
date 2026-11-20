@@ -131,6 +131,7 @@
       "region": "portal",
       "text": "textLocale",
       "audio": "audioLocale"
-    }
+    },
+    "update": true
   }
 }

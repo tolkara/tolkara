@@ -37,6 +37,9 @@ typedef NSData * _Nullable (^TKGameDownloadFetch)(NSURL *url, NSRange range, NSE
 // and, for "steam", steam.exe in the working directory.
 + (BOOL)profileIsInPlace:(NSDictionary *)profile documents:(NSString *)documents;
 
+// "blizzard": whether the profile opts in to updates in the library
+// ("update": true). Only a profile whose updates were tried on a device says so.
++ (BOOL)offersUpdates:(NSDictionary *)configuration;
 // "blizzard": the build installed for the block's product, from the
 // install's .build.info: @{@"region", @"build", @"version"}. Nil when there is
 // no row for the product, or its region is not one the block offers.

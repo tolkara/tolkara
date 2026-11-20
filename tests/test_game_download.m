@@ -226,6 +226,15 @@ int main(void) {
             assert(![TKGameDownload validConfiguration:changed workingDirectory:working runtime:nil]);
         }
         assert(![TKGameDownload validConfiguration:@[] workingDirectory:working runtime:nil]);
+        // Updates in the library are an opt-in: JSON true only.
+        NSMutableDictionary *updating = [block mutableCopy];
+        assert(![TKGameDownload offersUpdates:block]);
+        updating[@"update"] = @YES;
+        assert([TKGameDownload validConfiguration:updating workingDirectory:working runtime:nil] && [TKGameDownload offersUpdates:updating]);
+        for (id value in @[@NO, @1, @"yes"]) {
+            updating[@"update"] = value;
+            assert(![TKGameDownload validConfiguration:updating workingDirectory:working runtime:nil] && ![TKGameDownload offersUpdates:updating]);
+        }
         // An application of its own: not for a profile with a runtime.
         assert(![TKGameDownload validConfiguration:block workingDirectory:working runtime:@"Game/Runtime"]);
         assert(![TKGameDownload profileIsInPlace:(@{@"workingDirectory": working, @"executable": @"Game.app/Contents/MacOS/Game", @"download": block}) documents:NSTemporaryDirectory()]);

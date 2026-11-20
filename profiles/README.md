@@ -97,8 +97,13 @@ program under Wine, say) names that runtime instead of a macOS `.app`:
   list's `folder` that is the application, the install's top folder `root`
   (the working directory or a folder above it), and optionally `settings`:
   the game's settings `file` and the names of its `region`, `text` and
-  `audio` settings, written once with the user's choices. Not for a profile
-  with a `runtime`.
+  `audio` settings, written once with the user's choices; and optionally
+  `update`: `true` lets the library show the installed build on the app's row
+  and offer **Update** when Blizzard's version server has a newer build (the
+  same download, with the installed region and language: only changed
+  application files are fetched, settings stay, and the game fetches its new
+  data itself). Set it only for a game whose updates were tried on a device.
+  Not for a profile with a `runtime`.
   For `"steam"` (the Windows Steam client, from Valve's public update server,
   which needs no account; only for a profile with a `runtime`), exactly:
   `root`, the top folder in Documents that holds the profile's `runtime` and

@@ -64,6 +64,15 @@ fetched its own. Not yet tried: a start from files the launcher fetched and
 wrote itself, logging in from such a copy, and any region or language but
 those.
 
+**Updates on the device.** The library's row shows the installed build
+(from `.build.info`). When Blizzard ships a newer one, the row also says
+**Update available**; tapping it offers **Update**, which fetches only the
+changed application files from Blizzard's content servers and keeps your
+settings. The game then downloads the new build's data when it starts. No
+Mac is needed, for a copy made from a Mac as well as a downloaded one.
+Tested on an iPhone 17 Pro Max: 1.60.1.70938 to 70959, and 70959 to 71037
+(2026-11-20).
+
 Open Tolkara, choose an execution mode if it asks, tap World of Warcraft Forever
 in the library (it appears once the files are copied), and log in inside the
 game as usual.

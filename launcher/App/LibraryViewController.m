@@ -570,11 +570,12 @@ static double TKPointerSpeed(void) {
 
 #pragma mark Updates
 
-// A Blizzard game's own download block, when the app came from its profile.
+// A Blizzard game's own download block, when the app came from its profile
+// and the profile opts in to updates ("update": true in its download block).
 - (NSDictionary *)blizzardProfileOfApp:(TKApp *)app {
     if (!app.profile || app.source!=TKAppSourceDocuments) return nil;
     for (NSDictionary *profile in _library.downloadProfiles)
-        if ([profile[@"id"] isEqual:app.profile] && [profile[@"download"][@"service"] isEqual:@"blizzard"]) return profile;
+        if ([profile[@"id"] isEqual:app.profile] && [TKGameDownload offersUpdates:profile[@"download"]]) return profile;
     return nil;
 }
 // Compares each such game's installed build (its .build.info) with the build

@@ -89,7 +89,9 @@ class ProfileTests(unittest.TestCase):
         check(self.write(good))
         check(self.write({**good, 'download': {k: v for k, v in block.items() if k != 'settings'}}))
         check(self.write({**good, 'workingDirectory': 'G'}))
-        for change in ({'service': 'other'}, {'product': '../x'}, {'product': 1}, {'regions': []},
+        # Updates in the library: an opt-in, true only.
+        check(self.write({**good, 'download': {**block, 'update': True}}))
+        for change in ({'update': False}, {'update': 1}, {'update': 'yes'}, {'service': 'other'}, {'product': '../x'}, {'product': 1}, {'regions': []},
                        {'regions': [{'id': 'EU', 'name': 'E', 'portal': 'EU'}]}, {'regions': [{'id': 'eu', 'name': 'E'}]},
                        {'regions': [{'id': 'eu', 'name': 'E', 'portal': 'EU', 'host': 'x'}]}, {'locales': ['english']}, {'locales': []},
                        {'tags': []}, {'tags': ['a b']}, {'folder': '../G.app'}, {'folder': 'a/b'}, {'root': '/G'}, {'root': 'Other'},

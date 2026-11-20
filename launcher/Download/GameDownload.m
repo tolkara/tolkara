@@ -66,6 +66,10 @@ static NSDictionary<NSString *, NSArray<NSString *> *> *settings(NSData *data) {
     return out;
 }
 static BOOL is_key(NSString *key) { return matches(key, @"[0-9a-f]{32}"); }
+// JSON true: a boolean, not the number 1.
+static BOOL is_true(id value) {
+    return [value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID() && [value boolValue];
+}
 
 static bool append_sink(void *context, const uint8_t *bytes, size_t length) {
     [(__bridge NSMutableData *)context appendBytes:bytes length:length];
@@ -245,6 +249,10 @@ static bool entry_sink(void *context, const uint8_t *bytes, size_t length) {
     return ![profile[@"download"][@"service"] isEqual:@"steam"] || [files fileExistsAtPath:[working stringByAppendingPathComponent:@"steam.exe"]];
 }
 
++ (BOOL)offersUpdates:(NSDictionary *)configuration {
+    return [configuration isKindOfClass:NSDictionary.class] && [configuration[@"service"] isEqual:@"blizzard"] && is_true(configuration[@"update"]);
+}
+
 + (NSDictionary<NSString *, NSString *> *)installedBuildOfConfiguration:(NSDictionary *)configuration documents:(NSString *)documents {
     if (![configuration[@"service"] isEqual:@"blizzard"] || !plain_relative(configuration[@"root"])) return nil;
     NSData *data = [NSData dataWithContentsOfFile:[[documents stringByAppendingPathComponent:configuration[@"root"]] stringByAppendingPathComponent:@".build.info"]];
@@ -289,8 +297,9 @@ static bool entry_sink(void *context, const uint8_t *bytes, size_t length) {
     NSDictionary *block = configuration;
     if ([block[@"service"] isEqual:@"steam"]) return [self validSteamConfiguration:block workingDirectory:workingDirectory runtime:runtime];
     if (runtime) return NO;   // an application of its own, not one a runtime starts
-    NSSet *known = [NSSet setWithArray:@[@"service", @"product", @"regions", @"locales", @"tags", @"folder", @"root", @"settings"]];
+    NSSet *known = [NSSet setWithArray:@[@"service", @"product", @"regions", @"locales", @"tags", @"folder", @"root", @"settings", @"update"]];
     for (id key in block) if (![known containsObject:key]) return NO;
+    if (block[@"update"] && !is_true(block[@"update"])) return NO;
     if (![block[@"service"] isEqual:@"blizzard"] || !matches(block[@"product"], @"[a-z0-9_]{1,32}")) return NO;
     NSArray *regions = block[@"regions"], *locales = block[@"locales"], *tags = block[@"tags"];
     if (![regions isKindOfClass:NSArray.class] || !regions.count || regions.count > 8) return NO;

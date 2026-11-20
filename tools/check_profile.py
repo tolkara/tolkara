@@ -20,7 +20,7 @@ RISK = ('summary', 'history', 'links')
 STEAM_CLOUD = ('appID', 'remoteDirectory', 'localDirectory', 'fileNames', 'uploadsEnabled', 'required')
 # download is read by the iPad launcher (launcher/Download/GameDownload.m): keep
 # +validConfiguration:workingDirectory:runtime: there in step with check_download.
-DOWNLOAD = ('service', 'product', 'regions', 'locales', 'tags', 'folder', 'root', 'settings')
+DOWNLOAD = ('service', 'product', 'regions', 'locales', 'tags', 'folder', 'root', 'settings', 'update')
 DOWNLOAD_SETTINGS = ('file', 'region', 'text', 'audio')
 DOWNLOAD_STEAM = ('service', 'root', 'runtime', 'client')
 DOWNLOAD_RUNTIME = ('url', 'sha256', 'size')
@@ -167,6 +167,8 @@ def check_download(profile):
     working = profile['workingDirectory']
     if not plain_relative(block.get('root')) or not (working == block['root'] or working.startswith(block['root'] + '/')):
         raise ValueError('download.root must be the working directory or a folder above it')
+    if 'update' in block and block['update'] is not True:
+        raise ValueError('download.update, when present, must be true')
     if 'settings' in block:
         file = block['settings']
         if (not isinstance(file, dict) or set(file) != set(DOWNLOAD_SETTINGS) or not plain_relative(file['file'])
