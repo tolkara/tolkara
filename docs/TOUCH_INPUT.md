@@ -173,8 +173,13 @@ number button was holding. A keyboard and mouse work at the same time as before.
 place, and in the column layouts so does every button: those the keyboard
 would cover are hidden while it is open (the keyboard button, in the top row,
 never is) and come back when it closes. A row
-above the keyboard has Escape, Tab, left and right arrows, Return and a button
-to close it. Select a text field in the game first: Tolkara does not detect
+above the keyboard has Escape, Tab, left and right arrows, Paste, Return and a
+button to close it. Paste is iOS's own paste button: it types the clipboard's
+text as if from this keyboard, for a long password from a password manager.
+Because it is the system's control, which only the user can press, iOS asks no
+permission and Tolkara reads the clipboard only at that tap. Line breaks, tabs
+and other control characters are left out, so Paste never presses Return or
+Tab, and it types at most 1,024 characters; nothing pasted is kept or logged. Select a text field in the game first: Tolkara does not detect
 the game's text fields, and it does not read the game's text or selection, so
 the keyboard does not open by itself. While iOS reports a hardware keyboard (a
 Bluetooth keyboard, or the Mac's keyboard while Device Hub mirrors the device),

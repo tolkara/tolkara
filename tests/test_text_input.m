@@ -24,6 +24,14 @@ int main(void) { @autoreleasepool {
     AKEnumerateTextKeys(@"", ^(NSString *text, NSString *plain, unsigned short code, NSUInteger mods) {
         (void)text; (void)plain; (void)code; (void)mods; assert(0);
     });
+    // Paste types the clipboard's text but never Return, Tab or other controls.
+    NSString *controls = [NSString stringWithFormat:@"pa ss\r\nw\tord%C!%C%C", (unichar)0x2028, (unichar)0x85, (unichar)0x7F];
+    assert([AKPastedText(controls) isEqual:@"pa ssword!"]);
+    assert([AKPastedText(@"é👩‍💻ñ") isEqual:@"é👩‍💻ñ"]);
+    assert([AKPastedText(@"\n\r\t") isEqual:@""] && [AKPastedText((NSString *)(id)NSNull.null) isEqual:@""]);
+    NSString *longText = [@"" stringByPaddingToLength:AKPastedTextLimit - 1 withString:@"x" startingAtIndex:0];
+    assert([AKPastedText([longText stringByAppendingString:@"🙂y"]) isEqual:longText]);
+    assert(AKPastedText([longText stringByAppendingString:@"yz"]).length == AKPastedTextLimit);
     InputClient *client=[InputClient new];
     AKInterpretTextKey(client,@"é",14,1UL<<19);assert([client.text isEqual:@"é"] && client.range.location==NSNotFound && client.range.length==0);
     AKInterpretTextKey(client,@"a",0,1UL<<20);assert([client.command isEqual:@"selectAll:"] && [client.text isEqual:@"é"]);

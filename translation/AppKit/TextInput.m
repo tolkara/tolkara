@@ -39,6 +39,24 @@ void AKEnumerateTextKeys(NSString *text, void (^emit)(NSString *, NSString *, un
     }];
 }
 
+NSString *AKPastedText(NSString *text) {
+    if (![text isKindOfClass:NSString.class]) return @"";
+    NSMutableString *kept = [NSMutableString new];
+    // C0 and C1 controls and the Unicode line and paragraph separators; not
+    // format characters such as the zero-width joiner inside an emoji.
+    NSMutableCharacterSet *controls = [NSMutableCharacterSet characterSetWithRange:NSMakeRange(0, 0x20)];
+    [controls addCharactersInRange:NSMakeRange(0x7F, 0x21)];
+    [controls addCharactersInRange:NSMakeRange(0x2028, 2)];
+    [text enumerateSubstringsInRange:NSMakeRange(0, text.length) options:NSStringEnumerationByComposedCharacterSequences
+                         usingBlock:^(NSString *character, NSRange range, NSRange enclosing, BOOL *stop) {
+        (void)range; (void)enclosing;
+        if ([character rangeOfCharacterFromSet:controls].location != NSNotFound) return;
+        if (kept.length + character.length > AKPastedTextLimit) { *stop = YES; return; }
+        [kept appendString:character];
+    }];
+    return kept;
+}
+
 void AKInterpretTextKey(id client,NSString *characters,unsigned short keyCode,NSUInteger modifiers) {
     BOOL shift=(modifiers&(1UL<<17))!=0,option=(modifiers&(1UL<<19))!=0;
     BOOL command=(modifiers&(1UL<<20))!=0,control=(modifiers&(1UL<<18))!=0;

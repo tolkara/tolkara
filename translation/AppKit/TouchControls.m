@@ -3,6 +3,7 @@
 #import "TouchCamera.h"
 #import "TouchStick.h"
 #import "AKSupport.h"
+#import "TextInput.h"
 #import <GameController/GameController.h>
 
 NSString *const AKTouchControlsDefaultsKey = @"AKTouchControls";
@@ -450,6 +451,8 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         row.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.96];
         NSArray<NSString *> *titles = @[@"Esc", @"Tab", @"←", @"→", @"↵", @"⌄"];
         for (NSUInteger i = 0; i < titles.count; i++) {
+            // Paste stands between the arrows and Return.
+            if (i == 4) [row addArrangedSubview:[self pasteCell]];
             UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
             button.tag = (NSInteger)i;
             button.tintColor = UIColor.whiteColor;
@@ -461,6 +464,44 @@ static NSString *AKQuickKeyCharacters(NSInteger index) {
         _accessory = row;
     }
     return _accessory;
+}
+// Paste: the system's own paste button, which the user taps, so iOS asks no
+// permission and Tolkara reads the clipboard only then. Its text is typed as
+// if from this keyboard: no Return or Tab (AKPastedText), nothing kept or logged.
+- (UIView *)pasteCell {
+    self.pasteConfiguration = [[UIPasteConfiguration alloc] initWithAcceptableTypeIdentifiers:@[@"public.utf8-plain-text", @"public.plain-text"]];
+    UIPasteControlConfiguration *configuration = [UIPasteControlConfiguration new];
+    configuration.displayMode = UIPasteControlDisplayModeIconOnly;
+    configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    configuration.baseForegroundColor = UIColor.whiteColor;
+    configuration.baseBackgroundColor = [UIColor colorWithWhite:0.28 alpha:1];
+    UIPasteControl *paste = [[UIPasteControl alloc] initWithConfiguration:configuration];
+    paste.target = self;
+    paste.accessibilityIdentifier = @"tolkara.paste";
+    paste.translatesAutoresizingMaskIntoConstraints = NO;
+    UIView *cell = [UIView new];
+    [cell addSubview:paste];
+    [NSLayoutConstraint activateConstraints:@[
+        [paste.centerXAnchor constraintEqualToAnchor:cell.centerXAnchor],
+        [paste.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+        [paste.widthAnchor constraintEqualToConstant:40], [paste.heightAnchor constraintEqualToConstant:36]]];
+    return cell;
+}
+- (BOOL)canPasteItemProviders:(NSArray<NSItemProvider *> *)providers {
+    for (NSItemProvider *provider in providers) if ([provider canLoadObjectOfClass:NSString.class]) return YES;
+    return NO;
+}
+- (void)pasteItemProviders:(NSArray<NSItemProvider *> *)providers {
+    for (NSItemProvider *provider in providers) {
+        if (![provider canLoadObjectOfClass:NSString.class]) continue;
+        __weak AKTouchControls *weakSelf = self;
+        [provider loadObjectOfClass:NSString.class completionHandler:^(id<NSItemProviderReading> object, NSError *error) {
+            (void)error;
+            NSString *text = AKPastedText((NSString *)object);
+            if (text.length) dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf insertText:text]; });
+        }];
+        return;
+    }
 }
 - (void)accessoryKey:(UIButton *)button {
     if (button.tag == 5) { [self dismissKeyboard]; return; }
