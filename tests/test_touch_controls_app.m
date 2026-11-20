@@ -128,8 +128,18 @@
                 assert([open isEqual:columns]);
                 [controls insertText:@"Fixture @ñ🙂"];
                 [controls deleteBackward];
+                // Paste sits between → and Return and types the clipboard's
+                // text without its line break.
+                UIStackView *row = (UIStackView *)controls.inputAccessoryView;
+                assert(row.arrangedSubviews.count == 7);
+                UIView *pasteControl = row.arrangedSubviews[4].subviews.firstObject;
+                assert([pasteControl isKindOfClass:UIPasteControl.class] && ((UIPasteControl *)pasteControl).target == (id)controls);
+                assert([((UIButton *)row.arrangedSubviews[3]).currentTitle isEqual:@"→"] && [((UIButton *)row.arrangedSubviews[5]).currentTitle isEqual:@"↵"]);
+                NSArray<NSItemProvider *> *clipboard = @[[[NSItemProvider alloc] initWithObject:@" Pa$te\r\n"]];
+                assert([controls canPasteItemProviders:clipboard]);
+                [controls pasteItemProviders:clipboard];
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                    assert([((AKInputFixtureView *)self.guest.contentView).text isEqual:@"Fixture @ñ"]);
+                    assert([((AKInputFixtureView *)self.guest.contentView).text isEqual:@"Fixture @ñ Pa$te"]);
                     [controls dismissKeyboard];
                     assert(!controls.keyboardVisible && host.isFirstResponder);
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{
